@@ -83,7 +83,7 @@ function BookForm({ onDone }: { onDone: () => void }) {
       className="surface-card mx-auto grid max-w-2xl gap-5 p-6 sm:grid-cols-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!f.date || !f.name || !f.phone) return toast.error("Vui lòng điền ngày, họ tên và số điện thoại");
+        if (!f.date || !f.name || !f.phone) { toast.error("Vui lòng điền ngày, họ tên và số điện thoại"); return; }
         addBooking(f); toast.success("Đã gửi yêu cầu đặt bàn — đang chờ xác nhận"); onDone();
       }}
     >
