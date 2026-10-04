@@ -184,7 +184,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const table = tables.find((t) => t.id === tableId)!;
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
-  const [method, setMethod] = useState(methods[0]);
+  const [method, setMethod] = useState<string>("Tiền mặt");
   const subtotal = table.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
   const vat = subtotal * 0.1;
   const v = vouchers[code.trim().toUpperCase()];

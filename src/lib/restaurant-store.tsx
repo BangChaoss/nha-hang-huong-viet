@@ -9,7 +9,7 @@ export type Zone = "Trong Nhà" | "Sân Vườn" | "Phòng VIP";
 export type OrderLine = { dishId: string; qty: number };
 export type Table = {
   id: number; name: string; zone: Zone; seats: number; status: TableStatus;
-  guest?: string; time?: string; phone?: string; partySize?: number; order: OrderLine[];
+  guest?: string | undefined; time?: string | undefined; phone?: string | undefined; partySize?: number | undefined; order: OrderLine[];
 };
 export type TicketStatus = "queued" | "preparing" | "ready";
 export type Ticket = { id: string; table: string; createdAt: number; items: OrderLine[]; note: string; status: TicketStatus };
