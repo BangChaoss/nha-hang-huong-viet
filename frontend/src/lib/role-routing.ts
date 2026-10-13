@@ -1,11 +1,14 @@
-/** Route destination to use after a successful authentication response. */
-export type AppRole = "CUSTOMER" | "STAFF" | "CHEF" | "MANAGER";
+/** Route destination after successful authentication. */
+export type AppRole = "CUSTOMER" | "STAFF" | "CHEF" | "MANAGER" | "ADMIN";
 
-export function getHomeForRole(role: AppRole): "/" | "/staff" | "/chef" | "/admin" {
+export type RoleHome = "/" | "/staff" | "/chef" | "/manager" | "/admin";
+
+export function getHomeForRole(role: AppRole): RoleHome {
   switch (role) {
     case "CUSTOMER": return "/";
     case "STAFF": return "/staff";
     case "CHEF": return "/chef";
-    case "MANAGER": return "/admin";
+    case "MANAGER": return "/manager";
+    case "ADMIN": return "/admin";
   }
 }
