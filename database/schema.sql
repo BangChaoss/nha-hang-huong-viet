@@ -23,10 +23,10 @@ DROP TABLE IF EXISTS feedbacks;
 DROP TABLE IF EXISTS loyalty_transactions;
 DROP TABLE IF EXISTS loyalty_wallets;
 DROP TABLE IF EXISTS voucher_usages;
-DROP TABLE IF EXISTS voucher_audits;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS invoice_items;
 DROP TABLE IF EXISTS invoices;
+DROP TABLE IF EXISTS voucher_audits;
 DROP TABLE IF EXISTS vouchers;
 DROP TABLE IF EXISTS kitchen_tickets;
 DROP TABLE IF EXISTS order_item_audits;
@@ -40,8 +40,6 @@ DROP TABLE IF EXISTS reservations;
 DROP TABLE IF EXISTS restaurant_tables;
 DROP TABLE IF EXISTS table_zones;
 DROP TABLE IF EXISTS users;
-
-SET FOREIGN_KEY_CHECKS = 1;
 
 -- ==============================================================================
 -- 1. IDENTITY & USER MANAGEMENT (users)
@@ -542,3 +540,6 @@ CREATE TABLE daily_dish_sales_summaries (
     KEY idx_daily_dish_rank (summary_date, total_quantity_sold),
     CONSTRAINT fk_daily_dish_menu FOREIGN KEY (dish_id) REFERENCES menu_items (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Re-enable foreign key checks
+SET FOREIGN_KEY_CHECKS = 1;
