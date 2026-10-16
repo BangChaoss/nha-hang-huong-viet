@@ -436,6 +436,7 @@ CREATE TABLE voucher_usages (
     voucher_id CHAR(36) NOT NULL,
     customer_id CHAR(36) NULL,
     invoice_id CHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) NULL,
     discount_applied DECIMAL(12, 2) NOT NULL,
     used_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
