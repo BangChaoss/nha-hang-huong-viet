@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { formatVND, useRestaurant, type OrderLine, type Table, type TableStatus, type Zone } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
+import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
 
 export const tableStatusMeta: Record<TableStatus, { label: string; cls: string }> = {
   available: { label: "Trống", cls: "status-available" },
@@ -173,10 +174,6 @@ function OrderDialog({ table, onClose, onBill }: { table: Table; onClose: () => 
   );
 }
 
-const vouchers: Record<string, { label: string; calc: (s: number) => number }> = {
-  HUONGVIET10: { label: "Giảm 10%", calc: (s) => s * 0.1 },
-  CODO50K: { label: "Giảm 50.000đ", calc: () => 50000 },
-};
 const methods = ["Tiền mặt", "Chuyển khoản QR", "Thẻ"];
 
 function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
@@ -212,10 +209,20 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />
           <Row l="VAT (10%)" v={formatVND(vat)} />
-          <div className="flex gap-2 pt-1">
-            <Input placeholder="Mã voucher (HUONGVIET10, CODO50K)" value={code} onChange={(e) => setCode(e.target.value)} />
+          <div className="space-y-2 pt-1">
+            <Input placeholder="Mã voucher" value={code} onChange={(e) => { setCode(e.target.value); setVoucherValidated(false); setVoucherDiscount(0); }} />
+            <Input placeholder="Số điện thoại khách (bắt buộc dùng voucher)" value={phoneNumber} onChange={(e) => { setPhoneNumber(e.target.value); setVoucherValidated(false); setVoucherDiscount(0); }} inputMode="tel" />
+            <Button type="button" variant="outline" className="w-full" disabled={voucherBusy || !code.trim() || !phoneNumber.trim()} onClick={async () => {
+              setVoucherBusy(true);
+              try {
+                const result = await validateVoucher(code.trim(), phoneNumber.trim(), subtotal);
+                if (!result.valid) { setVoucherValidated(false); setVoucherDiscount(0); toast.error(result.message); }
+                else { setVoucherValidated(true); setVoucherDiscount(result.discountAmount); toast.success(`${result.message} Giảm ${formatVND(result.discountAmount)}.`); }
+              } catch (error) { toast.error(error instanceof Error ? error.message : "Không kiểm tra được voucher."); }
+              finally { setVoucherBusy(false); }
+            }}>{voucherBusy ? "Đang kiểm tra..." : "Kiểm tra voucher"}</Button>
           </div>
-          {code && <p className={cn("text-xs", v ? "text-moss" : "text-alert")}>{v ? `Áp dụng: ${v.label}` : "Mã không hợp lệ"}</p>}
+          {code && <p className={cn("text-xs", voucherValidated ? "text-moss" : "text-muted-foreground")}>{voucherValidated ? "Voucher đã được kiểm tra hợp lệ." : "Nhập số điện thoại và kiểm tra voucher trước khi thanh toán."}</p>}
           {discount > 0 && <Row l="Voucher" v={`-${formatVND(discount)}`} cls="text-moss" />}
           <div className="flex items-center justify-between rounded-lg bg-muted p-3 text-sm">
             <span>Dùng điểm tích luỹ ({formatVND(loyaltyBalance)})</span>
@@ -230,7 +237,16 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
             <Button key={m} variant="outline" onClick={() => setMethod(m)} className={cn("h-auto py-2 text-xs", method === m && "border-primary bg-primary/5 text-primary")}>{m}</Button>
           ))}
         </div>
-        <Button className="w-full bg-primary hover:bg-primary-hover" onClick={() => {
+        <Button className="w-full bg-primary hover:bg-primary-hover" disabled={voucherBusy || (!!code.trim() && !voucherValidated)} onClick={async () => {
+          if (code.trim()) {
+            if (!phoneNumber.trim()) { toast.error("Cần nhập số điện thoại khách để dùng voucher."); return; }
+            setVoucherBusy(true);
+            try {
+              const result = await redeemVoucher(code.trim(), phoneNumber.trim(), subtotal);
+              if (!result.valid) { setVoucherValidated(false); setVoucherDiscount(0); toast.error(result.message); return; }
+            } catch (error) { toast.error(error instanceof Error ? error.message : "Không ghi nhận được lượt dùng voucher."); return; }
+            finally { setVoucherBusy(false); }
+          }
           completePayment(table.id, total, cashback, redeemed, method);
           toast.success(`Thanh toán ${formatVND(total)} thành công — ${table.name} đã trống`);
           onClose();
