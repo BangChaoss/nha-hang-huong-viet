@@ -1,6 +1,7 @@
 package com.huongViet.account;
 
 import com.huongViet.account.dto.CreateStaffRequest;
+import com.huongViet.account.dto.PageResponse;
 import com.huongViet.account.dto.StaffResponse;
 import com.huongViet.account.dto.UpdateStaffRequest;
 import com.huongViet.account.dto.UpdateUserStatusRequest;
@@ -14,14 +15,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -143,5 +149,52 @@ class StaffManagementServiceTest {
                 staffService.deleteStaff(adminActor, "admin-id")
         );
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("listStaff with CUSTOMER filter should query only customers when actor is admin")
+    void testListCustomersByAdmin() {
+        User customer = new User("cus-id", "bin", "bin@gmail.com", "0395584625", "hash", UserRole.CUSTOMER);
+        when(userRepository.findStaffWithFilter(eq(List.of(UserRole.CUSTOMER)), eq(UserRole.CUSTOMER), isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(customer)));
+
+        PageResponse<StaffResponse> response = staffService.listStaff(adminActor, null, UserRole.CUSTOMER, null, 0, 10);
+
+        assertEquals(1, response.totalElements());
+        assertEquals("bin", response.content().get(0).username());
+    }
+
+    @Test
+    @DisplayName("listStaff with CUSTOMER filter should throw FORBIDDEN when actor is manager")
+    void testListCustomersByManagerForbidden() {
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+                staffService.listStaff(managerActor, null, UserRole.CUSTOMER, null, 0, 10)
+        );
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("updateStatus should let admin lock a customer and revoke tokens")
+    void testLockCustomerByAdmin() {
+        User customer = new User("cus-id", "bin", "bin@gmail.com", "0395584625", "hash", UserRole.CUSTOMER);
+        when(userRepository.findByIdAndDeletedAtIsNull("cus-id")).thenReturn(Optional.of(customer));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        StaffResponse response = staffService.updateStatus(adminActor, "cus-id", new UpdateUserStatusRequest("LOCKED"));
+
+        assertEquals("LOCKED", response.status());
+        verify(refreshTokenService).revokeAllForUser("cus-id");
+    }
+
+    @Test
+    @DisplayName("updateStatus on a customer should throw NOT_FOUND when actor is manager")
+    void testLockCustomerByManagerNotFound() {
+        User customer = new User("cus-id", "bin", "bin@gmail.com", "0395584625", "hash", UserRole.CUSTOMER);
+        when(userRepository.findByIdAndDeletedAtIsNull("cus-id")).thenReturn(Optional.of(customer));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+                staffService.updateStatus(managerActor, "cus-id", new UpdateUserStatusRequest("LOCKED"))
+        );
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
     }
 }

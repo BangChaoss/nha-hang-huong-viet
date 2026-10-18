@@ -48,9 +48,11 @@ public class StaffManagementService {
                                                 String status,
                                                 int page,
                                                 int size) {
-        if (role == UserRole.CUSTOMER) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không thể lọc tài khoản CUSTOMER trong quản lý nhân viên.");
+        if (role == UserRole.CUSTOMER && currentActor.getRole() != UserRole.ADMIN) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Chỉ Quản trị viên được xem danh sách khách hàng.");
         }
+        // "All" (role == null) covers staff only; customers are listed solely via the CUSTOMER filter.
+        List<UserRole> scope = role == UserRole.CUSTOMER ? List.of(UserRole.CUSTOMER) : ALL_STAFF_ROLES;
 
         int pageIndex = Math.max(0, page);
         int pageSize = Math.min(100, Math.max(1, size));
@@ -59,7 +61,7 @@ public class StaffManagementService {
         String trimmedKeyword = (keyword != null && !keyword.isBlank()) ? keyword.trim() : null;
         String trimmedStatus = (status != null && !status.isBlank()) ? status.trim().toUpperCase() : null;
 
-        Page<User> result = userRepository.findStaffWithFilter(ALL_STAFF_ROLES, role, trimmedStatus, trimmedKeyword, pageable);
+        Page<User> result = userRepository.findStaffWithFilter(scope, role, trimmedStatus, trimmedKeyword, pageable);
         return PageResponse.from(result.map(StaffResponse::from));
     }
 
@@ -169,7 +171,8 @@ public class StaffManagementService {
         User staff = userRepository.findByIdAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nhân viên không tồn tại."));
 
-        if (staff.getRole() == UserRole.CUSTOMER) {
+        // Only ADMIN may lock/unlock customer accounts; to anyone else they do not exist here.
+        if (staff.getRole() == UserRole.CUSTOMER && currentActor.getRole() != UserRole.ADMIN) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Nhân viên không tồn tại.");
         }
 
