@@ -1,8 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { ArrowLeft, UtensilsCrossed } from "lucide-react";
+import { ArrowLeft, Loader2, UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { authApi } from "@/lib/account-api";
+import { getHomeForRole } from "@/lib/role-routing";
 
 
 export const Route = createFileRoute("/login")({ component: LoginPage });
@@ -10,12 +12,23 @@ export const Route = createFileRoute("/login")({ component: LoginPage });
 function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
-  function submit(e: FormEvent<HTMLFormElement>) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // Authentication must be validated by the backend; never grant a role from client input.
-    window.alert("Frontend hiện chưa được kết nối API đăng nhập. Hãy tích hợp API xác thực để đăng nhập và điều hướng theo role.");
+    setError("");
+    setSubmitting(true);
+    try {
+      // Role comes from the backend response; never grant a role from client input.
+      const session = await authApi.login(email.trim(), password);
+      void navigate({ to: getHomeForRole(session.role) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đăng nhập thất bại.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
@@ -27,9 +40,9 @@ function LoginPage() {
       <form onSubmit={submit} className="mt-6 space-y-4">
         <div className="space-y-2"><Label htmlFor="email">Email / Tên đăng nhập</Label><input id="email" type="text" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" /></div>
         <div className="space-y-2"><Label htmlFor="password">Mật khẩu</Label><input id="password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" /></div>
-        <Button type="submit" className="w-full">Đăng nhập</Button>
+        {error && <p role="alert" className="rounded-md status-cancelled px-3 py-2 text-sm">{error}</p>}
+        <Button type="submit" className="w-full" disabled={submitting}>{submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Đăng nhập</Button>
       </form>
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Lưu ý: API xác thực chưa có trong frontend được cung cấp. Không thể xác minh tài khoản hoặc phân quyền an toàn cho đến khi kết nối backend.</p>
     </div>
   </main>;
 }
