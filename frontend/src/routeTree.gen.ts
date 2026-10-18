@@ -12,8 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ChefRouteImport } from './routes/chef'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManagerRouteImport } from './routes/manager'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as StaffRouteImport } from './routes/staff'
 
 const IndexRoute = IndexRouteImport.update({
@@ -31,6 +33,11 @@ const ChefRoute = ChefRouteImport.update({
   path: '/chef',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -39,6 +46,11 @@ const LoginRoute = LoginRouteImport.update({
 const ManagerRoute = ManagerRouteImport.update({
   id: '/manager',
   path: '/manager',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StaffRoute = StaffRouteImport.update({
@@ -51,16 +63,20 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
+  '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
+  '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
 }
 export interface FileRoutesById {
@@ -68,24 +84,53 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
+  '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin' | '/chef' | '/login' | '/manager' | '/staff'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/chef'
+    | '/forgot-password'
+    | '/login'
+    | '/manager'
+    | '/register'
+    | '/staff'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin' | '/chef' | '/login' | '/manager' | '/staff'
-  id: '__root__' | '/' | '/admin' | '/chef' | '/login' | '/manager' | '/staff'
+  to:
+    | '/'
+    | '/admin'
+    | '/chef'
+    | '/forgot-password'
+    | '/login'
+    | '/manager'
+    | '/register'
+    | '/staff'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/chef'
+    | '/forgot-password'
+    | '/login'
+    | '/manager'
+    | '/register'
+    | '/staff'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   ChefRoute: typeof ChefRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRoute
+  RegisterRoute: typeof RegisterRoute
   StaffRoute: typeof StaffRoute
 }
 
@@ -112,6 +157,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChefRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -124,6 +176,13 @@ declare module '@tanstack/react-router' {
       path: '/manager'
       fullPath: '/manager'
       preLoaderRoute: typeof ManagerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/staff': {
@@ -140,8 +199,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   ChefRoute: ChefRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRoute,
+  RegisterRoute: RegisterRoute,
   StaffRoute: StaffRoute,
 }
 export const routeTree = rootRouteImport
