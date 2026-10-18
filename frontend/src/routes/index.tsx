@@ -3,6 +3,7 @@ import { UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 import { CustomerPortal } from "@/components/hv/CustomerPortal";
+import { AccountMenu } from "@/components/hv/AccountMenu";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -20,6 +21,7 @@ function HomePage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground"><UtensilsCrossed className="h-5 w-5" /></div>
           <div className="leading-tight"><p className="font-display text-2xl font-semibold tracking-wide">HƯƠNG VIỆT</p><p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Ẩm Thực Cố Đô</p></div>
         </Link>
+        <AccountMenu />
       </div>
     </header>
     <main className="mx-auto max-w-7xl px-6 py-10"><CustomerPortal /></main>

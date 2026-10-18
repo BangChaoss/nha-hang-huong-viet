@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, ChefHat, ClipboardList, ShieldCheck, UtensilsCrossed, Users } from "lucide-react";
 import { RestaurantProvider } from "@/lib/restaurant-store";
+import { AccountMenu } from "@/components/hv/AccountMenu";
 
 export const Route = createFileRoute("/admin")({ component: AdminPage });
 
@@ -18,7 +19,7 @@ function AdminPage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground"><UtensilsCrossed className="h-5 w-5" /></div>
           <div><p className="font-display text-2xl font-semibold tracking-wide">HƯƠNG VIỆT</p><p className="text-xs uppercase tracking-widest text-muted-foreground">Quản trị IT</p></div>
         </Link>
-        <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">Trang khách hàng</Link>
+        <div className="flex items-center gap-4"><Link to="/" className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">Trang khách hàng</Link><AccountMenu /></div>
       </div>
     </header>
     <main className="mx-auto max-w-5xl px-6 py-10">
