@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ChefRouteImport } from './routes/chef'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
@@ -17,10 +18,16 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManagerRouteImport } from './routes/manager'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as StaffRouteImport } from './routes/staff'
+import { Route as UsersRouteImport } from './routes/users'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRoute = AdminRouteImport.update({
@@ -58,9 +65,15 @@ const StaffRoute = StaffRouteImport.update({
   path: '/staff',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UsersRoute = UsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -68,9 +81,11 @@ export interface FileRoutesByFullPath {
   '/manager': typeof ManagerRoute
   '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
+  '/users': typeof UsersRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -78,10 +93,12 @@ export interface FileRoutesByTo {
   '/manager': typeof ManagerRoute
   '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
+  '/users': typeof UsersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
   '/forgot-password': typeof ForgotPasswordRoute
@@ -89,42 +106,44 @@ export interface FileRoutesById {
   '/manager': typeof ManagerRoute
   '/register': typeof RegisterRoute
   '/staff': typeof StaffRoute
+  '/users': typeof UsersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
     | '/admin'
     | '/chef'
-    | '/forgot-password'
     | '/login'
     | '/manager'
-    | '/register'
     | '/staff'
+    | '/users'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/account'
     | '/admin'
     | '/chef'
-    | '/forgot-password'
     | '/login'
     | '/manager'
-    | '/register'
     | '/staff'
+    | '/users'
   id:
     | '__root__'
     | '/'
+    | '/account'
     | '/admin'
     | '/chef'
-    | '/forgot-password'
     | '/login'
     | '/manager'
-    | '/register'
     | '/staff'
+    | '/users'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
   AdminRoute: typeof AdminRoute
   ChefRoute: typeof ChefRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
@@ -132,6 +151,7 @@ export interface RootRouteChildren {
   ManagerRoute: typeof ManagerRoute
   RegisterRoute: typeof RegisterRoute
   StaffRoute: typeof StaffRoute
+  UsersRoute: typeof UsersRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -141,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin': {
@@ -192,11 +219,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/users': {
+      id: '/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
   AdminRoute: AdminRoute,
   ChefRoute: ChefRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
@@ -204,6 +239,7 @@ const rootRouteChildren: RootRouteChildren = {
   ManagerRoute: ManagerRoute,
   RegisterRoute: RegisterRoute,
   StaffRoute: StaffRoute,
+  UsersRoute: UsersRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

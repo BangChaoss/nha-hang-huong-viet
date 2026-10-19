@@ -71,6 +71,10 @@ public class User {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public LocalDateTime getDeletedAt() { return deletedAt; }
 
+    public void setUsername(String username) { this.username = username; }
+    public void setEmail(String email) { this.email = email; }
+    public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
+    public void setRole(UserRole role) { this.role = role; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public void setStatus(String status) { this.status = status; }
     public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
