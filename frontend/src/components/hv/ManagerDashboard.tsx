@@ -24,8 +24,11 @@ const emptyVoucher = (): VoucherForm => ({
   discountValue: "20", maxDiscountAmount: "100000", minOrderAmount: "0",
   startDate: "", endDate: "", totalQuantity: "500", maxUsesPerCustomer: "1",
 });
-const localDateTime = (value: string) => value ? new Date(value).toLocaleString("vi-VN") : "—";
-const toLocalInput = (value: string) => value ? value.slice(0, 16) : "";
+const formatVoucherDate = (value: string) => {
+  if (!value) return "—";
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("vi-VN");
+};
 
 export function ManagerDashboard() {
   const [activeTab, setActiveTab] = useState<"overview" | "permissions" | "vouchers">("overview");
@@ -100,7 +103,7 @@ export function ManagerDashboard() {
             if (!voucherForm.voucherCode.trim() || !voucherForm.title.trim() || !voucherForm.startDate || !voucherForm.endDate) {
               toast.error("Vui lòng nhập mã, tên chương trình và thời gian áp dụng."); return;
             }
-            if (new Date(voucherForm.endDate) <= new Date(voucherForm.startDate)) { toast.error("Ngày kết thúc phải sau ngày bắt đầu."); return; }
+            if (voucherForm.endDate < voucherForm.startDate) { toast.error("Ngày kết thúc không được trước ngày bắt đầu."); return; }
             if (!Number.isFinite(value) || value <= 0 || (voucherForm.discountType === "PERCENTAGE" && value > 100)) { toast.error("Giá trị giảm không hợp lệ."); return; }
             if (minOrder < 0 || totalQuantity < 1 || perCustomer < 1 || (maxDiscount !== null && maxDiscount < 0)) { toast.error("Kiểm tra giá trị đơn tối thiểu, số lượng phát hành, giới hạn dùng và mức giảm tối đa."); return; }
             if (voucherForm.discountType === "FIXED_AMOUNT" && maxDiscount !== null) { toast.error("Mức giảm tối đa chỉ áp dụng cho voucher giảm theo %."); return; }
@@ -108,8 +111,9 @@ export function ManagerDashboard() {
               voucherCode: voucherForm.voucherCode.trim().toUpperCase(), title: voucherForm.title.trim(),
               description: voucherForm.description.trim() || null, discountType: voucherForm.discountType,
               discountValue: value, maxDiscountAmount: maxDiscount, minOrderAmount: minOrder,
-              startDate: `${voucherForm.startDate}:00`,
-              endDate: `${voucherForm.endDate}:00`,
+              // Chỉ chọn ngày: backend chuẩn hoá thành 00:00:00 và 23:59:59.
+              startDate: `${voucherForm.startDate}T00:00:00`,
+              endDate: `${voucherForm.endDate}T23:59:59`,
               totalQuantity, maxUsesPerCustomer: perCustomer,
             };
             setVoucherSaving(true);
@@ -128,15 +132,15 @@ export function ManagerDashboard() {
             <Field label={voucherForm.discountType === "PERCENTAGE" ? "Discount Value (%)" : "Discount Value (đ)"}><Input required type="number" min="0.01" max={voucherForm.discountType === "PERCENTAGE" ? 100 : undefined} step="0.01" value={voucherForm.discountValue} onChange={(e) => updateVoucher("discountValue", e.target.value)} /></Field>
             {voucherForm.discountType === "PERCENTAGE" && <Field label="Mức giảm tối đa (đ)"><Input type="number" min="0" step="1000" value={voucherForm.maxDiscountAmount} onChange={(e) => updateVoucher("maxDiscountAmount", e.target.value)} placeholder="100000" /></Field>}
             <Field label="Giá trị đơn tối thiểu (đ)"><Input required type="number" min="0" step="1000" value={voucherForm.minOrderAmount} onChange={(e) => updateVoucher("minOrderAmount", e.target.value)} /></Field>
-            <Field label="Ngày áp dụng bắt đầu"><Input required type="datetime-local" value={voucherForm.startDate} onChange={(e) => updateVoucher("startDate", e.target.value)} /></Field>
-            <Field label="Ngày áp dụng kết thúc"><Input required type="datetime-local" value={voucherForm.endDate} onChange={(e) => updateVoucher("endDate", e.target.value)} /></Field>
+            <Field label="Ngày bắt đầu áp dụng"><Input required type="date" value={voucherForm.startDate} onChange={(e) => updateVoucher("startDate", e.target.value)} /></Field>
+            <Field label="Ngày kết thúc áp dụng"><Input required type="date" min={voucherForm.startDate || undefined} value={voucherForm.endDate} onChange={(e) => updateVoucher("endDate", e.target.value)} /></Field>
             <Field label="Số lượng phát hành"><Input required type="number" min="1" step="1" value={voucherForm.totalQuantity} onChange={(e) => updateVoucher("totalQuantity", e.target.value)} /></Field>
             <Field label="Giới hạn dùng mỗi khách (theo SĐT)"><Input required type="number" min="1" step="1" value={voucherForm.maxUsesPerCustomer} onChange={(e) => updateVoucher("maxUsesPerCustomer", e.target.value)} /></Field>
             <div className="flex items-end"><Button type="submit" disabled={voucherSaving} className="w-full"><Plus className="mr-2 h-4 w-4" />{voucherSaving ? "Đang lưu..." : "Tạo voucher"}</Button></div>
           </form>
         </div>
         <div className="surface-card overflow-x-auto p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-medium">Danh sách voucher</h2><Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>{voucherLoading ? "Đang tải..." : "Làm mới"}</Button></div>
-          {voucherLoading && vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Đang tải dữ liệu...</p> : vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p> : <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Mã / Chương trình</th><th>Ưu đãi</th><th>Hiệu lực</th><th>Đã dùng / phát hành</th><th>Giới hạn/khách</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{vouchersList.map((v) => <tr key={v.id} className="border-b last:border-0"><td className="py-3"><b>{v.voucherCode}</b><p>{v.title}</p><p className="max-w-xs text-xs text-muted-foreground">{v.description}</p></td><td>{v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : `${formatVND(v.discountValue)}`}<p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>{v.maxDiscountAmount != null && <p className="text-xs text-muted-foreground">Tối đa {formatVND(v.maxDiscountAmount)}</p>}</td><td>{localDateTime(v.startDate)} – {localDateTime(v.endDate)}</td><td>{v.usedQuantity} / {v.totalQuantity}</td><td>{v.maxUsesPerCustomer} lượt / SĐT</td><td><span className={v.active ? "text-green-600" : "text-muted-foreground"}>{v.active ? "Đang bật" : "Đã tắt"}</span></td><td><div className="flex gap-1"><Button type="button" size="sm" variant="outline" onClick={async () => { try { await voucherApi.setActive(v.id, !v.active); await loadVouchers(); } catch (error) { toast.error(error instanceof Error ? error.message : "Không cập nhật được trạng thái."); } }}>{v.active ? "Tắt" : "Bật"}</Button><Button type="button" size="icon" variant="ghost" aria-label="Xóa voucher" onClick={async () => { if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return; try { await voucherApi.remove(v.id); await loadVouchers(); toast.success("Đã xóa voucher."); } catch (error) { toast.error(error instanceof Error ? error.message : "Không xóa được voucher."); } }}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody></table>}
+          {voucherLoading && vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Đang tải dữ liệu...</p> : vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p> : <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Mã / Chương trình</th><th>Ưu đãi</th><th>Hiệu lực</th><th>Đã dùng / phát hành</th><th>Giới hạn/khách</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{vouchersList.map((v) => <tr key={v.id} className="border-b last:border-0"><td className="py-3"><b>{v.voucherCode}</b><p>{v.title}</p><p className="max-w-xs text-xs text-muted-foreground">{v.description}</p></td><td>{v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : `${formatVND(v.discountValue)}`}<p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>{v.maxDiscountAmount != null && <p className="text-xs text-muted-foreground">Tối đa {formatVND(v.maxDiscountAmount)}</p>}</td><td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td><td>{v.usedQuantity} / {v.totalQuantity}</td><td>{v.maxUsesPerCustomer} lượt / SĐT</td><td><span className={v.active ? "text-green-600" : "text-muted-foreground"}>{v.active ? "Đang bật" : "Đã tắt"}</span></td><td><div className="flex gap-1"><Button type="button" size="sm" variant="outline" onClick={async () => { try { await voucherApi.setActive(v.id, !v.active); await loadVouchers(); } catch (error) { toast.error(error instanceof Error ? error.message : "Không cập nhật được trạng thái."); } }}>{v.active ? "Tắt" : "Bật"}</Button><Button type="button" size="icon" variant="ghost" aria-label="Xóa voucher" onClick={async () => { if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return; try { await voucherApi.remove(v.id); await loadVouchers(); toast.success("Đã xóa voucher."); } catch (error) { toast.error(error instanceof Error ? error.message : "Không xóa được voucher."); } }}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody></table>}
         </div>
       </section>}
       {activeTab === "overview" && <>
