@@ -4,10 +4,21 @@ import { ArrowLeft, Loader2, UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/account-api";
+import { useEffect, useState, type FormEvent } from "react";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { AuthLayout, Field, PasswordInput } from "@/components/hv/AuthLayout";
+import { useAuth } from "@/lib/auth-store";
 import { getHomeForRole } from "@/lib/role-routing";
 
+export const Route = createFileRoute("/login")({
+  head: () => ({ meta: [{ title: "Đăng nhập — Hương Việt" }] }),
+  component: LoginPage,
+});
 
-export const Route = createFileRoute("/login")({ component: LoginPage });
+type Errors = Partial<Record<"usernameOrEmail" | "password", string | undefined>>;
 
 function LoginPage() {
   const [email, setEmail] = useState("");
@@ -15,6 +26,11 @@ function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
+  const [f, setF] = useState({ usernameOrEmail: "", password: "" });
+  const [errors, setErrors] = useState<Errors>({});
+  const [formError, setFormError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const set = (k: keyof typeof f, v: string) => { setF((p) => ({ ...p, [k]: v })); setErrors((p) => ({ ...p, [k]: undefined })); };
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
