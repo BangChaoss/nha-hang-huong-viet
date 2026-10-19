@@ -182,10 +182,14 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [voucherBusy, setVoucherBusy] = useState(false);
+  const [voucherValidated, setVoucherValidated] = useState(false);
+  const [voucherDiscount, setVoucherDiscount] = useState(0);
   const subtotal = table.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
   const vat = subtotal * 0.1;
-  const v = vouchers[code.trim().toUpperCase()];
-  const discount = v ? Math.min(v.calc(subtotal), subtotal) : 0;
+  // Chỉ áp dụng giảm giá sau khi backend đã xác nhận voucher hợp lệ.
+  const discount = voucherValidated ? Math.min(voucherDiscount, subtotal) : 0;
   const beforeRedeem = subtotal + vat - discount;
   const redeemed = redeem ? Math.min(loyaltyBalance, beforeRedeem) : 0;
   const total = beforeRedeem - redeemed;
