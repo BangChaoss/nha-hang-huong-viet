@@ -115,8 +115,10 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/forgot-password'
     | '/login'
     | '/manager'
+    | '/register'
     | '/staff'
     | '/users'
   fileRoutesByTo: FileRoutesByTo
@@ -125,8 +127,10 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/forgot-password'
     | '/login'
     | '/manager'
+    | '/register'
     | '/staff'
     | '/users'
   id:
@@ -135,8 +139,10 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/forgot-password'
     | '/login'
     | '/manager'
+    | '/register'
     | '/staff'
     | '/users'
   fileRoutesById: FileRoutesById
