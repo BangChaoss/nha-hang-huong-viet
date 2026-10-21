@@ -1,9 +1,4 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
-import { ArrowLeft, Loader2, UtensilsCrossed } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { authApi } from "@/lib/account-api";
 import { useEffect, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,10 +16,7 @@ export const Route = createFileRoute("/login")({
 type Errors = Partial<Record<"usernameOrEmail" | "password", string | undefined>>;
 
 function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const { login, user, ready } = useAuth();
   const navigate = useNavigate();
   const [f, setF] = useState({ usernameOrEmail: "", password: "" });
   const [errors, setErrors] = useState<Errors>({});
@@ -32,33 +24,55 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const set = (k: keyof typeof f, v: string) => { setF((p) => ({ ...p, [k]: v })); setErrors((p) => ({ ...p, [k]: undefined })); };
 
+  useEffect(() => {
+    if (ready && user && !loading) navigate({ to: getHomeForRole(user.role), replace: true });
+  }, [ready, user, loading, navigate]);
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError("");
-    setSubmitting(true);
+    const next: Errors = {};
+    if (!f.usernameOrEmail.trim()) next.usernameOrEmail = "Vui lòng nhập tên đăng nhập hoặc email";
+    if (!f.password) next.password = "Vui lòng nhập mật khẩu";
+    setErrors(next);
+    setFormError("");
+    if (Object.keys(next).length) return;
+
+    setLoading(true);
     try {
-      // Role comes from the backend response; never grant a role from client input.
-      const session = await authApi.login(email.trim(), password);
-      void navigate({ to: getHomeForRole(session.role) });
+      const u = await login({ usernameOrEmail: f.usernameOrEmail.trim(), password: f.password });
+      // Điều hướng theo role do effect phía trên xử lý khi `user` thay đổi.
+      toast.success(`Chào mừng ${u.username} quay lại!`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Đăng nhập thất bại.");
+      setFormError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   }
 
-  return <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
-    <div className="w-full max-w-md rounded-2xl border bg-card p-8 shadow-sm">
-      <Link to="/" className="mb-8 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Về trang khách hàng</Link>
-      <div className="mb-6 flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground"><UtensilsCrossed className="h-5 w-5" /></div><div><p className="font-display text-xl font-semibold">HƯƠNG VIỆT</p><p className="text-xs text-muted-foreground">Đăng nhập hệ thống</p></div></div>
-      <h1 className="text-2xl font-semibold">Đăng nhập</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Sử dụng tài khoản được cấp để truy cập hệ thống.</p>
-      <form onSubmit={submit} className="mt-6 space-y-4">
-        <div className="space-y-2"><Label htmlFor="email">Email / Tên đăng nhập</Label><input id="email" type="text" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" /></div>
-        <div className="space-y-2"><Label htmlFor="password">Mật khẩu</Label><input id="password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" /></div>
-        {error && <p role="alert" className="rounded-md status-cancelled px-3 py-2 text-sm">{error}</p>}
-        <Button type="submit" className="w-full" disabled={submitting}>{submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Đăng nhập</Button>
+  return (
+    <AuthLayout
+      eyebrow="Chào mừng trở lại"
+      title="Đăng nhập"
+      description="Đăng nhập để đặt bàn, tích điểm và truy cập hệ thống."
+      footer={<>Chưa có tài khoản? <Link to="/register" className="font-medium text-primary hover:underline">Đăng ký ngay</Link></>}
+    >
+      <form onSubmit={submit} noValidate className="space-y-4">
+        {formError && <p role="alert" className="status-cancelled rounded-lg px-3 py-2 text-sm">{formError}</p>}
+        <Field id="usernameOrEmail" label="Tên đăng nhập hoặc Email" error={errors.usernameOrEmail}>
+          <Input id="usernameOrEmail" autoComplete="username" autoFocus className="bg-card" placeholder="nguyenvana hoặc email@vidu.com"
+            value={f.usernameOrEmail} onChange={(e) => set("usernameOrEmail", e.target.value)}
+            aria-invalid={!!errors.usernameOrEmail} aria-describedby={errors.usernameOrEmail ? "usernameOrEmail-error" : undefined} />
+        </Field>
+        <Field id="password" label="Mật khẩu" error={errors.password}
+          action={<Link to="/forgot-password" className="text-xs font-medium text-primary hover:underline">Quên mật khẩu?</Link>}>
+          <PasswordInput id="password" autoComplete="current-password"
+            value={f.password} onChange={(e) => set("password", e.target.value)}
+            aria-invalid={!!errors.password} aria-describedby={errors.password ? "password-error" : undefined} />
+        </Field>
+        <Button type="submit" disabled={loading} className="w-full bg-primary hover:bg-primary-hover">
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}Đăng Nhập
+        </Button>
       </form>
-    </div>
-  </main>;
+    </AuthLayout>
+  );
 }
