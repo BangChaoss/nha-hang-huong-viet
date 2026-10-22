@@ -6,24 +6,47 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const session = getSession();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session.token}` } : {}), ...(init.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
+      ...(init.headers ?? {}),
+    },
   });
   if (!response.ok) {
     let message = `Yêu cầu thất bại (${response.status})`;
-    try { const body = await response.json(); message = body.message ?? body.detail ?? message; } catch { /* no JSON */ }
+    try {
+      const body = await response.json();
+      message = body.message ?? body.detail ?? message;
+    } catch {
+      /* no JSON */
+    }
     throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
 
 export type LoyaltyRate = { earnRatePercent: number; updatedAt: string | null };
-export type PaymentOrderStatus = { orderId: string; status: "PENDING" | "PAID" | "FAILED"; amount: number; phoneNumber: string; pointsAwarded: number; responseCode: string };
+export type PaymentOrderStatus = {
+  orderId: string;
+  status: "PENDING" | "PAID" | "FAILED";
+  amount: number;
+  phoneNumber: string;
+  pointsAwarded: number;
+  responseCode: string;
+};
 
 export const paymentApi = {
   createVnpay: (payload: { subtotal: number; phoneNumber: string; voucherCode?: string }) =>
-    request<{ orderId: string; paymentUrl: string }>("/api/payments/vnpay/create", { method: "POST", body: JSON.stringify(payload) }),
-  order: (id: string) => request<PaymentOrderStatus>(`/api/payments/vnpay/orders/${encodeURIComponent(id)}`),
+    request<{ orderId: string; paymentUrl: string }>("/api/payments/vnpay/create", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  order: (id: string) =>
+    request<PaymentOrderStatus>(`/api/payments/vnpay/orders/${encodeURIComponent(id)}`),
   getLoyaltyRate: () => request<LoyaltyRate>("/api/admin/loyalty/settings"),
   updateLoyaltyRate: (earnRatePercent: number) =>
-    request<LoyaltyRate>("/api/admin/loyalty/settings", { method: "PUT", body: JSON.stringify({ earnRatePercent }) }),
+    request<LoyaltyRate>("/api/admin/loyalty/settings", {
+      method: "PUT",
+      body: JSON.stringify({ earnRatePercent }),
+    }),
 };

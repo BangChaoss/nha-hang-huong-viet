@@ -22,7 +22,10 @@ function LoginPage() {
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
-  const set = (k: keyof typeof f, v: string) => { setF((p) => ({ ...p, [k]: v })); setErrors((p) => ({ ...p, [k]: undefined })); };
+  const set = (k: keyof typeof f, v: string) => {
+    setF((p) => ({ ...p, [k]: v }));
+    setErrors((p) => ({ ...p, [k]: undefined }));
+  };
 
   useEffect(() => {
     if (ready && user && !loading) navigate({ to: getHomeForRole(user.role), replace: true });
@@ -54,22 +57,61 @@ function LoginPage() {
       eyebrow="Chào mừng trở lại"
       title="Đăng nhập"
       description="Đăng nhập để đặt bàn, tích điểm và truy cập hệ thống."
-      footer={<>Chưa có tài khoản? <Link to="/register" className="font-medium text-primary hover:underline">Đăng ký ngay</Link></>}
+      footer={
+        <>
+          Chưa có tài khoản?{" "}
+          <Link to="/register" className="font-medium text-primary hover:underline">
+            Đăng ký ngay
+          </Link>
+        </>
+      }
     >
       <form onSubmit={submit} noValidate className="space-y-4">
-        {formError && <p role="alert" className="status-cancelled rounded-lg px-3 py-2 text-sm">{formError}</p>}
+        {formError && (
+          <p role="alert" className="status-cancelled rounded-lg px-3 py-2 text-sm">
+            {formError}
+          </p>
+        )}
         <Field id="usernameOrEmail" label="Tên đăng nhập hoặc Email" error={errors.usernameOrEmail}>
-          <Input id="usernameOrEmail" autoComplete="username" autoFocus className="bg-card" placeholder="nguyenvana hoặc email@vidu.com"
-            value={f.usernameOrEmail} onChange={(e) => set("usernameOrEmail", e.target.value)}
-            aria-invalid={!!errors.usernameOrEmail} aria-describedby={errors.usernameOrEmail ? "usernameOrEmail-error" : undefined} />
+          <Input
+            id="usernameOrEmail"
+            autoComplete="username"
+            autoFocus
+            className="bg-card"
+            placeholder="nguyenvana hoặc email@vidu.com"
+            value={f.usernameOrEmail}
+            onChange={(e) => set("usernameOrEmail", e.target.value)}
+            aria-invalid={!!errors.usernameOrEmail}
+            aria-describedby={errors.usernameOrEmail ? "usernameOrEmail-error" : undefined}
+          />
         </Field>
-        <Field id="password" label="Mật khẩu" error={errors.password}
-          action={<Link to="/forgot-password" className="text-xs font-medium text-primary hover:underline">Quên mật khẩu?</Link>}>
-          <PasswordInput id="password" autoComplete="current-password"
-            value={f.password} onChange={(e) => set("password", e.target.value)}
-            aria-invalid={!!errors.password} aria-describedby={errors.password ? "password-error" : undefined} />
+        <Field
+          id="password"
+          label="Mật khẩu"
+          error={errors.password}
+          action={
+            <Link
+              to="/forgot-password"
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Quên mật khẩu?
+            </Link>
+          }
+        >
+          <PasswordInput
+            id="password"
+            autoComplete="current-password"
+            value={f.password}
+            onChange={(e) => set("password", e.target.value)}
+            aria-invalid={!!errors.password}
+            aria-describedby={errors.password ? "password-error" : undefined}
+          />
         </Field>
-        <Button type="submit" disabled={loading} className="w-full bg-primary hover:bg-primary-hover">
+        <Button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-primary hover:bg-primary-hover"
+        >
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}Đăng Nhập
         </Button>
       </form>

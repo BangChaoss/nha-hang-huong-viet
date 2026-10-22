@@ -28,8 +28,15 @@ function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
 
   const copy: Record<Step, { title: string; description: string }> = {
-    email: { title: "Quên mật khẩu", description: "Nhập email đã đăng ký, chúng tôi sẽ gửi mã OTP gồm 6 chữ số để đặt lại mật khẩu." },
-    reset: { title: "Đặt lại mật khẩu", description: "Nhập mã OTP trong email và mật khẩu mới của bạn." },
+    email: {
+      title: "Quên mật khẩu",
+      description:
+        "Nhập email đã đăng ký, chúng tôi sẽ gửi mã OTP gồm 6 chữ số để đặt lại mật khẩu.",
+    },
+    reset: {
+      title: "Đặt lại mật khẩu",
+      description: "Nhập mã OTP trong email và mật khẩu mới của bạn.",
+    },
     done: { title: "Thành công", description: "Mật khẩu của bạn đã được cập nhật." },
   };
 
@@ -38,11 +45,30 @@ function ForgotPasswordPage() {
       eyebrow="Khôi phục tài khoản"
       title={copy[step].title}
       description={copy[step].description}
-      footer={step !== "done" && <>Nhớ mật khẩu rồi? <Link to="/login" className="font-medium text-primary hover:underline">Đăng nhập</Link></>}
+      footer={
+        step !== "done" && (
+          <>
+            Nhớ mật khẩu rồi?{" "}
+            <Link to="/login" className="font-medium text-primary hover:underline">
+              Đăng nhập
+            </Link>
+          </>
+        )
+      }
     >
       <Stepper current={step} />
-      {step === "email" && <EmailStep initial={email} onSent={(e) => { setEmail(e); setStep("reset"); }} />}
-      {step === "reset" && <ResetStep email={email} onBack={() => setStep("email")} onDone={() => setStep("done")} />}
+      {step === "email" && (
+        <EmailStep
+          initial={email}
+          onSent={(e) => {
+            setEmail(e);
+            setStep("reset");
+          }}
+        />
+      )}
+      {step === "reset" && (
+        <ResetStep email={email} onBack={() => setStep("email")} onDone={() => setStep("done")} />
+      )}
       {step === "done" && <DoneStep />}
     </AuthLayout>
   );
@@ -53,15 +79,32 @@ function Stepper({ current }: { current: Step }) {
   return (
     <ol className="mb-6 flex items-center gap-2" aria-label="Các bước khôi phục">
       {steps.map((s, i) => (
-        <li key={s.key} className="flex flex-1 items-center gap-2" aria-current={i === idx ? "step" : undefined}>
-          <span className={cn(
-            "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums",
-            i < idx && "border-moss bg-moss text-moss-foreground",
-            i === idx && "border-primary bg-primary text-primary-foreground",
-            i > idx && "bg-card text-muted-foreground",
-          )}>{i + 1}</span>
-          <span className={cn("hidden text-xs sm:inline", i === idx ? "font-medium text-foreground" : "text-muted-foreground")}>{s.label}</span>
-          {i < steps.length - 1 && <span className={cn("h-px flex-1", i < idx ? "bg-moss" : "bg-border")} />}
+        <li
+          key={s.key}
+          className="flex flex-1 items-center gap-2"
+          aria-current={i === idx ? "step" : undefined}
+        >
+          <span
+            className={cn(
+              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums",
+              i < idx && "border-moss bg-moss text-moss-foreground",
+              i === idx && "border-primary bg-primary text-primary-foreground",
+              i > idx && "bg-card text-muted-foreground",
+            )}
+          >
+            {i + 1}
+          </span>
+          <span
+            className={cn(
+              "hidden text-xs sm:inline",
+              i === idx ? "font-medium text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {s.label}
+          </span>
+          {i < steps.length - 1 && (
+            <span className={cn("h-px flex-1", i < idx ? "bg-moss" : "bg-border")} />
+          )}
         </li>
       ))}
     </ol>
@@ -76,7 +119,10 @@ function EmailStep({ initial, onSent }: { initial: string; onSent: (email: strin
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const value = email.trim().toLowerCase();
-    if (!EMAIL_RE.test(value)) { setError("Email không hợp lệ"); return; }
+    if (!EMAIL_RE.test(value)) {
+      setError("Email không hợp lệ");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -94,9 +140,21 @@ function EmailStep({ initial, onSent }: { initial: string; onSent: (email: strin
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
       <Field id="email" label="Email" error={error}>
-        <Input id="email" type="email" autoComplete="email" autoFocus className="bg-card" placeholder="email@vidu.com"
-          value={email} onChange={(e) => { setEmail(e.target.value); setError(""); }}
-          aria-invalid={!!error} aria-describedby={error ? "email-error" : undefined} />
+        <Input
+          id="email"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          className="bg-card"
+          placeholder="email@vidu.com"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setError("");
+          }}
+          aria-invalid={!!error}
+          aria-describedby={error ? "email-error" : undefined}
+        />
       </Field>
       <Button type="submit" disabled={loading} className="w-full bg-primary hover:bg-primary-hover">
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}Gửi Mã OTP
@@ -107,7 +165,15 @@ function EmailStep({ initial, onSent }: { initial: string; onSent: (email: strin
 
 type ResetErrors = Partial<Record<"otp" | "password" | "confirm", string | undefined>>;
 
-function ResetStep({ email, onBack, onDone }: { email: string; onBack: () => void; onDone: () => void }) {
+function ResetStep({
+  email,
+  onBack,
+  onDone,
+}: {
+  email: string;
+  onBack: () => void;
+  onDone: () => void;
+}) {
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -162,41 +228,90 @@ function ResetStep({ email, onBack, onDone }: { email: string; onBack: () => voi
     <form onSubmit={submit} noValidate className="space-y-4">
       <div className="flex items-start gap-3 rounded-lg bg-accent p-3 text-sm text-accent-foreground">
         <MailCheck className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>Mã OTP đã được gửi tới <span className="font-medium break-all">{email}</span>.{" "}
-          <button type="button" onClick={onBack} className="font-medium underline-offset-2 hover:underline">Đổi email</button></p>
+        <p>
+          Mã OTP đã được gửi tới <span className="font-medium break-all">{email}</span>.{" "}
+          <button
+            type="button"
+            onClick={onBack}
+            className="font-medium underline-offset-2 hover:underline"
+          >
+            Đổi email
+          </button>
+        </p>
       </div>
-      {formError && <p role="alert" className="status-cancelled rounded-lg px-3 py-2 text-sm">{formError}</p>}
+      {formError && (
+        <p role="alert" className="status-cancelled rounded-lg px-3 py-2 text-sm">
+          {formError}
+        </p>
+      )}
 
       <Field id="otp" label="Mã OTP" error={errors.otp}>
-        <InputOTP id="otp" maxLength={6} inputMode="numeric" pattern="^\d*$" autoFocus autoComplete="one-time-code"
-          value={otp} onChange={(v) => { setOtp(v); setErrors((p) => ({ ...p, otp: undefined })); }}
-          containerClassName="w-full" aria-invalid={!!errors.otp}>
+        <InputOTP
+          id="otp"
+          maxLength={6}
+          inputMode="numeric"
+          pattern="^\d*$"
+          autoFocus
+          autoComplete="one-time-code"
+          value={otp}
+          onChange={(v) => {
+            setOtp(v);
+            setErrors((p) => ({ ...p, otp: undefined }));
+          }}
+          containerClassName="w-full"
+          aria-invalid={!!errors.otp}
+        >
           <InputOTPGroup className="w-full gap-1.5 sm:w-auto sm:gap-2">
             {Array.from({ length: 6 }, (_, i) => (
-              <InputOTPSlot key={i} index={i}
-                className={cn("h-11 w-auto min-w-0 flex-1 rounded-md border bg-card text-base font-medium tabular-nums first:rounded-md last:rounded-md sm:h-12 sm:w-12 sm:flex-none",
-                  errors.otp && "border-destructive")} />
+              <InputOTPSlot
+                key={i}
+                index={i}
+                className={cn(
+                  "h-11 w-auto min-w-0 flex-1 rounded-md border bg-card text-base font-medium tabular-nums first:rounded-md last:rounded-md sm:h-12 sm:w-12 sm:flex-none",
+                  errors.otp && "border-destructive",
+                )}
+              />
             ))}
           </InputOTPGroup>
         </InputOTP>
       </Field>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Mã có hiệu lực trong 30 phút.</span>
-        <button type="button" onClick={resend} disabled={cooldown > 0 || resending}
-          className="font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline">
+        <button
+          type="button"
+          onClick={resend}
+          disabled={cooldown > 0 || resending}
+          className="font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
+        >
           {resending ? "Đang gửi…" : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
         </button>
       </div>
 
       <Field id="newPassword" label="Mật khẩu mới" error={errors.password} hint="Tối thiểu 8 ký tự">
-        <PasswordInput id="newPassword" autoComplete="new-password"
-          value={password} onChange={(e) => { setPassword(e.target.value); setErrors((p) => ({ ...p, password: undefined })); }}
-          aria-invalid={!!errors.password} aria-describedby={errors.password ? "newPassword-error" : undefined} />
+        <PasswordInput
+          id="newPassword"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setErrors((p) => ({ ...p, password: undefined }));
+          }}
+          aria-invalid={!!errors.password}
+          aria-describedby={errors.password ? "newPassword-error" : undefined}
+        />
       </Field>
       <Field id="confirm" label="Xác nhận mật khẩu mới" error={errors.confirm}>
-        <PasswordInput id="confirm" autoComplete="new-password"
-          value={confirm} onChange={(e) => { setConfirm(e.target.value); setErrors((p) => ({ ...p, confirm: undefined })); }}
-          aria-invalid={!!errors.confirm} aria-describedby={errors.confirm ? "confirm-error" : undefined} />
+        <PasswordInput
+          id="confirm"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(e) => {
+            setConfirm(e.target.value);
+            setErrors((p) => ({ ...p, confirm: undefined }));
+          }}
+          aria-invalid={!!errors.confirm}
+          aria-describedby={errors.confirm ? "confirm-error" : undefined}
+        />
       </Field>
       <Button type="submit" disabled={loading} className="w-full bg-primary hover:bg-primary-hover">
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}Đặt Lại Mật Khẩu
@@ -209,10 +324,19 @@ function DoneStep() {
   const navigate = useNavigate();
   return (
     <div className="flex flex-col items-center py-2 text-center">
-      <div className="status-available flex h-14 w-14 items-center justify-center rounded-full"><CheckCircle2 className="h-7 w-7" /></div>
+      <div className="status-available flex h-14 w-14 items-center justify-center rounded-full">
+        <CheckCircle2 className="h-7 w-7" />
+      </div>
       <p className="mt-4 font-display text-2xl font-semibold">Mật khẩu đã được đặt lại</p>
-      <p className="mt-1 text-sm text-muted-foreground">Hãy đăng nhập bằng mật khẩu mới để tiếp tục.</p>
-      <Button onClick={() => navigate({ to: "/login" })} className="mt-6 w-full bg-primary hover:bg-primary-hover">Về Trang Đăng Nhập</Button>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Hãy đăng nhập bằng mật khẩu mới để tiếp tục.
+      </p>
+      <Button
+        onClick={() => navigate({ to: "/login" })}
+        className="mt-6 w-full bg-primary hover:bg-primary-hover"
+      >
+        Về Trang Đăng Nhập
+      </Button>
     </div>
   );
 }
