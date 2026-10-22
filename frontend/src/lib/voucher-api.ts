@@ -26,9 +26,7 @@ export type VoucherPayload = Omit<
   "id" | "usedQuantity" | "active" | "createdAt" | "updatedAt"
 >;
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080"
-).replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getSession()?.token;
@@ -68,8 +66,7 @@ export const voucherApi = {
       method: "PATCH",
       body: JSON.stringify({ active }),
     }),
-  remove: (id: string) =>
-    request<void>(`/api/admin/vouchers/${id}`, { method: "DELETE" }),
+  remove: (id: string) => request<void>(`/api/admin/vouchers/${id}`, { method: "DELETE" }),
 };
 
 export type VoucherValidation = {
@@ -79,21 +76,13 @@ export type VoucherValidation = {
   voucherCode: string;
 };
 
-export const validateVoucher = (
-  voucherCode: string,
-  phoneNumber: string,
-  orderAmount: number,
-) =>
+export const validateVoucher = (voucherCode: string, phoneNumber: string, orderAmount: number) =>
   request<VoucherValidation>("/api/vouchers/validate", {
     method: "POST",
     body: JSON.stringify({ voucherCode, phoneNumber, orderAmount }),
   });
 
-export const redeemVoucher = (
-  voucherCode: string,
-  phoneNumber: string,
-  orderAmount: number,
-) =>
+export const redeemVoucher = (voucherCode: string, phoneNumber: string, orderAmount: number) =>
   request<VoucherValidation>("/api/vouchers/redeem", {
     method: "POST",
     body: JSON.stringify({ voucherCode, phoneNumber, orderAmount }),

@@ -47,7 +47,12 @@ export function VnpayPaymentButton({ invoiceId, disabled, className }: Props) {
   };
 
   return (
-    <Button type="button" className={className} disabled={disabled || loading} onClick={startPayment}>
+    <Button
+      type="button"
+      className={className}
+      disabled={disabled || loading}
+      onClick={startPayment}
+    >
       {loading ? "Đang chuyển đến VNPAY..." : "Thanh toán qua VNPAY"}
     </Button>
   );
