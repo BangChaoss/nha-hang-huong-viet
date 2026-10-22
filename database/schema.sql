@@ -37,6 +37,7 @@ DROP TABLE IF EXISTS menu_items;
 DROP TABLE IF EXISTS categories;
 DROP TABLE IF EXISTS reservation_audits;
 DROP TABLE IF EXISTS reservations;
+DROP TABLE IF EXISTS floor_plan_layouts;
 DROP TABLE IF EXISTS restaurant_tables;
 DROP TABLE IF EXISTS table_zones;
 DROP TABLE IF EXISTS users;
@@ -151,7 +152,7 @@ CREATE TABLE restaurant_tables (
     zone_id CHAR(36) NOT NULL,
     table_number VARCHAR(20) NOT NULL,
     capacity INT NOT NULL,
-    status ENUM('AVAILABLE', 'OCCUPIED', 'CLEANING', 'MAINTENANCE') NOT NULL DEFAULT 'AVAILABLE',
+    status ENUM('AVAILABLE', 'RESERVED', 'OCCUPIED', 'CLEANING', 'MAINTENANCE') NOT NULL DEFAULT 'AVAILABLE',
     version BIGINT NOT NULL DEFAULT 0,
     deleted_at DATETIME(6) NULL,
 
@@ -163,6 +164,26 @@ CREATE TABLE restaurant_tables (
     CONSTRAINT fk_tables_zone FOREIGN KEY (zone_id) REFERENCES table_zones (id) ON DELETE RESTRICT,
     CONSTRAINT chk_tables_capacity CHECK (capacity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ==============================================================================
+-- 3b. FLOOR PLAN LAYOUTS (floor_plan_layouts)
+-- ==============================================================================
+CREATE TABLE floor_plan_layouts (
+    id          CHAR(36)     NOT NULL,
+    table_id    CHAR(36)     NOT NULL,
+    position_x  DOUBLE       NOT NULL DEFAULT 0,
+    position_y  DOUBLE       NOT NULL DEFAULT 0,
+    width       DOUBLE       NOT NULL DEFAULT 80,
+    height      DOUBLE       NOT NULL DEFAULT 80,
+    rotation    DOUBLE       NOT NULL DEFAULT 0,
+    shape       ENUM('RECTANGLE', 'CIRCLE') NOT NULL DEFAULT 'RECTANGLE',
+    updated_at  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_fpl_table (table_id),
+    CONSTRAINT fk_fpl_table FOREIGN KEY (table_id) REFERENCES restaurant_tables (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ==============================================================================
 -- 4. TABLE RESERVATIONS (reservations)
