@@ -44,6 +44,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/payments/vnpay/create", "/api/payments/vnpay/ipn", "/api/payments/vnpay/return", "/api/payments/vnpay/orders/**").permitAll()
                 .requestMatchers("/api/account/**").authenticated()
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
