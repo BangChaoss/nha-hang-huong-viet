@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { voucherApi, type Voucher, type VoucherPayload, type DiscountType } from "@/lib/voucher-api";
+import { paymentApi } from "@/lib/payment-api";
 
 const week = [
   { d: "T2", v: 18.2 }, { d: "T3", v: 21.5 }, { d: "T4", v: 19.8 }, { d: "T5", v: 24.1 }, { d: "T6", v: 31.4 }, { d: "T7", v: 38.9 },
@@ -31,7 +32,7 @@ const formatVoucherDate = (value: string) => {
 };
 
 export function ManagerDashboard() {
-  const [activeTab, setActiveTab] = useState<"overview" | "permissions" | "vouchers">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "permissions" | "vouchers" | "loyalty">("overview");
   const [userRoles, setUserRoles] = useState([
     { phone: "0903123456", name: "Nguyễn Văn A", role: "CUSTOMER" as UserRole },
     { phone: "0903987654", name: "Trần Thị B", role: "STAFF" as UserRole },
@@ -41,6 +42,8 @@ export function ManagerDashboard() {
   const [vouchersList, setVouchersList] = useState<Voucher[]>([]);
   const [voucherSaving, setVoucherSaving] = useState(false);
   const [voucherLoading, setVoucherLoading] = useState(false);
+  const [loyaltyRate, setLoyaltyRate] = useState("5");
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
   const updateVoucher = (key: keyof ReturnType<typeof emptyVoucher>, value: string) => setVoucherForm((v) => ({ ...v, [key]: value }));
 
   const loadVouchers = async () => {
@@ -56,6 +59,8 @@ export function ManagerDashboard() {
 
   useEffect(() => {
     void loadVouchers();
+    void paymentApi.getLoyaltyRate().then((value) => setLoyaltyRate(String(value.earnRatePercent)))
+      .catch((error) => toast.error(error instanceof Error ? error.message : "Không tải được cấu hình tích điểm."));
   }, []);
 
   const { transactions, dishes, toggleStock, tables } = useRestaurant();
@@ -81,6 +86,7 @@ export function ManagerDashboard() {
         <Button variant={activeTab === "overview" ? "default" : "outline"} onClick={() => setActiveTab("overview")}>Tổng quan</Button>
         <Button variant={activeTab === "permissions" ? "default" : "outline"} onClick={() => setActiveTab("permissions")}><ShieldCheck className="mr-2 h-4 w-4" />Phân quyền người dùng</Button>
         <Button variant={activeTab === "vouchers" ? "default" : "outline"} onClick={() => setActiveTab("vouchers")}><TicketPercent className="mr-2 h-4 w-4" />Voucher nhà hàng</Button>
+        <Button variant={activeTab === "loyalty" ? "default" : "outline"} onClick={() => setActiveTab("loyalty")}><Award className="mr-2 h-4 w-4" />Cấu hình tích điểm</Button>
       </div>
       {activeTab === "permissions" && <section className="surface-card space-y-4 p-5">
         <h2 className="text-2xl font-medium">Phân quyền người dùng</h2>
@@ -142,6 +148,30 @@ export function ManagerDashboard() {
         <div className="surface-card overflow-x-auto p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-medium">Danh sách voucher</h2><Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>{voucherLoading ? "Đang tải..." : "Làm mới"}</Button></div>
           {voucherLoading && vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Đang tải dữ liệu...</p> : vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p> : <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Mã / Chương trình</th><th>Ưu đãi</th><th>Hiệu lực</th><th>Đã dùng / phát hành</th><th>Giới hạn/khách</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{vouchersList.map((v) => <tr key={v.id} className="border-b last:border-0"><td className="py-3"><b>{v.voucherCode}</b><p>{v.title}</p><p className="max-w-xs text-xs text-muted-foreground">{v.description}</p></td><td>{v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : `${formatVND(v.discountValue)}`}<p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>{v.maxDiscountAmount != null && <p className="text-xs text-muted-foreground">Tối đa {formatVND(v.maxDiscountAmount)}</p>}</td><td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td><td>{v.usedQuantity} / {v.totalQuantity}</td><td>{v.maxUsesPerCustomer} lượt / SĐT</td><td><span className={v.active ? "text-green-600" : "text-muted-foreground"}>{v.active ? "Đang bật" : "Đã tắt"}</span></td><td><div className="flex gap-1"><Button type="button" size="sm" variant="outline" onClick={async () => { try { await voucherApi.setActive(v.id, !v.active); await loadVouchers(); } catch (error) { toast.error(error instanceof Error ? error.message : "Không cập nhật được trạng thái."); } }}>{v.active ? "Tắt" : "Bật"}</Button><Button type="button" size="icon" variant="ghost" aria-label="Xóa voucher" onClick={async () => { if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return; try { await voucherApi.remove(v.id); await loadVouchers(); toast.success("Đã xóa voucher."); } catch (error) { toast.error(error instanceof Error ? error.message : "Không xóa được voucher."); } }}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody></table>}
         </div>
+      </section>}
+      {activeTab === "loyalty" && <section className="surface-card max-w-2xl space-y-5 p-5">
+        <div>
+          <h2 className="text-2xl font-medium">Cấu hình tỷ lệ tích điểm</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Tỷ lệ được lưu trong database và áp dụng cho giao dịch VNPAY thành công. Điểm = số tiền thanh toán × tỷ lệ / 100.</p>
+        </div>
+        <form className="space-y-4" onSubmit={async (e) => {
+          e.preventDefault();
+          const rate = Number(loyaltyRate);
+          if (!Number.isFinite(rate) || rate < 0 || rate > 100) { toast.error("Tỷ lệ tích điểm phải từ 0 đến 100%."); return; }
+          setLoyaltySaving(true);
+          try {
+            const saved = await paymentApi.updateLoyaltyRate(rate);
+            setLoyaltyRate(String(saved.earnRatePercent));
+            toast.success("Đã cập nhật tỷ lệ tích điểm.");
+          } catch (error) { toast.error(error instanceof Error ? error.message : "Không lưu được cấu hình tích điểm."); }
+          finally { setLoyaltySaving(false); }
+        }}>
+          <Field label="Tỷ lệ tích điểm (%)">
+            <Input type="number" min="0" max="100" step="0.001" value={loyaltyRate} onChange={(e) => setLoyaltyRate(e.target.value)} required />
+          </Field>
+          <p className="text-sm text-muted-foreground">Ví dụ: thanh toán 200.000đ với tỷ lệ 5% sẽ được cộng 10.000 điểm.</p>
+          <Button type="submit" disabled={loyaltySaving}>{loyaltySaving ? "Đang lưu..." : "Lưu cấu hình"}</Button>
+        </form>
       </section>}
       {activeTab === "overview" && <>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
