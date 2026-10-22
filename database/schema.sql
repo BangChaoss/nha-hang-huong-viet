@@ -40,6 +40,10 @@ DROP TABLE IF EXISTS reservations;
 DROP TABLE IF EXISTS restaurant_tables;
 DROP TABLE IF EXISTS table_zones;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS payment_orders;
+DROP TABLE IF EXISTS loyalty_accounts;
+DROP TABLE IF EXISTS loyalty_settings;
+DROP TABLE IF EXISTS system_settings;
 
 -- ==============================================================================
 -- 1. IDENTITY & USER MANAGEMENT (users)
@@ -471,7 +475,7 @@ CREATE TABLE invoice_items (
 CREATE TABLE payments (
     id CHAR(36) NOT NULL,
     invoice_id CHAR(36) NOT NULL,
-    payment_method ENUM('CASH', 'CREDIT_CARD', 'BANK_TRANSFER') NOT NULL,
+    payment_method ENUM('CASH', 'CREDIT_CARD', 'BANK_TRANSFER', 'VNPAY') NOT NULL,
     transaction_reference VARCHAR(100) NULL,
     amount_paid DECIMAL(12, 2) NOT NULL,
     payment_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -527,7 +531,7 @@ CREATE TABLE loyalty_transactions (
     id CHAR(36) NOT NULL,
     wallet_id CHAR(36) NOT NULL,
     invoice_id CHAR(36) NULL,
-    transaction_type ENUM('EARN_5_PERCENT', 'REDEEM', 'EXPIRE', 'ADJUSTMENT') NOT NULL,
+    transaction_type ENUM('EARN_5_PERCENT','EARN_PAYMENT', 'REDEEM', 'EXPIRE', 'ADJUSTMENT') NOT NULL,
     points INT NOT NULL,
     balance_after INT NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -596,6 +600,85 @@ CREATE TABLE daily_dish_sales_summaries (
     KEY idx_daily_dish_rank (summary_date, total_quantity_sold),
     CONSTRAINT fk_daily_dish_menu FOREIGN KEY (dish_id) REFERENCES menu_items (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 24. LEGACY LOYALTY ACCOUNTS (loyalty_accounts)
+-- Giữ tương thích với hệ thống tích điểm theo số điện thoại ở bản 2
+-- ==============================================================================
+CREATE TABLE loyalty_accounts (
+    id VARCHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    points_balance DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    updated_at DATETIME NOT NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_loyalty_phone (customer_phone),
+
+    CONSTRAINT chk_loyalty_accounts_points
+        CHECK (points_balance >= 0.00)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 25. LOYALTY SETTINGS (loyalty_settings)
+-- Cấu hình tỷ lệ tích điểm
+-- ==============================================================================
+CREATE TABLE loyalty_settings (
+    id VARCHAR(36) NOT NULL,
+    earn_rate_percent DECIMAL(7, 3) NOT NULL DEFAULT 5.000,
+    updated_at DATETIME NOT NULL,
+
+    PRIMARY KEY (id),
+
+    CONSTRAINT chk_loyalty_rate
+        CHECK (
+            earn_rate_percent >= 0.000
+            AND earn_rate_percent <= 100.000
+        )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 26. PAYMENT ORDERS (payment_orders)
+-- Lưu thông tin đơn hàng thanh toán VNPay
+-- ==============================================================================
+CREATE TABLE payment_orders (
+    id VARCHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    subtotal DECIMAL(14, 2) NOT NULL,
+    discount_amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    amount DECIMAL(14, 2) NOT NULL,
+    voucher_code VARCHAR(50) NULL,
+    status VARCHAR(20) NOT NULL,
+    vnp_transaction_no VARCHAR(100) NULL,
+    vnp_response_code VARCHAR(10) NULL,
+    points_awarded DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    created_at DATETIME NOT NULL,
+    paid_at DATETIME NULL,
+
+    PRIMARY KEY (id),
+    KEY idx_payment_orders_txn (vnp_transaction_no),
+    KEY idx_payment_orders_phone (customer_phone),
+    KEY idx_payment_orders_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 27. SYSTEM SETTINGS (system_settings)
+-- Cấu hình chung của hệ thống
+-- ==============================================================================
+CREATE TABLE system_settings (
+    setting_key VARCHAR(100) NOT NULL,
+    setting_value VARCHAR(255) NOT NULL,
+    description VARCHAR(500) NULL,
+    updated_at DATETIME(6) NOT NULL
+        DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;
