@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { authApi, type AuthResponse, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
-
-export type AuthSession = { user: AuthUser; token: string; refreshToken: string | null };
+import { authApi, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
+import { getSession, setSession, updateSession, useSession, type AuthSession } from "@/lib/auth-session";
 
 type AuthCtx = {
   session: AuthSession | null;
@@ -13,28 +12,23 @@ type AuthCtx = {
   logout: () => Promise<void>;
 };
 
-const STORAGE_KEY = "hv.auth";
+// Phiên bản cũ lưu phiên riêng dưới key này ({ user, token, refreshToken }).
+// Nay dùng chung kho `auth-session` để trang tài khoản và header thấy cùng một phiên.
+const LEGACY_STORAGE_KEY = "hv.auth";
 const Ctx = createContext<AuthCtx | null>(null);
 
-function readStored(): AuthSession | null {
+function migrateLegacySession() {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AuthSession) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(session: AuthSession | null) {
-  try {
-    if (session) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-    else window.localStorage.removeItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return;
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    if (getSession()) return;
+    const { user, token, refreshToken } = JSON.parse(raw) as { user?: AuthUser; token?: string; refreshToken?: string | null };
+    if (user && token) setSession({ ...user, token, refreshToken: refreshToken ?? null });
   } catch { /* storage may be unavailable (private mode) */ }
 }
 
-function toSession({ token, refreshToken, id, username, email, role }: AuthResponse): AuthSession {
-  return { token, refreshToken, user: { id, username, email, role } };
-}
+const toUser = ({ id, username, email, role }: AuthSession): AuthUser => ({ id, username, email, role });
 
 /** Đọc `exp` trong JWT (giây). Trả về true nếu token đã/sắp hết hạn trong 30s. */
 function isExpired(token: string) {
@@ -47,55 +41,51 @@ function isExpired(token: string) {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const { session } = useSession();
   const [ready, setReady] = useState(false);
-
-  const save = useCallback((next: AuthSession | null) => {
-    setSession(next);
-    writeStored(next);
-  }, []);
 
   // Khôi phục phiên; nếu access token hết hạn thì xoay vòng bằng refresh token.
   useEffect(() => {
-    const stored = readStored();
+    migrateLegacySession();
+    const stored = getSession();
     if (!stored || !isExpired(stored.token)) {
-      setSession(stored);
       setReady(true);
       return;
     }
     if (!stored.refreshToken) {
-      writeStored(null);
+      setSession(null);
       setReady(true);
       return;
     }
     authApi.refresh(stored.refreshToken)
-      .then((r) => save({ ...stored, token: r.token, refreshToken: r.refreshToken }))
-      .catch(() => save(null))
+      .then((r) => updateSession({ token: r.token, refreshToken: r.refreshToken }))
+      .catch(() => setSession(null))
       .finally(() => setReady(true));
-  }, [save]);
+  }, []);
 
   const login = useCallback(async (payload: LoginPayload) => {
-    const next = toSession(await authApi.login(payload));
-    save(next);
-    return next.user;
-  }, [save]);
+    const next = await authApi.login(payload);
+    setSession(next);
+    return toUser(next);
+  }, []);
 
   const register = useCallback(async (payload: RegisterPayload) => {
-    const next = toSession(await authApi.register(payload));
-    save(next);
-    return next.user;
-  }, [save]);
+    const next = await authApi.register(payload);
+    setSession(next);
+    return toUser(next);
+  }, []);
 
   const logout = useCallback(async () => {
-    const token = session?.token;
-    save(null);
+    const token = getSession()?.token;
+    setSession(null);
     // Thu hồi token phía server; phiên cục bộ đã xoá nên bỏ qua lỗi mạng.
     if (token) await authApi.logout(token).catch(() => undefined);
-  }, [session, save]);
+  }, []);
 
+  const user = useMemo(() => (session ? toUser(session) : null), [session]);
   const value = useMemo<AuthCtx>(
-    () => ({ session, user: session?.user ?? null, ready, login, register, logout }),
-    [session, ready, login, register, logout],
+    () => ({ session, user, ready, login, register, logout }),
+    [session, user, ready, login, register, logout],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

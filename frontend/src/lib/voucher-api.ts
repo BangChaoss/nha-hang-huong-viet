@@ -1,3 +1,5 @@
+import { getSession } from "@/lib/auth-session";
+
 export type DiscountType = "PERCENTAGE" | "FIXED_AMOUNT";
 
 export type Voucher = {
@@ -27,24 +29,9 @@ export type VoucherPayload = Omit<
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080"
 ).replace(/\/$/, "");
-const AUTH_STORAGE_KEY = "hv.auth";
-
-type StoredSession = { token?: unknown };
-
-function getAccessToken(): string | null {
-  try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return null;
-
-    const session = JSON.parse(raw) as StoredSession;
-    return typeof session.token === "string" ? session.token : null;
-  } catch {
-    return null;
-  }
-}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getAccessToken();
+  const token = getSession()?.token;
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
