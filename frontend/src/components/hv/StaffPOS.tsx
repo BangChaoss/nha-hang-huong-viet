@@ -8,7 +8,6 @@ import { Switch } from "@/components/ui/switch";
 import { formatVND, useRestaurant, type OrderLine, type Table, type TableStatus, type Zone } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
 import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
-import { paymentApi } from "@/lib/payment-api";
 
 export const tableStatusMeta: Record<TableStatus, { label: string; cls: string }> = {
   available: { label: "Trống", cls: "status-available" },
@@ -175,7 +174,7 @@ function OrderDialog({ table, onClose, onBill }: { table: Table; onClose: () => 
   );
 }
 
-const methods = ["Tiền mặt", "Chuyển khoản QR", "VNPAY"];
+const methods = ["Tiền mặt", "Chuyển khoản QR", "Thẻ"];
 
 function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
   const { tables, dish, loyaltyBalance, completePayment } = useRestaurant();
@@ -220,7 +219,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
             <Button type="button" variant="outline" className="w-full" disabled={voucherBusy || !code.trim() || !phoneNumber.trim()} onClick={async () => {
               setVoucherBusy(true);
               try {
-                const result = await validateVoucher(code.trim(), phoneNumber.trim(), method === "VNPAY" ? subtotal + vat : subtotal);
+                const result = await validateVoucher(code.trim(), phoneNumber.trim(), subtotal);
                 if (!result.valid) { setVoucherValidated(false); setVoucherDiscount(0); toast.error(result.message); }
                 else { setVoucherValidated(true); setVoucherDiscount(result.discountAmount); toast.success(`${result.message} Giảm ${formatVND(result.discountAmount)}.`); }
               } catch (error) { toast.error(error instanceof Error ? error.message : "Không kiểm tra được voucher."); }
@@ -235,32 +234,14 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           </div>
           {redeemed > 0 && <Row l="Điểm đã dùng" v={`-${formatVND(redeemed)}`} cls="text-moss" />}
           <Row l="Tổng thanh toán" v={formatVND(total)} cls="pt-2 font-display text-2xl font-semibold" />
-          <p className="text-xs text-muted-foreground">{method === "VNPAY" ? "Điểm VNPAY sẽ được cộng theo tỷ lệ do Manager cấu hình sau khi giao dịch thành công." : `Điểm demo tại quầy 5%: +${formatVND(cashback)} vào tài khoản khách`}</p>
+          <p className="text-xs text-muted-foreground">Hoàn điểm 5%: +{formatVND(cashback)} vào tài khoản khách</p>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-3 gap-2">
           {methods.map((m) => (
             <Button key={m} variant="outline" onClick={() => setMethod(m)} className={cn("h-auto py-2 text-xs", method === m && "border-primary bg-primary/5 text-primary")}>{m}</Button>
           ))}
         </div>
         <Button className="w-full bg-primary hover:bg-primary-hover" disabled={voucherBusy || (!!code.trim() && !voucherValidated)} onClick={async () => {
-          if (method === "VNPAY") {
-            if (!phoneNumber.trim()) { toast.error("Vui lòng nhập số điện thoại để ghi nhận giao dịch và tích điểm."); return; }
-            if (redeem) { toast.error("Chức năng dùng điểm hiện tại chưa được tích hợp với thanh toán VNPAY. Vui lòng tắt dùng điểm."); return; }
-            if (code.trim() && !voucherValidated) { toast.error("Vui lòng kiểm tra voucher trước khi thanh toán."); return; }
-            setVoucherBusy(true);
-            try {
-              const payment = await paymentApi.createVnpay({
-                subtotal: subtotal + vat,
-                phoneNumber: phoneNumber.trim(),
-                ...(code.trim() ? { voucherCode: code.trim() } : {}),
-              });
-              window.location.assign(payment.paymentUrl);
-            } catch (error) {
-              toast.error(error instanceof Error ? error.message : "Không thể khởi tạo thanh toán VNPAY.");
-              setVoucherBusy(false);
-            }
-            return;
-          }
           if (code.trim()) {
             if (!phoneNumber.trim()) { toast.error("Cần nhập số điện thoại khách để dùng voucher."); return; }
             setVoucherBusy(true);
