@@ -20,6 +20,8 @@ export type LoyaltyRate = { earnRatePercent: number; updatedAt: string | null };
 export type PaymentOrderStatus = { orderId: string; status: "PENDING" | "PAID" | "FAILED"; amount: number; phoneNumber: string; pointsAwarded: number; responseCode: string };
 
 export const paymentApi = {
+  getLoyaltyBalance: (phoneNumber: string) =>
+    request<{ phoneNumber: string; pointsBalance: number }>(`/api/payments/loyalty/${encodeURIComponent(phoneNumber)}`),
   createVnpay: (payload: { subtotal: number; phoneNumber: string; voucherCode?: string }) =>
     request<{ orderId: string; paymentUrl: string }>("/api/payments/vnpay/create", { method: "POST", body: JSON.stringify(payload) }),
   order: (id: string) => request<PaymentOrderStatus>(`/api/payments/vnpay/orders/${encodeURIComponent(id)}`),

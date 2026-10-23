@@ -25,8 +25,8 @@ public class PaymentService {
     private final LoyaltyAccountRepository loyaltyAccounts;
     private final LoyaltySettingsRepository settings;
     private final VoucherService voucherService;
-    @Value("${vnpay.tmn-code:}") private String tmnCode;
-    @Value("${vnpay.hash-secret:}") private String hashSecret;
+    @Value("${VNPAY_SANDBOX_TMN_CODE:${vnpay.tmn-code:}}") private String tmnCode;
+    @Value("${VNPAY_SANDBOX_HASH_SECRET:${vnpay.hash-secret:}}") private String hashSecret;
     @Value("${vnpay.pay-url:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}") private String payUrl;
     @Value("${vnpay.return-url:http://localhost:8080/api/payments/vnpay/return}") private String returnUrl;
     @Value("${vnpay.ipn-url:http://localhost:8080/api/payments/vnpay/ipn}") private String ipnUrl;
@@ -44,10 +44,13 @@ public class PaymentService {
         if (tmnCode.isBlank() || hashSecret.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Chưa cấu hình VNPAY_SANDBOX_TMN_CODE và VNPAY_SANDBOX_HASH_SECRET.");
         }
-        String phone=normalizePhone(req.phoneNumber());
+        String phone=normalizePhone(req.phoneNumber()==null ? "" : req.phoneNumber());
+        String code=req.voucherCode()==null ? "" : req.voucherCode().trim().toUpperCase(Locale.ROOT);
+        if ((!code.isBlank()) && phone.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhập số điện thoại để sử dụng voucher.");
+        }
         BigDecimal subtotal=req.subtotal().setScale(2, RoundingMode.HALF_UP);
         BigDecimal discount=BigDecimal.ZERO;
-        String code=req.voucherCode()==null ? "" : req.voucherCode().trim().toUpperCase(Locale.ROOT);
         if (!code.isBlank()) {
             VoucherValidationResponse result=voucherService.validate(new VoucherValidationRequest(code, phone, subtotal));
             if (!result.valid()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, result.message());
@@ -103,18 +106,36 @@ public class PaymentService {
                     // do not count the invalid voucher, but continue awarding points for the paid amount.
                 }
             }
-            BigDecimal rate=settings.findById("default")
-                .orElseGet(() -> settings.save(new LoyaltySettings("default", new BigDecimal("5.000"))))
-                .getEarnRatePercent();
-            BigDecimal points=order.getAmount().multiply(rate).divide(BigDecimal.valueOf(100),2,RoundingMode.HALF_UP);
-            LoyaltyAccount account=loyaltyAccounts.findByCustomerPhone(order.getCustomerPhone())
-                .orElseGet(() -> new LoyaltyAccount(UUID.randomUUID().toString(), order.getCustomerPhone()));
-            account.addPoints(points); loyaltyAccounts.save(account);
+            BigDecimal points = BigDecimal.ZERO;
+            if (order.getCustomerPhone() != null && !order.getCustomerPhone().isBlank()) {
+                BigDecimal rate=settings.findById("default")
+                    .orElseGet(() -> settings.save(new LoyaltySettings("default", new BigDecimal("5.000"))))
+                    .getEarnRatePercent();
+                points=order.getAmount().multiply(rate).divide(BigDecimal.valueOf(100),2,RoundingMode.HALF_UP);
+                LoyaltyAccount account=loyaltyAccounts.findByCustomerPhone(order.getCustomerPhone())
+                    .orElseGet(() -> new LoyaltyAccount(UUID.randomUUID().toString(), order.getCustomerPhone()));
+                account.addPoints(points); loyaltyAccounts.save(account);
+            }
             order.markPaid(transaction,response,points);
         } else {
             order.markFailed(transaction,response);
         }
         return "00";
+    }
+
+    @Transactional(readOnly=true)
+    public Map<String,Object> getLoyaltyBalance(String rawPhone) {
+        String phone = normalizePhone(rawPhone == null ? "" : rawPhone.trim());
+        if (phone.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vui lòng nhập số điện thoại để tra cứu điểm.");
+        }
+        if (!phone.matches("^[0-9+]{8,20}$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Số điện thoại không hợp lệ.");
+        }
+        BigDecimal balance = loyaltyAccounts.findByCustomerPhone(phone)
+            .map(LoyaltyAccount::getPointsBalance)
+            .orElse(BigDecimal.ZERO);
+        return Map.of("phoneNumber", phone, "pointsBalance", balance);
     }
 
     @Transactional(readOnly=true)

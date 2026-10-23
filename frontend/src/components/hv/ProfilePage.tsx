@@ -31,6 +31,7 @@ import {
   type UserAccount,
 } from "@/lib/account-api";
 import { cn } from "@/lib/utils";
+import { LoyaltyWallet } from "@/components/hv/LoyaltyWallet";
 
 const PROFILE_KEY = ["account", "profile"] as const;
 
@@ -62,6 +63,7 @@ export function ProfilePage() {
           <ProfileSummary user={profile.data} />
           <div className="space-y-6">
             <ProfileForm user={profile.data} />
+            <LoyaltyWallet />
             <PasswordForm />
           </div>
         </div>
