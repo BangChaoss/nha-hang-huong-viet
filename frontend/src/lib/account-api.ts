@@ -71,6 +71,13 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(message, response.status, fieldErrors);
 }
 
+/**
+ * Xin cặp token mới khi access token hết hạn (refresh token rotation):
+ * 1. Gửi refresh token hiện tại lên `/api/auth/refresh`.
+ * 2. Backend thu hồi refresh token cũ và trả về cặp token MỚI — mỗi refresh token chỉ dùng được một lần.
+ * 3. Lưu cả hai token mới vào phiên `hv.session` để các request sau dùng.
+ * Trả về false nếu không có refresh token, token đã bị thu hồi (vd. sau khi đổi mật khẩu) hoặc lỗi mạng.
+ */
 async function tryRefresh(session: AuthSession): Promise<boolean> {
   if (!session.refreshToken) return false;
   try {
@@ -88,6 +95,11 @@ async function tryRefresh(session: AuthSession): Promise<boolean> {
   }
 }
 
+/**
+ * Gọi API cần đăng nhập, tự gắn header `Authorization: Bearer <access token>`.
+ * Khi nhận 401 (access token hết hạn/không hợp lệ): thử refresh một lần rồi gọi lại request;
+ * `retried` chặn vòng lặp vô hạn. Nếu refresh thất bại thì xoá phiên → người dùng phải đăng nhập lại.
+ */
 async function authRequest<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
   const session = getSession();
   const response = await fetch(`${API_BASE}${path}`, {
@@ -140,6 +152,9 @@ export const profileApi = {
     updateSession({ username: updated.username, email: updated.email });
     return updated;
   },
+  // Sau khi đổi mật khẩu, backend thu hồi toàn bộ refresh token của user (kể cả thiết bị này).
+  // Access token hiện tại vẫn dùng được đến khi hết hạn; lần refresh kế tiếp sẽ thất bại
+  // và authRequest xoá phiên → các thiết bị đều phải đăng nhập lại bằng mật khẩu mới.
   changePassword: (payload: ChangePasswordPayload) =>
     authRequest<{ message: string }>("/api/account/change-password", {
       method: "PUT",
