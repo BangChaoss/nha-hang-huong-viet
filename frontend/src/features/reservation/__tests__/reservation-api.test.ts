@@ -27,7 +27,6 @@ describe("reservationApi", () => {
 
     const mockResponse = {
       id: "res-123",
-      reservationCode: "HV-A1B2C3",
       guestName: "Trần Văn An",
       guestPhone: "0912345678",
       guestEmail: "an@example.com",
@@ -99,7 +98,7 @@ describe("reservationApi", () => {
       expect.any(Object),
     );
     expect(result).toHaveLength(1);
-    expect(result[0].zoneName).toBe("Trong Nhà");
+    expect(result[0]?.zoneName).toBe("Trong Nhà");
   });
 
   it("guestLookup() should query /api/reservations/guest-lookup with encoded phone number", async () => {
@@ -130,7 +129,89 @@ describe("reservationApi", () => {
       expect.any(Object),
     );
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("res-guest-1");
+    expect(result[0]?.id).toBe("res-guest-1");
+  });
+
+  it("cancelBooking() should POST /api/reservations/:id/cancel with reason", async () => {
+    const mockCancelled = {
+      id: "res-123",
+      status: "CANCELLED",
+      cancellationReason: "Thay đổi kế hoạch",
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue(mockCancelled),
+    } as unknown as Response);
+
+    const result = await reservationApi.cancelBooking("res-123", "Thay đổi kế hoạch");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/reservations/res-123/cancel"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "Thay đổi kế hoạch" }),
+      }),
+    );
+    expect(result.status).toBe("CANCELLED");
+  });
+
+  it("listByDate() should query /api/admin/reservations with date and optional status filter", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue([]),
+    } as unknown as Response);
+
+    await reservationApi.listByDate("2026-10-23", "PENDING_HOLD");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/admin\/reservations\?date=2026-10-23&status=PENDING_HOLD/),
+      expect.any(Object),
+    );
+  });
+
+  it("getAvailableTables() should query /api/admin/reservations/:id/available-tables", async () => {
+    const mockTables = [
+      { id: "tbl-1", tableNumber: "T1", capacity: 4, status: "AVAILABLE", zoneName: "Sân Vườn" },
+    ];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue(mockTables),
+    } as unknown as Response);
+
+    const result = await reservationApi.getAvailableTables("res-123");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/admin/reservations/res-123/available-tables"),
+      expect.any(Object),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.tableNumber).toBe("T1");
+  });
+
+  it("updateReservationStatus() should PATCH /api/admin/reservations/:id/status", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ id: "res-123", status: "CONFIRMED" }),
+    } as unknown as Response);
+
+    const result = await reservationApi.updateReservationStatus("res-123", {
+      status: "CONFIRMED",
+      tableId: "tbl-1",
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/admin/reservations/res-123/status"),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ status: "CONFIRMED", tableId: "tbl-1" }),
+      }),
+    );
+    expect(result.status).toBe("CONFIRMED");
   });
 
   it("should extract error message from API response when request fails", async () => {

@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-session";
 import { useBookingHistory, useGuestLookup } from "../hooks/use-booking-history";
 import { BookingHistoryCard } from "./booking-history-card";
+import { CancelBookingDialog } from "./cancel-booking-dialog";
 import type { ReservationResponse } from "../types/reservation.types";
 
 export function BookingHistoryList() {
@@ -23,6 +24,15 @@ export function BookingHistoryList() {
   const [lookupPhone, setLookupPhone] = React.useState("");
   const [lookupCode, setLookupCode] = React.useState("");
   const [guestResults, setGuestResults] = React.useState<ReservationResponse[] | null>(null);
+
+  // Cancel dialog state
+  const [cancelTarget, setCancelTarget] = React.useState<ReservationResponse | null>(null);
+  const [isCancelOpen, setIsCancelOpen] = React.useState<boolean>(false);
+
+  const handleOpenCancel = (booking: ReservationResponse) => {
+    setCancelTarget(booking);
+    setIsCancelOpen(true);
+  };
 
   const handleGuestSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,7 +104,11 @@ export function BookingHistoryList() {
                   </Button>
                 </div>
                 {memberBookings.map((booking) => (
-                  <BookingHistoryCard key={booking.id} booking={booking} />
+                  <BookingHistoryCard
+                    key={booking.id}
+                    booking={booking}
+                    onCancelClick={handleOpenCancel}
+                  />
                 ))}
               </div>
             ) : (
@@ -104,7 +118,7 @@ export function BookingHistoryList() {
                   Bạn chưa có đơn đặt bàn nào
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Hãy chọn tab "Đặt Bàn Trước" để đặt chỗ cho bữa ăn sum vầy tiếp theo!
+                  Hãy chọn tab &ldquo;Đặt Bàn Trước&rdquo; để đặt chỗ cho bữa ăn sum vầy tiếp theo!
                 </p>
               </div>
             )}
@@ -113,7 +127,7 @@ export function BookingHistoryList() {
 
         <TabsContent value="guest" className="space-y-6">
           <form
-            onSubmit={handleGuestSearch}
+            onSubmit={(e) => void handleGuestSearch(e)}
             className="rounded-xl border bg-card p-5 shadow-sm space-y-4"
           >
             <div className="flex items-center gap-2 border-b pb-3">
@@ -177,7 +191,11 @@ export function BookingHistoryList() {
               {guestResults.length > 0 ? (
                 <div className="space-y-3">
                   {guestResults.map((booking) => (
-                    <BookingHistoryCard key={booking.id} booking={booking} />
+                    <BookingHistoryCard
+                      key={booking.id}
+                      booking={booking}
+                      onCancelClick={isAuthenticated ? handleOpenCancel : undefined}
+                    />
                   ))}
                 </div>
               ) : (
@@ -197,6 +215,13 @@ export function BookingHistoryList() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Cancel Confirmation Dialog */}
+      <CancelBookingDialog
+        booking={cancelTarget}
+        open={isCancelOpen}
+        onOpenChange={setIsCancelOpen}
+      />
     </div>
   );
 }

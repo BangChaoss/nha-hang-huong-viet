@@ -75,6 +75,44 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
     List<Reservation> findByGuestPhoneWithTableAndZone(@Param("guestPhone") String guestPhone);
 
     /**
+     * UC09: List reservations by date and optional status with table and zone eager-fetched.
+     * Orders PENDING_HOLD first (BR-18 visual hierarchy), then by reservationTime ascending.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        WHERE r.reservationDate = :date
+          AND r.deletedAt IS NULL
+          AND (:status IS NULL OR r.status = :status)
+        ORDER BY
+          CASE WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD THEN 0 ELSE 1 END ASC,
+          r.reservationTime ASC
+        """)
+    List<Reservation> findByDateAndStatusWithTableAndZone(
+        @Param("date") LocalDate date,
+        @Param("status") ReservationStatus status
+    );
+
+    /**
+     * UC13-E1: Find overdue confirmed reservations that exceeded grace period.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        WHERE r.status = com.huongViet.reservation.ReservationStatus.CONFIRMED
+          AND r.deletedAt IS NULL
+          AND (
+            (r.reservationDate < :today)
+            OR (r.reservationDate = :today AND r.reservationTime < :graceTime)
+          )
+        """)
+    List<Reservation> findOverdueConfirmedReservations(
+        @Param("today") LocalDate today,
+        @Param("graceTime") LocalTime graceTime
+    );
+
+    /**
      * UC09 foundation: List reservations by date with table and zone eager-fetched.
      */
     @Query("""

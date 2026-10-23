@@ -26,6 +26,7 @@ public record ReservationResponse(
     String tableId,
     String tableNumber,
     BigDecimal depositAmount,
+    String cancellationReason,
     LocalDateTime createdAt
 ) {
     public static ReservationResponse from(Reservation reservation) {
@@ -67,6 +68,7 @@ public record ReservationResponse(
             tableId,
             tableNumber,
             reservation.getDepositAmount(),
+            reservation.getCancellationReason(),
             reservation.getCreatedAt()
         );
     }
