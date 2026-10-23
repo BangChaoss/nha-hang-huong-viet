@@ -1,19 +1,17 @@
 package com.huongViet.config;
 
 import com.huongViet.auth.JwtAuthFilter;
+import com.huongViet.reservation.ReservationRateLimiterFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.web.SecurityFilterChain;
-
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-
-
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -26,11 +24,14 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final ReservationRateLimiterFilter reservationRateLimiterFilter;
     private final List<String> allowedOrigins;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
+                          ReservationRateLimiterFilter reservationRateLimiterFilter,
                           @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:3000,http://localhost:8081}") List<String> allowedOrigins) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.reservationRateLimiterFilter = reservationRateLimiterFilter;
         this.allowedOrigins = allowedOrigins;
     }
 
@@ -44,15 +45,27 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/ws/**").permitAll()
                 .requestMatchers("/api/payments/vnpay/create", "/api/payments/vnpay/ipn", "/api/payments/vnpay/return", "/api/payments/vnpay/orders/**").permitAll()
+                // UC08: Public reservation endpoints
+                .requestMatchers(HttpMethod.POST, "/api/reservations").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/reservations/availability").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/reservations/time-slots").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/reservations/zones").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/reservations/guest-lookup").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/reservations/my-bookings").authenticated()
                 .requestMatchers("/api/account/**").authenticated()
+                .requestMatchers("/api/tables/**").authenticated()
+                .requestMatchers("/api/zones/**").authenticated()
+                .requestMatchers("/api/floor-plan/**").authenticated()
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
                     "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 .anyRequest().authenticated()
             )
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(reservationRateLimiterFilter, JwtAuthFilter.class);
 
         return http.build();
     }

@@ -14,4 +14,12 @@ describe("App routing", () => {
 
     expect(matches.at(-1)?.routeId).not.toBe(rootRouteId);
   });
+
+  it("matches the /dat-ban route for table reservation", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+
+    const matches = router.matchRoutes("/dat-ban");
+
+    expect(matches.at(-1)?.routeId).toBe("/dat-ban");
+  });
 });
