@@ -1,8 +1,11 @@
 import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
 import type {
+  AvailableTable,
   CreateReservationRequest,
   ReservationResponse,
+  ReservationStatus,
+  UpdateReservationStatusRequest,
   ZoneAvailabilityResponse,
   ZoneOption,
 } from "../types/reservation.types";
@@ -62,4 +65,35 @@ export const reservationApi = {
     request<ReservationResponse[]>(
       `/api/reservations/guest-lookup?phone=${encodeURIComponent(phone.trim())}`,
     ),
+
+  // === UC12: Customer cancel API ===
+  cancelBooking: (id: string, reason?: string): Promise<ReservationResponse> =>
+    request<ReservationResponse>(`/api/reservations/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  // === UC09, UC10, UC13: Staff/Admin APIs ===
+  listByDate: (date: string, status?: ReservationStatus): Promise<ReservationResponse[]> => {
+    const params = new URLSearchParams({ date });
+    if (status) {
+      params.append("status", status);
+    }
+    return request<ReservationResponse[]>(`/api/admin/reservations?${params.toString()}`);
+  },
+
+  getById: (id: string): Promise<ReservationResponse> =>
+    request<ReservationResponse>(`/api/admin/reservations/${id}`),
+
+  getAvailableTables: (reservationId: string): Promise<AvailableTable[]> =>
+    request<AvailableTable[]>(`/api/admin/reservations/${reservationId}/available-tables`),
+
+  updateReservationStatus: (
+    id: string,
+    payload: UpdateReservationStatusRequest,
+  ): Promise<ReservationResponse> =>
+    request<ReservationResponse>(`/api/admin/reservations/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
 };

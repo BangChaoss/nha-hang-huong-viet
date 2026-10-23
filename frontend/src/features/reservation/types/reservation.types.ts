@@ -1,5 +1,10 @@
 export type ReservationStatus =
-  "PENDING_HOLD" | "PENDING_DEPOSIT" | "CONFIRMED" | "ARRIVED" | "CANCELLED" | "NO_SHOW";
+  | "PENDING_HOLD"
+  | "PENDING_DEPOSIT"
+  | "CONFIRMED"
+  | "ARRIVED"
+  | "CANCELLED"
+  | "NO_SHOW";
 
 export interface CreateReservationRequest {
   guestName: string;
@@ -28,7 +33,28 @@ export interface ReservationResponse {
   tableId?: string | null;
   tableNumber?: string | null;
   depositAmount: number;
+  cancellationReason?: string | null;
   createdAt: string;
+}
+
+export interface CancelReservationRequest {
+  reason?: string;
+}
+
+export interface UpdateReservationStatusRequest {
+  status: ReservationStatus;
+  tableId?: string;
+  reason?: string;
+}
+
+export interface AvailableTable {
+  id: string;
+  tableNumber: string;
+  capacity: number;
+  status: string;
+  zoneId?: string | null;
+  zoneName?: string | null;
+  zoneIsVip?: boolean | null;
 }
 
 export interface TimeSlotAvailability {
