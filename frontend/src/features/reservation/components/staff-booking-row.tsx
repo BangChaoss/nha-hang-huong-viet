@@ -81,7 +81,7 @@ export function StaffBookingRow({
             <span className="text-muted-foreground italic">Chưa gán bàn</span>
           )}
           <span className="text-[11px] text-muted-foreground">
-            {booking.zoneName ?? "Khu chung"}
+            {booking.zoneName || "Khu vực đang cập nhật"}
             {booking.zoneIsVip ? " ⭐" : ""}
           </span>
         </div>

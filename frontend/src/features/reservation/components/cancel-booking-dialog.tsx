@@ -46,6 +46,7 @@ export function CancelBookingDialog({
       await cancelMutation.mutateAsync({
         id: booking.id,
         reason: reason.trim() || undefined,
+        phone: booking.guestPhone,
       });
       toast.success(`Đã hủy đặt bàn HV-${code} thành công.`);
       onOpenChange(false);
@@ -65,7 +66,7 @@ export function CancelBookingDialog({
           </DialogTitle>
           <DialogDescription className="text-xs">
             Bạn có chắc chắn muốn hủy đặt bàn vào ngày <strong>{booking.reservationDate}</strong> lúc{" "}
-            <strong>{booking.reservationTime?.substring(0, 5)}</strong>? Thao tác này không thể hoàn tác.
+            <strong>{booking.reservationTime?.substring(0, 5)}</strong>? Thao tác này sẽ giải phóng chỗ cho khách khác.
           </DialogDescription>
         </DialogHeader>
 

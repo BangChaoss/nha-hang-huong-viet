@@ -2,6 +2,7 @@ package com.huongViet.reservation;
 
 import com.huongViet.auth.User;
 import com.huongViet.table.RestaurantTable;
+import com.huongViet.table.TableZone;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -48,6 +49,10 @@ public class Reservation {
     @Column(name = "table_id", length = 36, columnDefinition = "CHAR(36)")
     private String tableId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "zone_id", length = 36, columnDefinition = "CHAR(36)")
+    private String zoneId;
+
     @Column(name = "party_size", nullable = false)
     private Integer partySize;
 
@@ -91,6 +96,10 @@ public class Reservation {
     @JoinColumn(name = "table_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
     private RestaurantTable table;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "zone_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
+    private TableZone zone;
+
     protected Reservation() {}
 
     public Reservation(String id,
@@ -114,6 +123,20 @@ public class Reservation {
         this.depositAmount = BigDecimal.ZERO;
         this.status = ReservationStatus.PENDING_HOLD;
         this.version = 0L;
+    }
+
+    public Reservation(String id,
+                       String customerId,
+                       String guestName,
+                       String guestPhone,
+                       String guestEmail,
+                       Integer partySize,
+                       LocalDate reservationDate,
+                       LocalTime reservationTime,
+                       String specialRequests,
+                       String zoneId) {
+        this(id, customerId, guestName, guestPhone, guestEmail, partySize, reservationDate, reservationTime, specialRequests);
+        this.zoneId = zoneId;
     }
 
     @PrePersist
@@ -195,4 +218,10 @@ public class Reservation {
 
     public RestaurantTable getTable() { return table; }
     public void setTable(RestaurantTable table) { this.table = table; }
+
+    public String getZoneId() { return zoneId; }
+    public void setZoneId(String zoneId) { this.zoneId = zoneId; }
+
+    public TableZone getZone() { return zone; }
+    public void setZone(TableZone zone) { this.zone = zone; }
 }

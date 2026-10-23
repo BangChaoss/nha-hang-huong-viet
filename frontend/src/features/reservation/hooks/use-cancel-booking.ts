@@ -5,8 +5,8 @@ export function useCancelBooking() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
-      reservationApi.cancelBooking(id, reason),
+    mutationFn: ({ id, reason, phone }: { id: string; reason?: string; phone?: string }) =>
+      reservationApi.cancelBooking(id, reason, phone),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
       void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });

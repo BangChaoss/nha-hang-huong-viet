@@ -16,7 +16,8 @@ export function useBookingHistory() {
 }
 
 export function useGuestLookup() {
-  return useMutation<ReservationResponse[], Error, string>({
-    mutationFn: (phone: string) => reservationApi.guestLookup(phone),
+  return useMutation<ReservationResponse[], Error, { phone: string; code: string }>({
+    mutationFn: ({ phone, code }: { phone: string; code: string }) =>
+      reservationApi.guestLookup(phone, code),
   });
 }

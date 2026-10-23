@@ -50,7 +50,11 @@ export const guestLookupSchema = z.object({
     .trim()
     .min(1, "Vui lòng nhập số điện thoại")
     .regex(/^(0|\+84)[0-9]{9,10}$/, "Số điện thoại không hợp lệ"),
-  code: z.string().trim().optional().or(z.literal("")),
+  code: z
+    .string()
+    .trim()
+    .min(1, "Vui lòng nhập mã đặt bàn")
+    .min(4, "Mã đặt bàn tối thiểu 4 ký tự"),
 });
 
 export type GuestLookupFormValues = z.infer<typeof guestLookupSchema>;

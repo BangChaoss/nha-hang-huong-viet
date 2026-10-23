@@ -33,9 +33,15 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
   const timeFormatted = booking.reservationTime ? booking.reservationTime.substring(0, 5) : "";
   const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
 
-  // BR-23: E1 — 60-min rule for CONFIRMED bookings
+  // 60-min rule for self-cancellation across active statuses
   const isWithin60Min = React.useMemo(() => {
-    if (booking.status !== "CONFIRMED") return false;
+    if (
+      booking.status === "CANCELLED" ||
+      booking.status === "NO_SHOW" ||
+      booking.status === "ARRIVED"
+    ) {
+      return false;
+    }
     try {
       const target = new Date(`${booking.reservationDate}T${booking.reservationTime}`);
       const diffMinutes = (target.getTime() - Date.now()) / (1000 * 60);
@@ -46,7 +52,9 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
   }, [booking.reservationDate, booking.reservationTime, booking.status]);
 
   const canCancel =
-    (booking.status === "PENDING_HOLD" || booking.status === "CONFIRMED") &&
+    (booking.status === "PENDING_HOLD" ||
+      booking.status === "PENDING_DEPOSIT" ||
+      booking.status === "CONFIRMED") &&
     Boolean(onCancelClick);
 
   return (
@@ -82,7 +90,7 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
           <div className="flex items-center gap-2 text-foreground">
             <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
             <span className="truncate">
-              {booking.zoneName || "Khu vực chung"}
+              {booking.zoneName || "Khu vực đang cập nhật"}
               {booking.zoneIsVip && " ⭐"}
             </span>
           </div>
@@ -114,12 +122,12 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
 
         {/* Footer Actions & Info */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 font-mono">
             <Phone className="h-3 w-3" /> {booking.guestPhone}
           </span>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* UC11 / D1 / BR-22: Leave Feedback Button for ARRIVED status */}
+            {/* Leave Feedback Button for ARRIVED status */}
             {booking.status === "ARRIVED" && (
               <Button
                 type="button"
@@ -135,7 +143,7 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
               </Button>
             )}
 
-            {/* UC12: Cancel Booking Button */}
+            {/* Cancel Booking Button with 60-min rule */}
             {canCancel && (
               <TooltipProvider>
                 <Tooltip>
@@ -147,7 +155,7 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
                         size="sm"
                         disabled={isWithin60Min}
                         onClick={() => onCancelClick?.(booking)}
-                        className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
                       >
                         <XCircle className="h-3.5 w-3.5 mr-1" />
                         Hủy đặt bàn
@@ -156,7 +164,7 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
                   </TooltipTrigger>
                   {isWithin60Min && (
                     <TooltipContent className="text-xs max-w-xs">
-                      Không thể hủy trực tuyến trong vòng 60 phút trước giờ hẹn. Vui lòng gọi hotline nhà hàng để được hỗ trợ.
+                      Chỉ được hủy đặt bàn trước giờ đến tối thiểu 1 tiếng. Vui lòng liên hệ hotline nhà hàng để được hỗ trợ.
                     </TooltipContent>
                   )}
                 </Tooltip>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Circle, Text, Group, Line } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { ZoomIn, ZoomOut, RotateCcw, Save, Sparkles, Users, Grid } from "lucide-react";
@@ -20,6 +20,7 @@ export type FloorPlanCanvasProps = {
   selectedTableId?: string | null;
   readOnly?: boolean;
   isConnected?: boolean;
+  canvasHeight?: number;
 };
 
 const GRID_STEP = 20;
@@ -32,9 +33,10 @@ export function FloorPlanCanvas({
   selectedTableId,
   readOnly = false,
   isConnected = false,
+  canvasHeight,
 }: FloorPlanCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 900, height: 600 });
+  const [dimensions, setDimensions] = useState({ width: 900, height: canvasHeight ?? 600 });
   const [isMounted, setIsMounted] = useState(false);
 
   // Vị trí và zoom của canvas stage
@@ -200,7 +202,7 @@ export function FloorPlanCanvas({
                 isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500",
               )}
             />
-            <span>{isConnected ? "Live WebSocket" : "Mất kết nối WS"}</span>
+            <span>{isConnected ? "Live" : "Mất kết nối"}</span>
           </div>
 
           <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
@@ -419,33 +421,32 @@ export function FloorPlanCanvas({
                 </div>
 
                 {!readOnly && onUpdateStatus && (
-                  <div className="pt-2 border-t space-y-2">
-                    <p className="text-xs font-medium">Đổi nhanh trạng thái:</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {(
-                        [
-                          "AVAILABLE",
-                          "RESERVED",
-                          "OCCUPIED",
-                          "CLEANING",
-                          "MAINTENANCE",
-                        ] as TableStatus[]
-                      ).map((st) => (
-                        <Button
-                          key={st}
-                          type="button"
-                          size="sm"
-                          variant={selectedLayout.status === st ? "default" : "outline"}
-                          className="h-7 text-xs justify-start px-2"
-                          disabled={selectedLayout.status === st}
-                          onClick={() => void onUpdateStatus(selectedLayout.tableId, st)}
-                        >
-                          <span
-                            className={cn("mr-1.5 h-2 w-2 rounded-full", STATUS_COLORS[st].dotCls)}
-                          />
-                          {STATUS_COLORS[st].label}
-                        </Button>
-                      ))}
+                  <div className="pt-3 border-t space-y-2">
+                    <p className="text-xs font-medium text-foreground">Trạng thái phục vụ:</p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={selectedLayout.status !== "MAINTENANCE" ? "default" : "outline"}
+                        className={cn(
+                          "h-8 text-xs flex-1",
+                          selectedLayout.status !== "MAINTENANCE" && "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        )}
+                        disabled={selectedLayout.status === "AVAILABLE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
+                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "AVAILABLE")}
+                      >
+                        Đang sử dụng
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={selectedLayout.status === "MAINTENANCE" ? "destructive" : "outline"}
+                        className="h-8 text-xs flex-1"
+                        disabled={selectedLayout.status === "MAINTENANCE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
+                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "MAINTENANCE")}
+                      >
+                        Tạm ẩn bàn
+                      </Button>
                     </div>
                   </div>
                 )}
