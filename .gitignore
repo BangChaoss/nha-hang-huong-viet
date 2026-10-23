@@ -1,0 +1,9 @@
+# JVM crash logs
+hs_err_pid*.log
+replay_pid*.log
+
+# IntelliJ IDEA
+.idea/
+
+# VS Code
+.vscode/
