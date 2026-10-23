@@ -311,3 +311,54 @@ ALTER TABLE vouchers
 
 ALTER TABLE voucher_usages
     MODIFY used_at datetime NULL;
+-- ==============================================================================
+-- UC08: Book Table - Reservation & Audit Tables
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS reservations (
+    id CHAR(36) NOT NULL,
+    customer_id CHAR(36) NULL,
+    guest_name VARCHAR(100) NOT NULL,
+    guest_phone VARCHAR(20) NOT NULL,
+    guest_email VARCHAR(100) NULL,
+    table_id CHAR(36) NULL,
+    party_size INT NOT NULL,
+    reservation_date DATE NOT NULL,
+    reservation_time TIME NOT NULL,
+    deposit_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    special_requests TEXT NULL,
+    status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL DEFAULT 'PENDING_HOLD',
+    cancellation_reason TEXT NULL,
+    version BIGINT NOT NULL DEFAULT 0,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    deleted_at DATETIME(6) NULL,
+
+    PRIMARY KEY (id),
+    KEY idx_reservations_check_slot (reservation_date, reservation_time, table_id, status),
+    KEY idx_reservations_customer (customer_id, status),
+    KEY idx_reservations_zone_date (reservation_date, status),
+    CONSTRAINT fk_res_customer FOREIGN KEY (customer_id) REFERENCES users (id) ON DELETE SET NULL,
+    CONSTRAINT fk_res_table FOREIGN KEY (table_id) REFERENCES restaurant_tables (id) ON DELETE SET NULL,
+    CONSTRAINT chk_res_party CHECK (party_size > 0),
+    CONSTRAINT chk_res_deposit CHECK (deposit_amount >= 0.00)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS reservation_audits (
+    id CHAR(36) NOT NULL,
+    reservation_id CHAR(36) NOT NULL,
+    changed_by CHAR(36) NOT NULL,
+    old_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
+    new_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
+    old_table_id CHAR(36) NULL,
+    new_table_id CHAR(36) NULL,
+    reason TEXT NULL,
+    changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (id),
+    KEY idx_res_audit_res (reservation_id),
+    KEY idx_res_audit_user (changed_by),
+    CONSTRAINT fk_res_audit_res FOREIGN KEY (reservation_id) REFERENCES reservations (id) ON DELETE CASCADE,
+    CONSTRAINT fk_res_audit_user FOREIGN KEY (changed_by) REFERENCES users (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_res_audit_old_tbl FOREIGN KEY (old_table_id) REFERENCES restaurant_tables (id) ON DELETE SET NULL,
+    CONSTRAINT fk_res_audit_new_tbl FOREIGN KEY (new_table_id) REFERENCES restaurant_tables (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
