@@ -54,11 +54,16 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/reservations/zones").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/guest-lookup").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/my-bookings").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/reservations/*/cancel").authenticated()
                 .requestMatchers("/api/account/**").authenticated()
                 .requestMatchers("/api/tables/**").authenticated()
                 .requestMatchers("/api/zones/**").authenticated()
                 .requestMatchers("/api/floor-plan/**").authenticated()
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
+                // UC09, UC10, UC13: Staff and Managers can manage reservations
+                .requestMatchers("/api/admin/reservations/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
                     "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )

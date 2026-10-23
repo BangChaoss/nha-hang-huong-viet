@@ -543,3 +543,11 @@ CREATE TABLE daily_dish_sales_summaries (
 
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ==============================================================================
+-- 24. DEFAULT SYSTEM USER FOR SYSTEM AUTOMATION / SCHEDULERS
+-- ==============================================================================
+INSERT INTO users (id, username, email, phone_number, password_hash, role, status)
+VALUES ('00000000-0000-0000-0000-000000000000', 'system', 'system@huongviet.local', '0000000000', 
+        '$2a$10$7EqJtq98hPqEX7fNZaFWoO.8/YxV9Rvh7e1t3fQ7x8.2nFpA6.t6q', 'ADMIN', 'ACTIVE')
+ON DUPLICATE KEY UPDATE username = 'system';

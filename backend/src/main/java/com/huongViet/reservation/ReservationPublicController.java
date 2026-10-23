@@ -1,6 +1,7 @@
 package com.huongViet.reservation;
 
 import com.huongViet.auth.User;
+import com.huongViet.reservation.dto.CancelReservationRequest;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
 import com.huongViet.reservation.dto.ZoneAvailabilityResponse;
@@ -14,6 +15,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -101,5 +103,22 @@ public class ReservationPublicController {
     @GetMapping("/guest-lookup")
     public ResponseEntity<List<ReservationResponse>> guestLookup(@RequestParam String phone) {
         return ResponseEntity.ok(reservationService.getGuestBookings(phone));
+    }
+
+    /**
+     * POST /api/reservations/{id}/cancel
+     * UC12: Customer cancels own booking with 60-min rule.
+     */
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<ReservationResponse> cancelBooking(
+        @PathVariable String id,
+        @RequestBody(required = false) CancelReservationRequest request,
+        @AuthenticationPrincipal User currentUser
+    ) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập để hủy đặt bàn");
+        }
+        CancelReservationRequest safeRequest = (request != null) ? request : new CancelReservationRequest(null);
+        return ResponseEntity.ok(reservationService.cancelByCustomer(id, currentUser.getId(), safeRequest));
     }
 }
