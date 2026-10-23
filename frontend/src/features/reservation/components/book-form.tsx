@@ -1,7 +1,7 @@
-import * as React from "react";
+﻿import * as React from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Utensils, Users, PhoneCall, AlertTriangle, Loader2 } from "lucide-react";
+import { Utensils, Users, PhoneCall, AlertTriangle, Loader2, Clock } from "lucide-react";
 import { useSession } from "@/lib/auth-session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -177,9 +177,9 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
                 {...register("partySize", { valueAsNumber: true })}
                 className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => (
+                {Array.from({ length: 16 }, (_, i) => i + 1).map((num) => (
                   <option key={num} value={num}>
-                    {num} người {num > 15 ? "(Vượt quá giới hạn đặt online)" : ""}
+                    {num} người {num > 15 ? "+" : ""}
                   </option>
                 ))}
               </select>
@@ -198,7 +198,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-200"
           >
             <PhoneCall className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="font-semibold">Quy định đoàn khách lớn (BR-17)</AlertTitle>
+            <AlertTitle className="font-semibold">Quy định đoàn khách lớn</AlertTitle>
             <AlertDescription className="text-xs mt-1 leading-relaxed">
               Đoàn trên 15 khách vui lòng liên hệ trực tiếp hotline <strong>1900 8888</strong> để
               được đặt tiệc (Event Booking) và nhận tư vấn thực đơn riêng biệt từ Quản lý nhà hàng.
@@ -214,6 +214,13 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             2
           </span>
           <h3>Chọn Khu Vực & Khung Giờ</h3>
+        </div>
+
+        <div className="flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-foreground">
+          <Clock className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+          <p className="leading-relaxed">
+            Thời gian phục vụ tiêu chuẩn cho bàn của quý khách là 2 tiếng kể từ giờ đặt. Trường hợp muốn ngồi lâu hơn, vui lòng liên hệ trước với nhà hàng.
+          </p>
         </div>
 
         <ZoneTimeSelector
@@ -303,6 +310,14 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
           </div>
         </div>
       </section>
+
+      {/* THÔNG BÁO THỜI GIAN PHỤC VỤ TIÊU CHUẨN */}
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+        <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+        <span className="leading-relaxed font-medium">
+          Thời gian phục vụ tiêu chuẩn cho bàn của quý khách là 2 tiếng kể từ giờ đặt. Trường hợp muốn ngồi lâu hơn, vui lòng liên hệ trước với nhà hàng.
+        </span>
+      </div>
 
       {/* NÚT GỬI ĐƠN */}
       <div className="border-t pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">

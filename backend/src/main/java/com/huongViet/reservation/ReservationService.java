@@ -97,7 +97,7 @@ public class ReservationService {
      * - BR-17: Party size > 15 requires event booking protocol
      * - Time slot validation (within fixed list)
      * - Date in the future / today valid time
-     * - Zone capacity check (E1) considering CONFIRMED reservations only (BR-16)
+     * - Zone capacity check immediately deducting PENDING and CONFIRMED reservations across 2h window
      */
     @Transactional
     public ReservationResponse createBooking(CreateReservationRequest request, String customerId) {
@@ -133,7 +133,7 @@ public class ReservationService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                 "Khu vực không tồn tại hoặc đã bị vô hiệu hóa."));
 
-        // Capacity check (BR-16: only CONFIRMED consume capacity)
+        // Capacity check deducting both PENDING and CONFIRMED
         int zoneCapacity = getZoneTotalCapacity(zone.getId());
         if (zoneCapacity <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -154,7 +154,7 @@ public class ReservationService {
             }
         }
 
-        // Create reservation with PENDING_HOLD
+        // Create reservation with PENDING_HOLD and zoneId persisted
         String reservationId = UUID.randomUUID().toString();
         Reservation reservation = new Reservation(
             reservationId,
@@ -165,8 +165,10 @@ public class ReservationService {
             request.partySize(),
             request.reservationDate(),
             request.reservationTime(),
-            request.specialRequests()
+            request.specialRequests(),
+            zone.getId()
         );
+        reservation.setZone(zone);
 
         Reservation saved = reservationRepository.save(reservation);
         logger.info("Created reservation {} for guest {} on {} at {} (partySize: {})",
@@ -180,6 +182,7 @@ public class ReservationService {
 
     /**
      * Check availability across all active zones for a given date and party size.
+     * Deducts capacity in real-time for both PENDING and CONFIRMED reservations across 2h window.
      */
     public List<ZoneAvailabilityResponse> checkAvailability(LocalDate date, Integer partySize) {
         List<TableZone> activeZones = zoneRepository.findAll().stream()
@@ -260,7 +263,24 @@ public class ReservationService {
     }
 
     /**
-     * Guest lookup by phone number.
+     * Guest lookup requiring BOTH phone and booking code (AND condition).
+     */
+    public List<ReservationResponse> getGuestBookings(String phone, String code) {
+        if (phone == null || phone.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Số điện thoại không được để trống");
+        }
+        if (code == null || code.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mã đặt bàn không được để trống");
+        }
+        String cleanCode = code.trim().toUpperCase().replaceFirst("^HV-", "").toLowerCase();
+        return reservationRepository.findByPhoneAndBookingCode(phone.trim(), cleanCode)
+            .stream()
+            .map(ReservationResponse::from)
+            .toList();
+    }
+
+    /**
+     * Backward-compatible guest lookup by phone number only.
      */
     public List<ReservationResponse> getGuestBookings(String phone) {
         if (phone == null || phone.isBlank()) {
@@ -307,8 +327,13 @@ public class ReservationService {
 
         int partySize = reservation.getPartySize();
         List<RestaurantTable> tables;
-        if (reservation.getTable() != null && reservation.getTable().getZoneId() != null) {
-            tables = tableRepository.findAvailableByZoneAndCapacity(reservation.getTable().getZoneId(), partySize);
+        String targetZoneId = reservation.getZoneId();
+        if (targetZoneId == null && reservation.getTable() != null) {
+            targetZoneId = reservation.getTable().getZoneId();
+        }
+
+        if (targetZoneId != null) {
+            tables = tableRepository.findAvailableByZoneAndCapacity(targetZoneId, partySize);
         } else {
             tables = tableRepository.findAvailableByCapacity(partySize);
         }
@@ -437,29 +462,40 @@ public class ReservationService {
     }
 
     /**
-     * Phase 3.5 / UC12: Customer Cancel Booking with 60-min rule.
+     * Phase 3.5 / UC12: Self-Cancel Booking with 60-min rule.
+     * Accessible to authenticated members or guests who provide matching phone number.
      */
     @Transactional
     public ReservationResponse cancelByCustomer(String reservationId, String customerId, CancelReservationRequest request) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(reservationId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
 
-        // Verify ownership
-        if (reservation.getCustomerId() == null || !reservation.getCustomerId().equals(customerId)) {
+        // Verify ownership: customerId matches OR guestPhone matches
+        boolean isAuthorized = false;
+        String actor = "CUSTOMER";
+        if (customerId != null && reservation.getCustomerId() != null && reservation.getCustomerId().equals(customerId)) {
+            isAuthorized = true;
+            actor = customerId;
+        } else if (request != null && request.phone() != null && !request.phone().isBlank()) {
+            if (request.phone().trim().equals(reservation.getGuestPhone())) {
+                isAuthorized = true;
+                actor = "GUEST:" + reservation.getGuestPhone();
+            }
+        }
+
+        if (!isAuthorized) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền hủy đặt bàn này");
         }
 
         // Only PENDING_HOLD, PENDING_DEPOSIT and CONFIRMED can be cancelled
         validateTransition(reservation.getStatus(), ReservationStatus.CANCELLED);
 
-        // BR-23: E1 — 60-min rule for CONFIRMED reservations
-        if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
-            LocalDateTime reservationDateTime = LocalDateTime.of(
-                reservation.getReservationDate(), reservation.getReservationTime());
-            if (Duration.between(LocalDateTime.now(), reservationDateTime).toMinutes() < 60) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Không thể hủy đặt bàn trong vòng 60 phút trước giờ hẹn. Vui lòng gọi hotline nhà hàng.");
-            }
+        // Requirement 6: 60-min rule for ALL self-cancellations
+        LocalDateTime reservationDateTime = LocalDateTime.of(
+            reservation.getReservationDate(), reservation.getReservationTime());
+        if (Duration.between(LocalDateTime.now(), reservationDateTime).toMinutes() < 60) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Chỉ được hủy đặt bàn trước giờ đến tối thiểu 1 tiếng. Vui lòng liên hệ hotline nhà hàng để được hỗ trợ.");
         }
 
         ReservationStatus oldStatus = reservation.getStatus();
@@ -469,7 +505,7 @@ public class ReservationService {
             : "Khách hàng tự hủy trên hệ thống";
         reservation.setCancellationReason(reason);
 
-        // BR-23: Release table if assigned
+        // Release table if assigned
         if (reservation.getTableId() != null) {
             tableRepository.findByIdAndDeletedAtIsNull(reservation.getTableId())
                 .ifPresent(table -> {
@@ -486,7 +522,7 @@ public class ReservationService {
         ReservationAudit audit = new ReservationAudit(
             UUID.randomUUID().toString(),
             saved.getId(),
-            customerId,
+            actor,
             oldStatus,
             ReservationStatus.CANCELLED,
             reservation.getTableId(),
@@ -495,7 +531,7 @@ public class ReservationService {
         );
         reservationAuditRepository.save(audit);
 
-        logger.info("Reservation {} cancelled by customer {}", saved.getId(), customerId);
+        logger.info("Reservation {} cancelled by {}", saved.getId(), actor);
 
         return ReservationResponse.from(saved);
     }

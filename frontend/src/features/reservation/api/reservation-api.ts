@@ -61,16 +61,21 @@ export const reservationApi = {
   getMyBookings: (): Promise<ReservationResponse[]> =>
     request<ReservationResponse[]>("/api/reservations/my-bookings"),
 
-  guestLookup: (phone: string): Promise<ReservationResponse[]> =>
-    request<ReservationResponse[]>(
-      `/api/reservations/guest-lookup?phone=${encodeURIComponent(phone.trim())}`,
-    ),
+  guestLookup: (phone: string, code: string): Promise<ReservationResponse[]> => {
+    const params = new URLSearchParams({
+      phone: phone.trim(),
+      code: code.trim(),
+    });
+    return request<ReservationResponse[]>(
+      `/api/reservations/guest-lookup?${params.toString()}`,
+    );
+  },
 
   // === UC12: Customer cancel API ===
-  cancelBooking: (id: string, reason?: string): Promise<ReservationResponse> =>
+  cancelBooking: (id: string, reason?: string, phone?: string): Promise<ReservationResponse> =>
     request<ReservationResponse>(`/api/reservations/${id}/cancel`, {
       method: "POST",
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason, phone: phone?.trim() }),
     }),
 
   // === UC09, UC10, UC13: Staff/Admin APIs ===

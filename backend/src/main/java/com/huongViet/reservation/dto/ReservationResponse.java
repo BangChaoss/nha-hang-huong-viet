@@ -34,21 +34,26 @@ public record ReservationResponse(
     }
 
     public static ReservationResponse from(Reservation reservation, String fallbackZoneId, String fallbackZoneName, Boolean fallbackZoneIsVip) {
-        String zoneId = fallbackZoneId;
+        String zoneId = reservation.getZoneId() != null ? reservation.getZoneId() : fallbackZoneId;
         String zoneName = fallbackZoneName;
         Boolean zoneIsVip = fallbackZoneIsVip;
         String tableId = null;
         String tableNumber = null;
 
+        if (reservation.getZone() != null) {
+            zoneId = reservation.getZone().getId();
+            zoneName = reservation.getZone().getZoneName();
+            zoneIsVip = reservation.getZone().getIsVip();
+        }
+
         RestaurantTable table = reservation.getTable();
         if (table != null) {
             tableId = table.getId();
             tableNumber = table.getTableNumber();
-            zoneId = table.getZoneId();
-            TableZone zone = table.getZone();
-            if (zone != null) {
-                zoneName = zone.getZoneName();
-                zoneIsVip = zone.getIsVip();
+            if (table.getZone() != null) {
+                zoneId = table.getZoneId();
+                zoneName = table.getZone().getZoneName();
+                zoneIsVip = table.getZone().getIsVip();
             }
         }
 

@@ -54,7 +54,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/reservations/zones").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/guest-lookup").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/my-bookings").authenticated()
-                .requestMatchers(HttpMethod.POST, "/api/reservations/*/cancel").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/reservations/*/cancel").permitAll()
                 .requestMatchers("/api/account/**").authenticated()
                 .requestMatchers("/api/tables/**").authenticated()
                 .requestMatchers("/api/zones/**").authenticated()

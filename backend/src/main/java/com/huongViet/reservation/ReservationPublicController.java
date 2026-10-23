@@ -97,17 +97,26 @@ public class ReservationPublicController {
     }
 
     /**
-     * GET /api/reservations/guest-lookup?phone=09xxxxxxxx
-     * Public lookup endpoint for guests to check their reservations by phone number.
+     * GET /api/reservations/guest-lookup?phone=09xxxxxxxx&code=HV-XXXXXXXX
+     * Public lookup endpoint for guests requiring BOTH phone number AND booking code.
      */
     @GetMapping("/guest-lookup")
-    public ResponseEntity<List<ReservationResponse>> guestLookup(@RequestParam String phone) {
-        return ResponseEntity.ok(reservationService.getGuestBookings(phone));
+    public ResponseEntity<List<ReservationResponse>> guestLookup(
+        @RequestParam(required = false) String phone,
+        @RequestParam(required = false) String code
+    ) {
+        if (phone == null || phone.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Số điện thoại không được để trống");
+        }
+        if (code == null || code.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mã đặt bàn không được để trống");
+        }
+        return ResponseEntity.ok(reservationService.getGuestBookings(phone, code));
     }
 
     /**
      * POST /api/reservations/{id}/cancel
-     * UC12: Customer cancels own booking with 60-min rule.
+     * Allows members (via token) or guests (verified by matching phone number) to cancel their booking with 60-min rule.
      */
     @PostMapping("/{id}/cancel")
     public ResponseEntity<ReservationResponse> cancelBooking(
@@ -115,10 +124,11 @@ public class ReservationPublicController {
         @RequestBody(required = false) CancelReservationRequest request,
         @AuthenticationPrincipal User currentUser
     ) {
-        if (currentUser == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập để hủy đặt bàn");
+        String customerId = (currentUser != null) ? currentUser.getId() : null;
+        CancelReservationRequest safeRequest = (request != null) ? request : new CancelReservationRequest(null, null);
+        if (currentUser == null && (safeRequest.phone() == null || safeRequest.phone().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập hoặc cung cấp số điện thoại để xác thực hủy đặt bàn");
         }
-        CancelReservationRequest safeRequest = (request != null) ? request : new CancelReservationRequest(null);
-        return ResponseEntity.ok(reservationService.cancelByCustomer(id, currentUser.getId(), safeRequest));
+        return ResponseEntity.ok(reservationService.cancelByCustomer(id, customerId, safeRequest));
     }
 }

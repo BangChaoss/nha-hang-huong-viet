@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, lazy, Suspense } from "react";
+﻿import { useEffect, useState, useMemo, lazy, Suspense } from "react";
 import {
   LayoutGrid,
   ListFilter,
@@ -347,7 +347,7 @@ export function TableManagement() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Quản lý Bàn & Sơ đồ mặt bằng</h2>
           <p className="text-sm text-muted-foreground">
-            Quản trị khu vực, thiết lập sơ đồ 2D và giám sát trạng thái bàn thời gian thực (UC22).
+            Quản trị khu vực, thiết lập sơ đồ 2D và giám sát trạng thái bàn thời gian thực.
           </p>
         </div>
 
@@ -550,7 +550,7 @@ export function TableManagement() {
                 <TableBody>
                   {filteredTables.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                         Không tìm thấy bàn nào phù hợp tiêu chí.
                       </TableCell>
                     </TableRow>
@@ -584,47 +584,35 @@ export function TableManagement() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={cn("font-medium", statusMeta.badgeCls)}
-                            >
-                              {statusMeta.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Select
-                              value={tbl.status}
-                              onValueChange={(val) =>
-                                void handleUpdateStatus(tbl.id, val as TableStatus)
-                              }
-                            >
-                              <SelectTrigger className="h-8 w-36 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {(
-                                  [
-                                    "AVAILABLE",
-                                    "RESERVED",
-                                    "OCCUPIED",
-                                    "CLEANING",
-                                    "MAINTENANCE",
-                                  ] as TableStatus[]
-                                ).map((st) => (
-                                  <SelectItem key={st} value={st} className="text-xs">
-                                    <div className="flex items-center gap-2">
-                                      <span
-                                        className={cn(
-                                          "h-2 w-2 rounded-full",
-                                          STATUS_COLORS[st].dotCls,
-                                        )}
-                                      />
-                                      {STATUS_COLORS[st].label}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="flex items-center gap-2.5">
+                              <Switch
+                                checked={tbl.status !== "MAINTENANCE"}
+                                disabled={isLocked}
+                                onCheckedChange={(checked) => {
+                                  const newStatus: TableStatus = checked ? "AVAILABLE" : "MAINTENANCE";
+                                  void handleUpdateStatus(tbl.id, newStatus);
+                                }}
+                              />
+                              <span className="text-xs font-medium">
+                                {tbl.status === "MAINTENANCE" ? (
+                                  <Badge variant="outline" className="bg-slate-500/10 text-slate-600 border-slate-500/20 text-xs">
+                                    Tạm ẩn
+                                  </Badge>
+                                ) : tbl.status === "OCCUPIED" ? (
+                                  <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-xs">
+                                    Đang phục vụ
+                                  </Badge>
+                                ) : tbl.status === "RESERVED" ? (
+                                  <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs">
+                                    Đã đặt trước
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs">
+                                    Đang sử dụng
+                                  </Badge>
+                                )}
+                              </span>
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">

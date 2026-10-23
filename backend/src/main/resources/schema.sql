@@ -115,6 +115,7 @@ CREATE TABLE reservations (
     guest_phone VARCHAR(20) NOT NULL,
     guest_email VARCHAR(100) NULL,
     table_id CHAR(36) NULL,
+    zone_id CHAR(36) NULL,
     party_size INT NOT NULL,
     reservation_date DATE NOT NULL,
     reservation_time TIME NOT NULL,
