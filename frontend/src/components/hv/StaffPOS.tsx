@@ -1,11 +1,24 @@
 import { useState } from "react";
 import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { formatVND, useRestaurant, type OrderLine, type Table, type TableStatus, type Zone } from "@/lib/restaurant-store";
+import {
+  formatVND,
+  useRestaurant,
+  type OrderLine,
+  type Table,
+  type TableStatus,
+  type Zone,
+} from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
 import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
@@ -36,7 +49,10 @@ export function StaffPOS() {
         </div>
         <div className="flex flex-wrap gap-2">
           {(Object.keys(tableStatusMeta) as TableStatus[]).map((s) => (
-            <span key={s} className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}>
+            <span
+              key={s}
+              className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}
+            >
               {tableStatusMeta[s].label} · {counts(s)}
             </span>
           ))}
@@ -47,35 +63,65 @@ export function StaffPOS() {
         <section key={z}>
           <h2 className="mb-3 text-2xl font-medium text-moss">{z}</h2>
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
-            {tables.filter((t) => t.zone === z).map((t) => {
-              const total = t.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
-              return (
-                <button
-                  key={t.id}
-                  disabled={t.status === "maintenance"}
-                  onClick={() => (t.status === "available" ? toast.info(`${t.name} đang trống — sẵn sàng đón khách`) : setActive(t.id))}
-                  className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <div className="flex items-start justify-between">
-                    <span className="font-display text-2xl font-semibold">{t.name}</span>
-                    {t.status === "maintenance" && <Wrench className="h-4 w-4 text-muted-foreground" />}
-                  </div>
-                  <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Users className="h-3 w-3" /> {t.seats} ghế</p>
-                  <span className={cn("mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium", tableStatusMeta[t.status].cls)}>
-                    {tableStatusMeta[t.status].label}
-                  </span>
-                  {t.status === "reserved" && <p className="mt-2 text-xs text-muted-foreground">{t.guest} · {t.time}</p>}
-                  {t.status === "occupied" && <p className="mt-2 text-xs font-medium tabular-nums">{formatVND(total)}</p>}
-                </button>
-              );
-            })}
+            {tables
+              .filter((t) => t.zone === z)
+              .map((t) => {
+                const total = t.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
+                return (
+                  <button
+                    key={t.id}
+                    disabled={t.status === "maintenance"}
+                    onClick={() =>
+                      t.status === "available"
+                        ? toast.info(`${t.name} đang trống — sẵn sàng đón khách`)
+                        : setActive(t.id)
+                    }
+                    className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <div className="flex items-start justify-between">
+                      <span className="font-display text-2xl font-semibold">{t.name}</span>
+                      {t.status === "maintenance" && (
+                        <Wrench className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <Users className="h-3 w-3" /> {t.seats} ghế
+                    </p>
+                    <span
+                      className={cn(
+                        "mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
+                        tableStatusMeta[t.status].cls,
+                      )}
+                    >
+                      {tableStatusMeta[t.status].label}
+                    </span>
+                    {t.status === "reserved" && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t.guest} · {t.time}
+                      </p>
+                    )}
+                    {t.status === "occupied" && (
+                      <p className="mt-2 text-xs font-medium tabular-nums">{formatVND(total)}</p>
+                    )}
+                  </button>
+                );
+              })}
           </div>
         </section>
       ))}
 
-      {table?.status === "reserved" && <ReservationDialog table={table} onClose={() => setActive(null)} />}
+      {table?.status === "reserved" && (
+        <ReservationDialog table={table} onClose={() => setActive(null)} />
+      )}
       {table?.status === "occupied" && (
-        <OrderDialog table={table} onClose={() => setActive(null)} onBill={() => { setBilling(table.id); setActive(null); }} />
+        <OrderDialog
+          table={table}
+          onClose={() => setActive(null)}
+          onBill={() => {
+            setBilling(table.id);
+            setActive(null);
+          }}
+        />
       )}
       {billing !== null && <BillingDialog tableId={billing} onClose={() => setBilling(null)} />}
     </div>
@@ -93,11 +139,24 @@ function ReservationDialog({ table, onClose }: { table: Table; onClose: () => vo
         </DialogHeader>
         <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
           <p className="font-display text-xl font-semibold">{table.guest}</p>
-          <p className="flex items-center gap-2"><Clock className="h-4 w-4" /> {table.time} hôm nay</p>
-          <p className="flex items-center gap-2"><Users className="h-4 w-4" /> {table.partySize} khách</p>
-          <p className="flex items-center gap-2"><Phone className="h-4 w-4" /> {table.phone}</p>
+          <p className="flex items-center gap-2">
+            <Clock className="h-4 w-4" /> {table.time} hôm nay
+          </p>
+          <p className="flex items-center gap-2">
+            <Users className="h-4 w-4" /> {table.partySize} khách
+          </p>
+          <p className="flex items-center gap-2">
+            <Phone className="h-4 w-4" /> {table.phone}
+          </p>
         </div>
-        <Button className="w-full bg-primary hover:bg-primary-hover" onClick={() => { checkIn(table.id); toast.success(`Đã check-in ${table.guest} vào ${table.name}`); onClose(); }}>
+        <Button
+          className="w-full bg-primary hover:bg-primary-hover"
+          onClick={() => {
+            checkIn(table.id);
+            toast.success(`Đã check-in ${table.guest} vào ${table.name}`);
+            onClose();
+          }}
+        >
           Xác nhận khách đến (Check-in)
         </Button>
       </DialogContent>
@@ -105,7 +164,15 @@ function ReservationDialog({ table, onClose }: { table: Table; onClose: () => vo
   );
 }
 
-function OrderDialog({ table, onClose, onBill }: { table: Table; onClose: () => void; onBill: () => void }) {
+function OrderDialog({
+  table,
+  onClose,
+  onBill,
+}: {
+  table: Table;
+  onClose: () => void;
+  onBill: () => void;
+}) {
   const { dishes, dish, sendToKitchen } = useRestaurant();
   const [draft, setDraft] = useState<OrderLine[]>([]);
   const [note, setNote] = useState("");
@@ -113,7 +180,9 @@ function OrderDialog({ table, onClose, onBill }: { table: Table; onClose: () => 
     setDraft((cur) => {
       const ex = cur.find((l) => l.dishId === dishId);
       if (!ex) return d > 0 ? [...cur, { dishId, qty: 1 }] : cur;
-      return cur.map((l) => (l.dishId === dishId ? { ...l, qty: l.qty + d } : l)).filter((l) => l.qty > 0);
+      return cur
+        .map((l) => (l.dishId === dishId ? { ...l, qty: l.qty + d } : l))
+        .filter((l) => l.qty > 0);
     });
   const qty = (id: string) => draft.find((l) => l.dishId === id)?.qty ?? 0;
 
@@ -128,44 +197,98 @@ function OrderDialog({ table, onClose, onBill }: { table: Table; onClose: () => 
           <div className="space-y-2">
             <p className="text-xs uppercase tracking-widest text-muted-foreground">Thực đơn</p>
             {dishes.map((d) => (
-              <div key={d.id} className={cn("flex items-center justify-between rounded-lg border p-3", !d.inStock && "opacity-50")}>
+              <div
+                key={d.id}
+                className={cn(
+                  "flex items-center justify-between rounded-lg border p-3",
+                  !d.inStock && "opacity-50",
+                )}
+              >
                 <div>
                   <p className="text-sm font-medium">{d.name}</p>
-                  <p className="text-xs tabular-nums text-muted-foreground">{d.inStock ? formatVND(d.price) : "Hết món"}</p>
+                  <p className="text-xs tabular-nums text-muted-foreground">
+                    {d.inStock ? formatVND(d.price) : "Hết món"}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button size="icon" variant="outline" className="h-7 w-7" disabled={!d.inStock || qty(d.id) === 0} onClick={() => change(d.id, -1)}><Minus className="h-3 w-3" /></Button>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-7 w-7"
+                    disabled={!d.inStock || qty(d.id) === 0}
+                    onClick={() => change(d.id, -1)}
+                  >
+                    <Minus className="h-3 w-3" />
+                  </Button>
                   <span className="w-5 text-center text-sm tabular-nums">{qty(d.id)}</span>
-                  <Button size="icon" variant="outline" className="h-7 w-7" disabled={!d.inStock} onClick={() => change(d.id, 1)}><Plus className="h-3 w-3" /></Button>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-7 w-7"
+                    disabled={!d.inStock}
+                    onClick={() => change(d.id, 1)}
+                  >
+                    <Plus className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
             ))}
           </div>
           <div className="space-y-4">
             <div>
-              <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">Đã gửi bếp</p>
-              {table.order.length === 0 && <p className="text-sm text-muted-foreground">Chưa có món.</p>}
+              <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
+                Đã gửi bếp
+              </p>
+              {table.order.length === 0 && (
+                <p className="text-sm text-muted-foreground">Chưa có món.</p>
+              )}
               {table.order.map((o) => (
                 <div key={o.dishId} className="flex justify-between border-b py-1.5 text-sm">
-                  <span>{o.qty} × {dish(o.dishId)?.name}</span>
-                  <span className="tabular-nums">{formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}</span>
+                  <span>
+                    {o.qty} × {dish(o.dishId)?.name}
+                  </span>
+                  <span className="tabular-nums">
+                    {formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}
+                  </span>
                 </div>
               ))}
             </div>
             <div>
-              <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">Món mới</p>
-              {draft.length === 0 ? <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p> :
-                draft.map((l) => <p key={l.dishId} className="text-sm">{l.qty} × {dish(l.dishId)?.name}</p>)}
+              <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
+                Món mới
+              </p>
+              {draft.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
+              ) : (
+                draft.map((l) => (
+                  <p key={l.dishId} className="text-sm">
+                    {l.qty} × {dish(l.dishId)?.name}
+                  </p>
+                ))
+              )}
             </div>
-            <Input placeholder="Ghi chú cho bếp (vd: Ít cay, không hành)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <Input
+              placeholder="Ghi chú cho bếp (vd: Ít cay, không hành)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
             <Button
               className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
               disabled={draft.length === 0}
-              onClick={() => { sendToKitchen(table.id, draft, note); toast.success(`Đã gửi ${draft.length} món xuống bếp`); setDraft([]); setNote(""); }}
+              onClick={() => {
+                sendToKitchen(table.id, draft, note);
+                toast.success(`Đã gửi ${draft.length} món xuống bếp`);
+                setDraft([]);
+                setNote("");
+              }}
             >
               <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
             </Button>
-            <Button className="w-full bg-primary hover:bg-primary-hover" disabled={table.order.length === 0} onClick={onBill}>
+            <Button
+              className="w-full bg-primary hover:bg-primary-hover"
+              disabled={table.order.length === 0}
+              onClick={onBill}
+            >
               <Receipt className="mr-2 h-4 w-4" /> Tạo Hoá Đơn / Thanh Toán
             </Button>
           </div>
@@ -200,7 +323,10 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const cashback = Math.round(total * 0.05);
 
   const Row = ({ l, v, cls }: { l: string; v: string; cls?: string }) => (
-    <div className={cn("flex justify-between text-sm", cls)}><span>{l}</span><span className="tabular-nums">{v}</span></div>
+    <div className={cn("flex justify-between text-sm", cls)}>
+      <span>{l}</span>
+      <span className="tabular-nums">{v}</span>
+    </div>
   );
 
   return (
@@ -211,35 +337,17 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
           {table.order.map((o) => (
-            <Row key={o.dishId} l={`${o.qty} × ${dish(o.dishId)?.name}`} v={formatVND((dish(o.dishId)?.price ?? 0) * o.qty)} />
+            <Row
+              key={o.dishId}
+              l={`${o.qty} × ${dish(o.dishId)?.name}`}
+              v={formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}
+            />
           ))}
         </div>
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />
           <Row l="VAT (10%)" v={formatVND(vat)} />
           <div className="space-y-2 pt-1">
-<<<<<<< Updated upstream
-            <Input placeholder="Mã voucher" value={code} onChange={(e) => { setCode(e.target.value); setVoucherValidated(false); setVoucherDiscount(0); }} />
-            <Input placeholder="Số điện thoại khách (bắt buộc dùng voucher)" value={phoneNumber} onChange={(e) => { setPhoneNumber(e.target.value); setVoucherValidated(false); setVoucherDiscount(0); }} inputMode="tel" />
-            <Button type="button" variant="outline" className="w-full" disabled={voucherBusy || !code.trim() || !phoneNumber.trim()} onClick={async () => {
-              setVoucherBusy(true);
-              try {
-                const result = await validateVoucher(code.trim(), phoneNumber.trim(), method === "VNPAY" ? subtotal + vat : subtotal);
-                if (!result.valid) { setVoucherValidated(false); setVoucherDiscount(0); toast.error(result.message); }
-                else { setVoucherValidated(true); setVoucherDiscount(result.discountAmount); toast.success(`${result.message} Giảm ${formatVND(result.discountAmount)}.`); }
-              } catch (error) { toast.error(error instanceof Error ? error.message : "Không kiểm tra được voucher."); }
-              finally { setVoucherBusy(false); }
-            }}>{voucherBusy ? "Đang kiểm tra..." : "Kiểm tra voucher"}</Button>
-=======
-            <Input
-              placeholder="Mã voucher"
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-                setVoucherValidated(false);
-                setVoucherDiscount(0);
-              }}
-            />
             <Input
               placeholder="Số điện thoại khách (để dùng điểm/voucher)"
               value={phoneNumber}
@@ -252,6 +360,16 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                 setVoucherDiscount(0);
               }}
               inputMode="tel"
+            />
+
+            <Input
+              placeholder="Mã voucher"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                setVoucherValidated(false);
+                setVoucherDiscount(0);
+              }}
             />
             <Button
               type="button"
@@ -310,59 +428,48 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
             >
               {voucherBusy ? "Đang kiểm tra..." : "Kiểm tra voucher"}
             </Button>
->>>>>>> Stashed changes
           </div>
-          {code && <p className={cn("text-xs", voucherValidated ? "text-moss" : "text-muted-foreground")}>{voucherValidated ? "Voucher đã được kiểm tra hợp lệ." : "Nhập số điện thoại và kiểm tra voucher trước khi thanh toán."}</p>}
+          {code && (
+            <p className={cn("text-xs", voucherValidated ? "text-moss" : "text-muted-foreground")}>
+              {voucherValidated
+                ? "Voucher đã được kiểm tra hợp lệ."
+                : "Nhập số điện thoại và kiểm tra voucher trước khi thanh toán."}
+            </p>
+          )}
           {discount > 0 && <Row l="Voucher" v={`-${formatVND(discount)}`} cls="text-moss" />}
           <div className="flex items-center justify-between rounded-lg bg-muted p-3 text-sm">
-            <span>Dùng điểm tích luỹ ({formatVND(loyaltyBalance)})</span>
+            <span>Dùng điểm tích luỹ ({formatVND(loyaltyChecked ? loyaltyBalance : 0)})</span>
             <Switch checked={redeem} disabled={!phoneNumber.trim() || !loyaltyChecked || loyaltyBalance <= 0} onCheckedChange={setRedeem} />
           </div>
           {!phoneNumber.trim() && <p className="text-xs text-muted-foreground">Nhập số điện thoại để tra cứu điểm và dùng voucher.</p>}
           {phoneNumber.trim() && !loyaltyChecked && <p className="text-xs text-muted-foreground">Nhấn “Tra cứu số dư điểm” trước khi sử dụng điểm tích luỹ.</p>}
           {redeemed > 0 && <Row l="Điểm đã dùng" v={`-${formatVND(redeemed)}`} cls="text-moss" />}
-          <Row l="Tổng thanh toán" v={formatVND(total)} cls="pt-2 font-display text-2xl font-semibold" />
-          <p className="text-xs text-muted-foreground">{method === "VNPAY" ? "Điểm VNPAY sẽ được cộng theo tỷ lệ do Manager cấu hình sau khi giao dịch thành công." : `Điểm demo tại quầy 5%: +${formatVND(cashback)} vào tài khoản khách`}</p>
+          <Row
+            l="Tổng thanh toán"
+            v={formatVND(total)}
+            cls="pt-2 font-display text-2xl font-semibold"
+          />
+          <p className="text-xs text-muted-foreground">
+            {method === "VNPAY"
+              ? "Điểm VNPAY sẽ được cộng theo tỷ lệ do Manager cấu hình sau khi giao dịch thành công."
+              : `Điểm demo tại quầy 5%: +${formatVND(cashback)} vào tài khoản khách`}
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {methods.map((m) => (
-            <Button key={m} variant="outline" onClick={() => setMethod(m)} className={cn("h-auto py-2 text-xs", method === m && "border-primary bg-primary/5 text-primary")}>{m}</Button>
+            <Button
+              key={m}
+              variant="outline"
+              onClick={() => setMethod(m)}
+              className={cn(
+                "h-auto py-2 text-xs",
+                method === m && "border-primary bg-primary/5 text-primary",
+              )}
+            >
+              {m}
+            </Button>
           ))}
         </div>
-<<<<<<< Updated upstream
-        <Button className="w-full bg-primary hover:bg-primary-hover" disabled={voucherBusy || (!!code.trim() && !voucherValidated)} onClick={async () => {
-          if (method === "VNPAY") {
-            if (!phoneNumber.trim()) { toast.error("Vui lòng nhập số điện thoại để ghi nhận giao dịch và tích điểm."); return; }
-            if (redeem) { toast.error("Chức năng dùng điểm hiện tại chưa được tích hợp với thanh toán VNPAY. Vui lòng tắt dùng điểm."); return; }
-            if (code.trim() && !voucherValidated) { toast.error("Vui lòng kiểm tra voucher trước khi thanh toán."); return; }
-            setVoucherBusy(true);
-            try {
-              const payment = await paymentApi.createVnpay({
-                subtotal: subtotal + vat,
-                phoneNumber: phoneNumber.trim(),
-                ...(code.trim() ? { voucherCode: code.trim() } : {}),
-              });
-              window.location.assign(payment.paymentUrl);
-            } catch (error) {
-              toast.error(error instanceof Error ? error.message : "Không thể khởi tạo thanh toán VNPAY.");
-              setVoucherBusy(false);
-            }
-            return;
-          }
-          if (code.trim()) {
-            if (!phoneNumber.trim()) { toast.error("Cần nhập số điện thoại khách để dùng voucher."); return; }
-            setVoucherBusy(true);
-            try {
-              const result = await redeemVoucher(code.trim(), phoneNumber.trim(), subtotal);
-              if (!result.valid) { setVoucherValidated(false); setVoucherDiscount(0); toast.error(result.message); return; }
-            } catch (error) { toast.error(error instanceof Error ? error.message : "Không ghi nhận được lượt dùng voucher."); return; }
-            finally { setVoucherBusy(false); }
-          }
-          completePayment(table.id, total, cashback, redeemed, method);
-          toast.success(`Thanh toán ${formatVND(total)} thành công — ${table.name} đã trống`);
-          onClose();
-        }}>Hoàn Tất Thanh Toán</Button>
-=======
         <Button
           className="w-full bg-primary hover:bg-primary-hover"
           disabled={voucherBusy || (!!code.trim() && !voucherValidated)}
@@ -426,7 +533,6 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
         >
           Hoàn Tất Thanh Toán
         </Button>
->>>>>>> Stashed changes
       </DialogContent>
     </Dialog>
   );
