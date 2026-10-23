@@ -16,4 +16,10 @@ public class LoyaltyAccount {
     public String getId(){return id;} public String getCustomerPhone(){return customerPhone;}
     public BigDecimal getPointsBalance(){return pointsBalance;}
     public void addPoints(BigDecimal points){this.pointsBalance=this.pointsBalance.add(points); this.updatedAt=LocalDateTime.now();}
+    public void redeemPoints(BigDecimal points){
+        if (points == null || points.signum() < 0 || this.pointsBalance.compareTo(points) < 0) {
+            throw new IllegalArgumentException("Số dư điểm không đủ.");
+        }
+        this.pointsBalance=this.pointsBalance.subtract(points); this.updatedAt=LocalDateTime.now();
+    }
 }

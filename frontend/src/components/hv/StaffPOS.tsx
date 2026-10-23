@@ -298,15 +298,18 @@ function OrderDialog({
   );
 }
 
-const methods = ["Tiền mặt", "Chuyển khoản QR", "VNPAY"];
+const methods = ["Tiền mặt", "VNPAY"];
 
 function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
-  const { tables, dish, loyaltyBalance, completePayment } = useRestaurant();
+  const { tables, dish, completePayment } = useRestaurant();
   const table = tables.find((t) => t.id === tableId)!;
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [loyaltyBalance, setLoyaltyBalance] = useState(0);
+  const [loyaltyBusy, setLoyaltyBusy] = useState(false);
+  const [loyaltyChecked, setLoyaltyChecked] = useState(false);
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherValidated, setVoucherValidated] = useState(false);
   const [voucherDiscount, setVoucherDiscount] = useState(0);
@@ -346,6 +349,20 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           <Row l="VAT (10%)" v={formatVND(vat)} />
           <div className="space-y-2 pt-1">
             <Input
+              placeholder="Số điện thoại khách (để dùng điểm/voucher)"
+              value={phoneNumber}
+              onChange={(e) => {
+                setPhoneNumber(e.target.value);
+                setLoyaltyBalance(0);
+                setLoyaltyChecked(false);
+                setRedeem(false);
+                setVoucherValidated(false);
+                setVoucherDiscount(0);
+              }}
+              inputMode="tel"
+            />
+
+            <Input
               placeholder="Mã voucher"
               value={code}
               onChange={(e) => {
@@ -354,16 +371,30 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                 setVoucherDiscount(0);
               }}
             />
-            <Input
-              placeholder="Số điện thoại khách (bắt buộc dùng voucher)"
-              value={phoneNumber}
-              onChange={(e) => {
-                setPhoneNumber(e.target.value);
-                setVoucherValidated(false);
-                setVoucherDiscount(0);
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={loyaltyBusy || !phoneNumber.trim()}
+              onClick={async () => {
+                setLoyaltyBusy(true);
+                setLoyaltyChecked(false);
+                try {
+                  const result = await paymentApi.getLoyaltyBalance(phoneNumber.trim());
+                  setLoyaltyBalance(Math.max(0, Number(result.pointsBalance) || 0));
+                  setLoyaltyChecked(true);
+                  toast.success(`Số dư điểm: ${formatVND(Math.max(0, Number(result.pointsBalance) || 0))}`);
+                } catch (error) {
+                  setLoyaltyBalance(0);
+                  setRedeem(false);
+                  toast.error(error instanceof Error ? error.message : "Không tra cứu được số dư điểm.");
+                } finally {
+                  setLoyaltyBusy(false);
+                }
               }}
-              inputMode="tel"
-            />
+            >
+              {loyaltyBusy ? "Đang tra cứu điểm..." : "Tra cứu số dư điểm"}
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -407,9 +438,11 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           )}
           {discount > 0 && <Row l="Voucher" v={`-${formatVND(discount)}`} cls="text-moss" />}
           <div className="flex items-center justify-between rounded-lg bg-muted p-3 text-sm">
-            <span>Dùng điểm tích luỹ ({formatVND(loyaltyBalance)})</span>
-            <Switch checked={redeem} onCheckedChange={setRedeem} />
+            <span>Dùng điểm tích luỹ ({formatVND(loyaltyChecked ? loyaltyBalance : 0)})</span>
+            <Switch checked={redeem} disabled={!phoneNumber.trim() || !loyaltyChecked || loyaltyBalance <= 0} onCheckedChange={setRedeem} />
           </div>
+          {!phoneNumber.trim() && <p className="text-xs text-muted-foreground">Nhập số điện thoại để tra cứu điểm và dùng voucher.</p>}
+          {phoneNumber.trim() && !loyaltyChecked && <p className="text-xs text-muted-foreground">Nhấn “Tra cứu số dư điểm” trước khi sử dụng điểm tích luỹ.</p>}
           {redeemed > 0 && <Row l="Điểm đã dùng" v={`-${formatVND(redeemed)}`} cls="text-moss" />}
           <Row
             l="Tổng thanh toán"
@@ -442,14 +475,8 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           disabled={voucherBusy || (!!code.trim() && !voucherValidated)}
           onClick={async () => {
             if (method === "VNPAY") {
-              if (!phoneNumber.trim()) {
-                toast.error("Vui lòng nhập số điện thoại để ghi nhận giao dịch và tích điểm.");
-                return;
-              }
               if (redeem) {
-                toast.error(
-                  "Chức năng dùng điểm hiện tại chưa được tích hợp với thanh toán VNPAY. Vui lòng tắt dùng điểm.",
-                );
+                toast.error("Chưa hỗ trợ thanh toán VNPay kèm sử dụng điểm. Vui lòng tắt sử dụng điểm hoặc chọn tiền mặt.");
                 return;
               }
               if (code.trim() && !voucherValidated) {
@@ -470,6 +497,10 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                 );
                 setVoucherBusy(false);
               }
+              return;
+            }
+            if (redeem && (!phoneNumber.trim() || !loyaltyChecked)) {
+              toast.error("Nhập số điện thoại và tra cứu số dư điểm trước khi sử dụng điểm.");
               return;
             }
             if (code.trim()) {
