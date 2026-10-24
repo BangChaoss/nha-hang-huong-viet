@@ -328,6 +328,8 @@ CREATE TABLE order_items (
     order_id CHAR(36) NOT NULL,
     menu_item_id CHAR(36) NOT NULL,
     quantity INT NOT NULL,
+    unit_price_snapshot DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    note VARCHAR(255) NULL,
     cooking_status ENUM('QUEUED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED') NOT NULL DEFAULT 'QUEUED',
     cancel_reason TEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -369,9 +371,11 @@ CREATE TABLE order_item_audits (
 CREATE TABLE kitchen_tickets (
     id CHAR(36) NOT NULL,
     order_item_id CHAR(36) NOT NULL,
+    order_id CHAR(36) NULL,
     table_number VARCHAR(20) NOT NULL,
     item_name VARCHAR(100) NOT NULL,
     quantity INT NOT NULL,
+    note VARCHAR(255) NULL,
     priority INT NOT NULL DEFAULT 1,
     status ENUM('QUEUED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED') NOT NULL DEFAULT 'QUEUED',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -380,7 +384,9 @@ CREATE TABLE kitchen_tickets (
     PRIMARY KEY (id),
     UNIQUE KEY uq_kitchen_order_item (order_item_id),
     KEY idx_kds_live_queue (status, priority, created_at),
-    CONSTRAINT fk_kitchen_order_item FOREIGN KEY (order_item_id) REFERENCES order_items (id) ON DELETE CASCADE
+    KEY idx_kds_order (order_id),
+    CONSTRAINT fk_kitchen_order_item FOREIGN KEY (order_item_id) REFERENCES order_items (id) ON DELETE CASCADE,
+    CONSTRAINT fk_kitchen_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==============================================================================
