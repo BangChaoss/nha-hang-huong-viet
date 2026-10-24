@@ -17,26 +17,48 @@ Nguồn schema chuẩn duy nhất: **`database/schema.sql`**.
 Bản sao cho runtime nằm ở `backend/src/main/resources/schema.sql` (dùng để đối chiếu khi
 `ddl-auto=validate` báo lệch).
 
-```bash
-mysql -u root -p < database/schema.sql
+### 2.1. Chạy nhanh trên máy mới
+
+```bat
+start-all.bat
 ```
 
-Lệnh trên tạo database `huong_viet_restaurant` cùng toàn bộ bảng.
+Script làm hết: kiểm tra Java 22 / Node.js / MySQL, tạo database + tài khoản nếu chưa có,
+nạp schema và dữ liệu mẫu, rồi mở hai cửa sổ chạy backend và frontend.
 
-### 2.1. Nạp dữ liệu mẫu (tuỳ chọn)
+Cấu hình MySQL nằm trong `backend/src/main/resources/application.properties`:
+
+```properties
+app.db.host=127.0.0.1
+app.db.port=3306
+app.db.name=huong_viet_restaurant
+app.db.username=huongviet
+app.db.password=huongviet123
+```
+
+Đây là **nguồn cấu hình duy nhất** — script `start-all.bat` đọc chính 5 dòng `app.db.*` này
+để tạo database, còn ứng dụng Spring Boot ghép URL JDBC từ chúng. Sửa ở đây thì cả hai
+cùng dùng giá trị mới.
+
+Nếu muốn dùng MySQL trong Docker thì đổi `app.db.port` thành cổng bạn map.
+
+### 2.2. Tạo database thủ công
 
 ```bash
+mysql -u root -p < database/schema.sql
 mysql -u root -p < database/seed.sql
 ```
 
-`database/seed.sql` nạp sẵn 3 khu vực, 12 bàn, sơ đồ sàn, 4 danh mục, 20 món ăn và 7 tài khoản
-(quản trị + 6 tài khoản demo).
+Lệnh đầu tạo database `huong_viet_restaurant` cùng toàn bộ bảng. Lệnh sau nạp sẵn
+3 khu vực, 12 bàn, sơ đồ sàn, 4 danh mục, 20 món ăn và 7 tài khoản (quản trị + 6 tài khoản demo).
 
-Script chỉ chạy **một lần** trên database rỗng. Nếu bạn chạy backend trên database rỗng thì
-**không cần** file này — các seeder trong ứng dụng tự tạo đúng dữ liệu đó (xem mục 3.1).
-Chạy cả hai cùng lúc cũng an toàn: các seeder phát hiện dữ liệu đã có và bỏ qua.
+Script `start-all.bat` thực hiện đúng hai lệnh này khi database chưa có.
 
-### 2.2. Script nâng cấp cho database đã có dữ liệu
+Nếu bạn khởi động backend trên database rỗng mà **không** chạy `seed.sql` thì các seeder
+trong ứng dụng vẫn tự tạo đúng dữ liệu đó (xem mục 3.1). Chạy cả hai cùng lúc cũng an toàn:
+các seeder phát hiện dữ liệu đã có và bỏ qua.
+
+### 2.3. Script nâng cấp cho database đã có dữ liệu
 
 Các script migration đặt trong `backend/src/main/java/com/huongViet/database/`, đặt tên theo
 `V<yyyyMMdd>__<mô_tả>.sql`. Chạy theo thứ tự ngày tăng dần:
@@ -47,27 +69,28 @@ Các script migration đặt trong `backend/src/main/java/com/huongViet/database
 | `V20261023__loyalty_profile_and_points.sql` | Hồ sơ khách hàng và điểm thưởng |
 | `V20261024__order_note_and_kitchen_ticket.sql` | Ghi chú món, snapshot giá, liên kết order cho bếp |
 
-### 2.3. Cấu hình kết nối
+### 2.4. Cấu hình kết nối
 
 `backend/src/main/resources/application.properties` đọc biến môi trường, có giá trị mặc định
 cho môi trường local:
 
 | Biến | Mặc định |
 |---|---|
-| `DB_URL` | `jdbc:mysql://localhost:3306/huong_viet_restaurant?...` |
 | `JWT_SECRET` | khoá dự phòng cho local — **bắt buộc đặt lại khi triển khai thật** |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / `admin@huongviet.com` / `Admin@123456` |
 | `CLOUDINARY_URL` | `cloudinary://<api_key>:<api_secret>@<cloud_name>` — tài khoản demo dùng chung |
 | `CLOUDINARY_FOLDER` | `huongviet/menu` — thư mục lưu ảnh trên Cloudinary |
 | `DEMO_ACCOUNTS_ENABLED` | `true` — đặt `false` để không tạo tài khoản demo |
 
-> ⚠️ `spring.datasource.password` đang để trần trong file. Trước khi triển khai thật, hãy bỏ
-> toàn bộ giá trị mặc định và bắt buộc cấp qua biến môi trường.
+Thông tin kết nối MySQL nằm ở nhóm `app.db.*` trong cùng file, xem mục 2.1.
+
+> ⚠️ `app.db.password` đang để trần trong file. Trước khi triển khai thật, hãy bỏ giá trị
+> mặc định và bắt buộc cấp qua biến môi trường.
 >
 > ⚠️ `app.cloudinary.url` cũng đang để sẵn thông tin tài khoản demo trong repo. Khi đưa dự án
 > lên công khai, hãy xoá giá trị mặc định đó và chỉ cấp qua biến môi trường `CLOUDINARY_URL`.
 
-### 2.4. Lưu trữ ảnh (Cloudinary)
+### 2.5. Lưu trữ ảnh (Cloudinary)
 
 Ảnh món ăn được tải lên từ máy người dùng và lưu trên **Cloudinary**:
 
@@ -203,7 +226,26 @@ Response dạng phân trang:
 }
 ```
 
-## 8. WebSocket
+## 8. API điều chỉnh món trong đơn (UC-17)
+
+Nhân viên có thể thêm, sửa hoặc huỷ món trong một đơn đang mở:
+
+```
+POST   /api/orders/{orderId}/items              thêm món vào đơn
+PATCH  /api/orders/{orderId}/items/{itemId}     đổi số lượng / ghi chú
+DELETE /api/orders/{orderId}/items/{itemId}     huỷ món (body: { reason })
+```
+
+| Quy tắc | Hành vi |
+|---|---|
+| BR-38 | Mọi thay đổi được đồng bộ xuống phiếu bếp và phát WebSocket ngay lập tức |
+| BR-39 | Món đã ở trạng thái `READY` hoặc `SERVED` không được sửa/huỷ (bếp đã nấu xong) → 409 |
+| BR-40 | Món hết hàng không được thêm vào đơn → 409 |
+
+Mọi thay đổi đều được ghi vào bảng `order_item_audits` (số lượng và trạng thái trước/sau,
+lý do, ai thay đổi) để đối soát khi lập hoá đơn.
+
+## 9. WebSocket
 
 Broker STOMP tại `/ws`, prefix đích `/app`, kênh broadcast `/topic/**`.
 
