@@ -54,11 +54,30 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/reservations/zones").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/guest-lookup").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/my-bookings").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/reservations/*/cancel").permitAll()
                 .requestMatchers("/api/account/**").authenticated()
                 .requestMatchers("/api/tables/**").authenticated()
                 .requestMatchers("/api/zones/**").authenticated()
                 .requestMatchers("/api/floor-plan/**").authenticated()
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
+                // UC-14: thực đơn là công khai, khách chưa đăng nhập vẫn xem được
+                .requestMatchers("/api/menu/**").permitAll()
+                // UC-15, UC-17: gọi món và xem chi tiết order — nhân viên phục vụ
+                .requestMatchers("/api/orders/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                // UC-16: màn hình bếp
+                .requestMatchers("/api/kitchen/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                // Nhân viên phục vụ cần mở/đóng bàn ngay tại bàn (UC-15, BR-27)
+                .requestMatchers("/api/admin/tables/*/status").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                // UC09, UC10, UC13: Staff and Managers can manage reservations
+                .requestMatchers("/api/admin/reservations/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
                     "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )

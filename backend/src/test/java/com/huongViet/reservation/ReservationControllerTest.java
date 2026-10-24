@@ -93,6 +93,7 @@ class ReservationControllerTest {
             null,
             null,
             null,
+            null,
             LocalDateTime.now()
         );
 
@@ -174,12 +175,29 @@ class ReservationControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/reservations/guest-lookup - Tra cứu thành công")
+    @DisplayName("GET /api/reservations/guest-lookup - Tra cứu thành công khi có đủ phone và code")
     void guestLookup_Success() throws Exception {
-        when(reservationService.getGuestBookings("0912345678")).thenReturn(List.of());
+        when(reservationService.getGuestBookings("0912345678", "RES-1234")).thenReturn(List.of());
 
         mockMvc.perform(get("/api/reservations/guest-lookup")
-                .param("phone", "0912345678"))
+                .param("phone", "0912345678")
+                .param("code", "RES-1234"))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/reservations/guest-lookup - Lỗi 400 khi thiếu mã đặt bàn")
+    void guestLookup_MissingCode_ReturnsBadRequest() throws Exception {
+        mockMvc.perform(get("/api/reservations/guest-lookup")
+                .param("phone", "0912345678"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /api/reservations/guest-lookup - Lỗi 400 khi thiếu số điện thoại")
+    void guestLookup_MissingPhone_ReturnsBadRequest() throws Exception {
+        mockMvc.perform(get("/api/reservations/guest-lookup")
+                .param("code", "RES-1234"))
+            .andExpect(status().isBadRequest());
     }
 }

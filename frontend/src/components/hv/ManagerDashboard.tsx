@@ -12,9 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Switch } from "@/components/ui/switch";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
-import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +23,7 @@ import {
 } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
+import { MenuManagement } from "@/features/menu/components/menu-management";
 
 const week = [
   { d: "T2", v: 18.2 },
@@ -64,7 +63,7 @@ const emptyVoucher = (): VoucherForm => ({
 });
 const formatVoucherDate = (value: string) => {
   if (!value) return "—";
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  const [year = 0, month = 1, day = 1] = value.slice(0, 10).split("-").map(Number);
   return new Date(year, month - 1, day).toLocaleDateString("vi-VN");
 };
 
@@ -107,7 +106,7 @@ export function ManagerDashboard() {
       );
   }, []);
 
-  const { transactions, dishes, toggleStock, tables } = useRestaurant();
+  const { transactions, dishes, tables } = useRestaurant();
   const revenue = transactions.reduce((s, t) => s + t.total, 0);
   const points = transactions.reduce((s, t) => s + t.points, 0);
   const served = transactions.length + tables.filter((t) => t.status === "occupied").length;
@@ -631,47 +630,7 @@ export function ManagerDashboard() {
               </ol>
             </div>
           </div>
-          <div className="surface-card overflow-x-auto p-5">
-            <h2 className="mb-4 text-2xl font-medium">Quản lý Thực đơn</h2>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="py-2 font-medium">Món</th>
-                  <th className="font-medium">Danh mục</th>
-                  <th className="text-right font-medium">Giá</th>
-                  <th className="text-right font-medium">Tình trạng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dishes.map((d) => (
-                  <tr key={d.id} className="border-b last:border-0">
-                    <td className="py-3 font-medium">{d.name}</td>
-                    <td className="text-muted-foreground">{d.category}</td>
-                    <td className="text-right tabular-nums">{formatVND(d.price)}</td>
-                    <td className="text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        <span
-                          className={cn(
-                            "rounded-full px-2.5 py-0.5 text-xs",
-                            d.inStock ? "status-available" : "status-cancelled",
-                          )}
-                        >
-                          {d.inStock ? "Còn món" : "Hết món"}
-                        </span>
-                        <Switch
-                          checked={d.inStock}
-                          onCheckedChange={() => {
-                            toggleStock(d.id);
-                            toast.success(`${d.name}: ${d.inStock ? "Hết món" : "Còn món"}`);
-                          }}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MenuManagement />
         </>
       )}
     </div>

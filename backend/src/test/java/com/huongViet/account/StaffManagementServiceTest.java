@@ -1,7 +1,7 @@
 package com.huongViet.account;
 
 import com.huongViet.account.dto.CreateStaffRequest;
-import com.huongViet.account.dto.PageResponse;
+import com.huongViet.common.PageResponse;
 import com.huongViet.account.dto.StaffResponse;
 import com.huongViet.account.dto.UpdateStaffRequest;
 import com.huongViet.account.dto.UpdateUserStatusRequest;

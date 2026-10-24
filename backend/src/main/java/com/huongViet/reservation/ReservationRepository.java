@@ -12,17 +12,22 @@ import java.util.Optional;
 public interface ReservationRepository extends JpaRepository<Reservation, String> {
 
     /**
-     * UC08-BR16: Checks zone capacity for a specific date and time slot.
-     * Counts the total partySize of CONFIRMED reservations assigned to tables in the target zone within the dining window.
+     * Checks zone capacity for a specific date and time slot within dining window.
+     * Deducts capacity immediately for PENDING_HOLD, PENDING_DEPOSIT, CONFIRMED, and ARRIVED reservations.
      */
     @Query("""
         SELECT COALESCE(SUM(r.partySize), 0)
         FROM Reservation r
-        JOIN RestaurantTable t ON t.id = r.tableId
-        WHERE t.zoneId = :zoneId
+        LEFT JOIN RestaurantTable t ON t.id = r.tableId
+        WHERE (r.zoneId = :zoneId OR (r.zoneId IS NULL AND t.zoneId = :zoneId))
           AND r.reservationDate = :date
           AND r.reservationTime BETWEEN :startTime AND :endTime
-          AND r.status = 'CONFIRMED'
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.PENDING_HOLD,
+              com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT,
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED
+          )
           AND r.deletedAt IS NULL
         """)
     int sumConfirmedPartySizeByZoneAndSlot(
@@ -40,7 +45,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         FROM Reservation r
         WHERE r.reservationDate = :date
           AND r.reservationTime = :time
-          AND r.status = 'PENDING_HOLD'
+          AND r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD
           AND r.deletedAt IS NULL
         """)
     int sumPendingPartySizeByDateAndTime(
@@ -55,6 +60,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         SELECT r FROM Reservation r
         LEFT JOIN FETCH r.table t
         LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
         WHERE r.customerId = :customerId
           AND r.deletedAt IS NULL
         ORDER BY r.reservationDate DESC, r.reservationTime DESC
@@ -62,17 +68,78 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
     List<Reservation> findByCustomerIdWithTableAndZone(@Param("customerId") String customerId);
 
     /**
-     * UC08: Guest lookup by phone with table and zone eager-fetched.
+     * Guest lookup requiring BOTH phone and booking code with strict AND condition.
      */
     @Query("""
         SELECT r FROM Reservation r
         LEFT JOIN FETCH r.table t
         LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.guestPhone = :phone
+          AND (
+            LOWER(r.id) = LOWER(:cleanCode)
+            OR LOWER(SUBSTRING(r.id, 1, 8)) = LOWER(:cleanCode)
+          )
+          AND r.deletedAt IS NULL
+        ORDER BY r.reservationDate DESC, r.reservationTime DESC
+        """)
+    List<Reservation> findByPhoneAndBookingCode(
+        @Param("phone") String phone,
+        @Param("cleanCode") String cleanCode
+    );
+
+    /**
+     * Backward-compatible guest lookup by phone only.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
         WHERE r.guestPhone = :guestPhone
           AND r.deletedAt IS NULL
         ORDER BY r.reservationDate DESC, r.reservationTime DESC
         """)
     List<Reservation> findByGuestPhoneWithTableAndZone(@Param("guestPhone") String guestPhone);
+
+    /**
+     * UC09: List reservations by date and optional status with table and zone eager-fetched.
+     * Orders PENDING_HOLD first (BR-18 visual hierarchy), then by reservationTime ascending.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.reservationDate = :date
+          AND r.deletedAt IS NULL
+          AND (:status IS NULL OR r.status = :status)
+        ORDER BY
+          CASE WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD THEN 0 ELSE 1 END ASC,
+          r.reservationTime ASC
+        """)
+    List<Reservation> findByDateAndStatusWithTableAndZone(
+        @Param("date") LocalDate date,
+        @Param("status") ReservationStatus status
+    );
+
+    /**
+     * UC13-E1: Find overdue confirmed reservations that exceeded grace period.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        WHERE r.status = com.huongViet.reservation.ReservationStatus.CONFIRMED
+          AND r.deletedAt IS NULL
+          AND (
+            (r.reservationDate < :today)
+            OR (r.reservationDate = :today AND r.reservationTime < :graceTime)
+          )
+        """)
+    List<Reservation> findOverdueConfirmedReservations(
+        @Param("today") LocalDate today,
+        @Param("graceTime") LocalTime graceTime
+    );
 
     /**
      * UC09 foundation: List reservations by date with table and zone eager-fetched.
@@ -81,6 +148,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         SELECT r FROM Reservation r
         LEFT JOIN FETCH r.table t
         LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
         WHERE r.reservationDate = :date
           AND r.deletedAt IS NULL
         ORDER BY r.reservationTime ASC
@@ -94,6 +162,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         SELECT r FROM Reservation r
         LEFT JOIN FETCH r.table t
         LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
         WHERE r.id = :id
           AND r.deletedAt IS NULL
         """)

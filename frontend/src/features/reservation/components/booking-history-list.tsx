@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-session";
 import { useBookingHistory, useGuestLookup } from "../hooks/use-booking-history";
 import { BookingHistoryCard } from "./booking-history-card";
+import { CancelBookingDialog } from "./cancel-booking-dialog";
 import type { ReservationResponse } from "../types/reservation.types";
 
 export function BookingHistoryList() {
@@ -24,26 +25,35 @@ export function BookingHistoryList() {
   const [lookupCode, setLookupCode] = React.useState("");
   const [guestResults, setGuestResults] = React.useState<ReservationResponse[] | null>(null);
 
+  // Cancel dialog state
+  const [cancelTarget, setCancelTarget] = React.useState<ReservationResponse | null>(null);
+  const [isCancelOpen, setIsCancelOpen] = React.useState<boolean>(false);
+
+  const handleOpenCancel = (booking: ReservationResponse) => {
+    setCancelTarget(booking);
+    setIsCancelOpen(true);
+  };
+
   const handleGuestSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const phone = lookupPhone.trim();
+    const code = lookupCode.trim();
+
     if (!phone) {
       toast.error("Vui lòng nhập số điện thoại đặt bàn");
       return;
     }
+    if (!code) {
+      toast.error("Vui lòng nhập mã đặt bàn");
+      return;
+    }
 
     try {
-      const data = await guestLookupMutation.mutateAsync(phone);
-      if (lookupCode.trim()) {
-        const codeFilter = lookupCode.trim().toUpperCase().replace(/^HV-/, "");
-        const filtered = data.filter((item) => item.id.toUpperCase().includes(codeFilter));
-        setGuestResults(filtered);
-      } else {
-        setGuestResults(data);
-      }
+      const data = await guestLookupMutation.mutateAsync({ phone, code });
+      setGuestResults(data);
 
       if (data.length === 0) {
-        toast.info("Không tìm thấy đơn đặt bàn nào với số điện thoại này");
+        toast.info("Không tìm thấy đơn đặt bàn nào khớp với số điện thoại và mã đặt bàn đã cung cấp");
       }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Tra cứu thất bại";
@@ -67,7 +77,7 @@ export function BookingHistoryList() {
 
       <Tabs defaultValue={isAuthenticated ? "member" : "guest"} className="space-y-6">
         <TabsList className="grid w-full grid-cols-2">
-          {isAuthenticated && <TabsTrigger value="member">Hội Viên Của Tôi</TabsTrigger>}
+          {isAuthenticated && <TabsTrigger value="member">Lịch Sử Của Tôi</TabsTrigger>}
           <TabsTrigger value="guest" className={!isAuthenticated ? "col-span-2" : ""}>
             Tra Cứu Khách Vãng Lai
           </TabsTrigger>
@@ -94,7 +104,11 @@ export function BookingHistoryList() {
                   </Button>
                 </div>
                 {memberBookings.map((booking) => (
-                  <BookingHistoryCard key={booking.id} booking={booking} />
+                  <BookingHistoryCard
+                    key={booking.id}
+                    booking={booking}
+                    onCancelClick={handleOpenCancel}
+                  />
                 ))}
               </div>
             ) : (
@@ -104,7 +118,7 @@ export function BookingHistoryList() {
                   Bạn chưa có đơn đặt bàn nào
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Hãy chọn tab "Đặt Bàn Trước" để đặt chỗ cho bữa ăn sum vầy tiếp theo!
+                  Hãy chọn tab &ldquo;Đặt Bàn Trước&rdquo; để đặt chỗ cho bữa ăn sum vầy tiếp theo!
                 </p>
               </div>
             )}
@@ -113,19 +127,26 @@ export function BookingHistoryList() {
 
         <TabsContent value="guest" className="space-y-6">
           <form
-            onSubmit={handleGuestSearch}
+            onSubmit={(e) => void handleGuestSearch(e)}
             className="rounded-xl border bg-card p-5 shadow-sm space-y-4"
           >
             <div className="flex items-center gap-2 border-b pb-3">
               <Search className="h-4 w-4 text-primary" />
-              <h3 className="font-semibold text-sm text-foreground">
-                Tra cứu nhanh không cần tài khoản
-              </h3>
+              <div>
+                <h3 className="font-semibold text-sm text-foreground">
+                  Tra cứu nhanh bằng Số Điện Thoại & Mã Đặt Bàn
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Để bảo mật thông tin, quý khách vui lòng nhập chính xác cả 2 thông tin đã đăng ký.
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="lookup-phone">Số điện thoại đặt bàn (*)</Label>
+                <Label htmlFor="lookup-phone">
+                  Số điện thoại đặt bàn <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="lookup-phone"
                   placeholder="VD: 0912345678"
@@ -136,12 +157,15 @@ export function BookingHistoryList() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="lookup-code">Mã đặt bàn (Không bắt buộc)</Label>
+                <Label htmlFor="lookup-code">
+                  Mã đặt bàn <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="lookup-code"
-                  placeholder="VD: HV-K8M2N9"
+                  placeholder="VD: HV-K8M2N9 hoặc K8M2N9"
                   value={lookupCode}
                   onChange={(e) => setLookupCode(e.target.value)}
+                  required
                 />
               </div>
             </div>
@@ -177,7 +201,11 @@ export function BookingHistoryList() {
               {guestResults.length > 0 ? (
                 <div className="space-y-3">
                   {guestResults.map((booking) => (
-                    <BookingHistoryCard key={booking.id} booking={booking} />
+                    <BookingHistoryCard
+                      key={booking.id}
+                      booking={booking}
+                      onCancelClick={handleOpenCancel}
+                    />
                   ))}
                 </div>
               ) : (
@@ -185,11 +213,10 @@ export function BookingHistoryList() {
                   <AlertCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
                   <p className="text-sm">
                     Không tìm thấy thông tin đặt bàn nào khớp với số điện thoại{" "}
-                    <strong>{lookupPhone}</strong>.
+                    <strong>{lookupPhone}</strong> và mã <strong>{lookupCode}</strong>.
                   </p>
                   <p className="text-xs mt-1 text-muted-foreground">
-                    Quý khách vui lòng kiểm tra lại số điện thoại hoặc liên hệ trực tiếp hotline nhà
-                    hàng.
+                    Quý khách vui lòng kiểm tra lại thông tin hoặc liên hệ trực tiếp hotline nhà hàng để được hỗ trợ.
                   </p>
                 </div>
               )}
@@ -197,6 +224,13 @@ export function BookingHistoryList() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Cancel Confirmation Dialog */}
+      <CancelBookingDialog
+        booking={cancelTarget}
+        open={isCancelOpen}
+        onOpenChange={setIsCancelOpen}
+      />
     </div>
   );
 }

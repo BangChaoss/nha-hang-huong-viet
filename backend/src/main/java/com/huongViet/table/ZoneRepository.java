@@ -16,4 +16,6 @@ public interface ZoneRepository extends JpaRepository<TableZone, String> {
     boolean existsByZoneNameIgnoreCaseAndDeletedAtIsNull(String zoneName);
 
     boolean existsByZoneNameIgnoreCaseAndDeletedAtIsNullAndIdNot(String zoneName, String id);
+
+    long countByDeletedAtIsNull();
 }
