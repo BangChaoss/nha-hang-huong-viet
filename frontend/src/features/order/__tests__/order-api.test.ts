@@ -108,6 +108,51 @@ describe("orderApi", () => {
     );
   });
 
+  it("addItem() should POST /api/orders/{orderId}/items with correct payload", async () => {
+    mockOk({ id: "order-1", items: [] });
+
+    await orderApi.addItem("order-1", { menuItemId: "dish-1", quantity: 2, note: "Ít cay" });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/order-1/items"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ menuItemId: "dish-1", quantity: 2, note: "Ít cay" }),
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+    );
+  });
+
+  it("updateItem() should PATCH /api/orders/{orderId}/items/{itemId}", async () => {
+    mockOk({ id: "order-1", items: [] });
+
+    await orderApi.updateItem("order-1", "item-5", { quantity: 3 });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/order-1/items/item-5"),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ quantity: 3 }),
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+    );
+  });
+
+  it("cancelItem() should DELETE /api/orders/{orderId}/items/{itemId} with reason", async () => {
+    mockOk({ id: "order-1", items: [] });
+
+    await orderApi.cancelItem("order-1", "item-5", "Khách đổi món");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/order-1/items/item-5"),
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ reason: "Khách đổi món" }),
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+    );
+  });
+
   it("should reject with the server message when the response is not ok", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,

@@ -57,6 +57,19 @@ export type OrderItemRequest = {
   note?: string | undefined;
 };
 
+/** Body của `POST /api/orders/{orderId}/items` (thêm món vào đơn đang mở). */
+export type AddOrderItemRequest = {
+  menuItemId: string;
+  quantity: number;
+  note?: string | undefined;
+};
+
+/** Body của `PATCH /api/orders/{orderId}/items/{itemId}` (sửa số lượng / ghi chú món). */
+export type UpdateOrderItemRequest = {
+  quantity: number;
+  note?: string | undefined;
+};
+
 /** Body của `POST /api/orders`. */
 export type CreateOrderRequest = {
   tableId: string;

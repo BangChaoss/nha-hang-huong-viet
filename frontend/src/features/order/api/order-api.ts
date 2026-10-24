@@ -1,11 +1,13 @@
 import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
 import type {
+  AddOrderItemRequest,
   CookingStatus,
   CreateOrderRequest,
   KitchenTicketResponse,
   OrderResponse,
   OrderStatus,
+  UpdateOrderItemRequest,
 } from "../types/order.types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -56,6 +58,31 @@ export const orderApi = {
 
   getActiveByTable: (tableId: string): Promise<OrderResponse> =>
     request<OrderResponse>(`/api/orders/table/${tableId}/active`),
+
+  /** Thêm món vào một đơn đang mở (STT 84). */
+  addItem: (orderId: string, payload: AddOrderItemRequest): Promise<OrderResponse> =>
+    request<OrderResponse>(`/api/orders/${orderId}/items`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Sửa số lượng / ghi chú của một món trong đơn đang mở (STT 84). */
+  updateItem: (
+    orderId: string,
+    itemId: string,
+    payload: UpdateOrderItemRequest,
+  ): Promise<OrderResponse> =>
+    request<OrderResponse>(`/api/orders/${orderId}/items/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Huỷ một món trong đơn đang mở (STT 85). */
+  cancelItem: (orderId: string, itemId: string, reason: string): Promise<OrderResponse> =>
+    request<OrderResponse>(`/api/orders/${orderId}/items/${itemId}`, {
+      method: "DELETE",
+      body: JSON.stringify({ reason }),
+    }),
 };
 
 /** API của màn hình bếp (UC-16). */

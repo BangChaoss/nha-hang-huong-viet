@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench } from "lucide-react";
+import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -9,6 +9,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -34,7 +44,12 @@ import { menuApi } from "@/features/menu/api/menu-api";
 import { useActiveOrder } from "@/features/order/hooks/use-orders";
 import { useCreateOrder } from "@/features/order/hooks/use-create-order";
 import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
-import { COOKING_STATUS_LABELS } from "@/features/order/types/order.types";
+import {
+  useAddOrderItem,
+  useCancelOrderItem,
+  useUpdateOrderItem,
+} from "@/features/order/hooks/use-order-items";
+import { COOKING_STATUS_LABELS, type OrderItemResponse } from "@/features/order/types/order.types";
 
 /** Một dòng món trong giỏ gọi món (chưa gửi xuống bếp). */
 type CartLine = { menuItemId: string; quantity: number; note: string };
@@ -250,6 +265,16 @@ function OrderDialog({
   const activeOrder = useActiveOrder(realTable?.id);
   const createOrder = useCreateOrder();
 
+  // Sửa / huỷ món trong đơn đang mở (STT 84, STT 85).
+  const addItem = useAddOrderItem();
+  const updateItem = useUpdateOrderItem();
+  const cancelItem = useCancelOrderItem();
+
+  // Ghi chú đang sửa của từng món (chỉ gửi API khi blur khỏi ô nhập).
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [cancelTarget, setCancelTarget] = useState<OrderItemResponse | null>(null);
+  const [cancelReason, setCancelReason] = useState("Khách đổi món");
+
   const updateTableStatus = useMutation({
     mutationFn: (payload: { id: string; status: TableStatus }) =>
       tableApi.updateStatus(payload.id, payload.status),
@@ -283,6 +308,60 @@ function OrderDialog({
   const dishName = (menuItemId: string) => dishes.find((d) => d.id === menuItemId)?.itemName ?? "";
   const isOccupied = realTable?.status === "OCCUPIED";
   const canSubmit = Boolean(realTable) && isOccupied && cart.length > 0 && !createOrder.isPending;
+
+  // Đơn đang mở của bàn — khi có đơn, chọn món sẽ thêm thẳng vào đơn (STT 84).
+  const orderId = activeOrder.data?.id;
+  const hasOpenOrder = Boolean(orderId);
+
+  /** Số lượng đang có trong đơn (bỏ qua món đã huỷ). */
+  const orderedQty = (menuItemId: string) =>
+    activeOrder.data?.items
+      .filter((i) => i.menuItemId === menuItemId && i.cookingStatus !== "CANCELLED")
+      .reduce((sum, i) => sum + i.quantity, 0) ?? 0;
+
+  /** Chọn món: có đơn đang mở thì thêm vào đơn, ngược lại cộng vào giỏ. */
+  const selectDish = (menuItemId: string) => {
+    if (orderId) {
+      addItem.mutate({ orderId, payload: { menuItemId, quantity: 1 } });
+      return;
+    }
+    change(menuItemId, 1);
+  };
+
+  /** Tăng/giảm số lượng của một món đã có trong đơn (không cho về 0 — phải huỷ món). */
+  const changeItemQty = (item: OrderItemResponse, delta: number) => {
+    if (!orderId) return;
+    const next = item.quantity + delta;
+    if (next < 1) return;
+    updateItem.mutate({
+      orderId,
+      itemId: item.id,
+      payload: { quantity: next, note: item.note ?? undefined },
+    });
+  };
+
+  /** Lưu ghi chú của món khi người dùng rời khỏi ô nhập. */
+  const saveItemNote = (item: OrderItemResponse) => {
+    if (!orderId) return;
+    const next = (notes[item.id] ?? item.note ?? "").trim();
+    if (next === (item.note ?? "").trim()) return;
+    updateItem.mutate({
+      orderId,
+      itemId: item.id,
+      payload: { quantity: item.quantity, note: next },
+    });
+  };
+
+  const openCancelDialog = (item: OrderItemResponse) => {
+    setCancelReason("Khách đổi món");
+    setCancelTarget(item);
+  };
+
+  /** Món đã nấu xong (READY/SERVED) hoặc đã huỷ thì không sửa/huỷ được (BR-39). */
+  const isLockedItem = (item: OrderItemResponse) =>
+    item.cookingStatus === "READY" ||
+    item.cookingStatus === "SERVED" ||
+    item.cookingStatus === "CANCELLED";
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -359,43 +438,46 @@ function OrderDialog({
                   : "Không tải được thực đơn."}
               </p>
             )}
-            {dishes.map((d) => (
-              <div
-                key={d.id}
-                className={cn(
-                  "flex items-center justify-between rounded-lg border p-3",
-                  !d.isAvailable && "opacity-50",
-                )}
-              >
-                <div>
-                  <p className="text-sm font-medium">{d.itemName}</p>
-                  <p className="text-xs tabular-nums text-muted-foreground">
-                    {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
-                  </p>
+            {dishes.map((d) => {
+              const shownQty = hasOpenOrder ? orderedQty(d.id) : qty(d.id);
+              return (
+                <div
+                  key={d.id}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border p-3",
+                    !d.isAvailable && "opacity-50",
+                  )}
+                >
+                  <div>
+                    <p className="text-sm font-medium">{d.itemName}</p>
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                      {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="h-7 w-7"
+                      disabled={!d.isAvailable || hasOpenOrder || qty(d.id) === 0}
+                      onClick={() => change(d.id, -1)}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="w-5 text-center text-sm tabular-nums">{shownQty}</span>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="h-7 w-7"
+                      disabled={!d.isAvailable || addItem.isPending}
+                      onClick={() => selectDish(d.id)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="h-7 w-7"
-                    disabled={!d.isAvailable || qty(d.id) === 0}
-                    onClick={() => change(d.id, -1)}
-                  >
-                    <Minus className="h-3 w-3" />
-                  </Button>
-                  <span className="w-5 text-center text-sm tabular-nums">{qty(d.id)}</span>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="h-7 w-7"
-                    disabled={!d.isAvailable}
-                    onClick={() => change(d.id, 1)}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="space-y-4">
             <div>
@@ -408,24 +490,88 @@ function OrderDialog({
               {activeOrder.data && activeOrder.data.items.length === 0 && (
                 <p className="text-sm text-muted-foreground">Chưa có món.</p>
               )}
-              {activeOrder.data?.items.map((item) => (
-                <div key={item.id} className="flex justify-between gap-3 border-b py-1.5 text-sm">
-                  <span>
-                    {item.quantity} × {item.itemName}
-                    {item.note && <span className="ml-2 text-xs text-alert">({item.note})</span>}
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {COOKING_STATUS_LABELS[item.cookingStatus]}
-                    </span>
-                  </span>
-                  <span className="shrink-0 tabular-nums">{formatVND(item.lineTotal)}</span>
-                </div>
-              ))}
+              {activeOrder.data?.items.map((item) => {
+                const locked = isLockedItem(item);
+                const cancelled = item.cookingStatus === "CANCELLED";
+                const cooked = item.cookingStatus === "READY" || item.cookingStatus === "SERVED";
+                return (
+                  <div key={item.id} className="border-b py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={cn(cancelled && "text-muted-foreground line-through")}>
+                        {item.quantity} × {item.itemName}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatVND(item.lineTotal)}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {COOKING_STATUS_LABELS[item.cookingStatus]}
+                      </span>
+                      {cooked && (
+                        <span className="text-xs text-muted-foreground">
+                          · Bếp đã nấu xong, không sửa/huỷ được
+                        </span>
+                      )}
+                      {cancelled && item.cancelReason && (
+                        <span className="text-xs text-alert">Lý do: {item.cancelReason}</span>
+                      )}
+                    </div>
+                    {!locked && (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          disabled={item.quantity <= 1 || updateItem.isPending}
+                          onClick={() => changeItemQty(item, -1)}
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="w-5 text-center text-sm tabular-nums">
+                          {item.quantity}
+                        </span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          disabled={updateItem.isPending}
+                          onClick={() => changeItemQty(item, 1)}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                        <Input
+                          className="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="Ghi chú cho bếp"
+                          value={notes[item.id] ?? item.note ?? ""}
+                          onChange={(e) =>
+                            setNotes((cur) => ({ ...cur, [item.id]: e.target.value }))
+                          }
+                          onBlur={() => saveItemNote(item)}
+                        />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-alert hover:bg-alert/10 hover:text-alert"
+                          disabled={cancelItem.isPending}
+                          onClick={() => openCancelDialog(item)}
+                          aria-label="Huỷ món"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div>
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
                 Món mới
               </p>
-              {cart.length === 0 ? (
+              {hasOpenOrder ? (
+                <p className="text-sm text-muted-foreground">
+                  Bàn đang có đơn mở. Chọn món ở bên trái để thêm thẳng vào đơn.
+                </p>
+              ) : cart.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
               ) : (
                 <div className="space-y-2">
@@ -445,33 +591,35 @@ function OrderDialog({
                 </div>
               )}
             </div>
-            <Button
-              className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
-              disabled={!canSubmit}
-              onClick={() => {
-                if (!realTable) return;
-                createOrder.mutate(
-                  {
-                    tableId: realTable.id,
-                    items: cart.map((line) => ({
-                      menuItemId: line.menuItemId,
-                      quantity: line.quantity,
-                      note: line.note.trim() || undefined,
-                    })),
-                    submit: true,
-                  },
-                  {
-                    onSuccess: () => {
-                      toast.success(`Đã gửi ${cart.length} món xuống bếp`);
-                      setCart([]);
+            {!hasOpenOrder && (
+              <Button
+                className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
+                disabled={!canSubmit}
+                onClick={() => {
+                  if (!realTable) return;
+                  createOrder.mutate(
+                    {
+                      tableId: realTable.id,
+                      items: cart.map((line) => ({
+                        menuItemId: line.menuItemId,
+                        quantity: line.quantity,
+                        note: line.note.trim() || undefined,
+                      })),
+                      submit: true,
                     },
-                    onError: (error: Error) => toast.error(error.message),
-                  },
-                );
-              }}
-            >
-              <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
-            </Button>
+                    {
+                      onSuccess: () => {
+                        toast.success(`Đã gửi ${cart.length} món xuống bếp`);
+                        setCart([]);
+                      },
+                      onError: (error: Error) => toast.error(error.message),
+                    },
+                  );
+                }}
+              >
+                <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
+              </Button>
+            )}
             <Button
               className="w-full bg-primary hover:bg-primary-hover"
               disabled={!activeOrder.data || activeOrder.data.items.length === 0}
@@ -481,6 +629,49 @@ function OrderDialog({
             </Button>
           </div>
         </div>
+
+        <AlertDialog
+          open={Boolean(cancelTarget)}
+          onOpenChange={(open) => {
+            if (!open) setCancelTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display text-2xl">Huỷ món</AlertDialogTitle>
+              <AlertDialogDescription>
+                Huỷ món {cancelTarget?.itemName} khỏi đơn? Bếp sẽ nhận được yêu cầu huỷ món này.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <Input
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Lý do huỷ món"
+            />
+            <AlertDialogFooter>
+              <AlertDialogCancel>Giữ món</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-alert text-white hover:bg-alert/90"
+                disabled={!cancelReason.trim() || cancelItem.isPending}
+                onClick={(e) => {
+                  // Giữ hộp thoại mở cho tới khi API trả về kết quả.
+                  e.preventDefault();
+                  if (!orderId || !cancelTarget) return;
+                  cancelItem.mutate(
+                    {
+                      orderId,
+                      itemId: cancelTarget.id,
+                      reason: cancelReason.trim(),
+                    },
+                    { onSuccess: () => setCancelTarget(null) },
+                  );
+                }}
+              >
+                Huỷ món
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
