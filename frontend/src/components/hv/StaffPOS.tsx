@@ -20,8 +20,18 @@ import {
   type Zone,
 } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
-import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
+import { validateVoucher } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
+<<<<<<< Updated upstream
+=======
+import { tableApi, type TableStatus } from "@/lib/table-api";
+import { menuApi } from "@/features/menu/api/menu-api";
+import { useActiveOrder } from "@/features/order/hooks/use-orders";
+import { useCreateOrder } from "@/features/order/hooks/use-create-order";
+import { orderApi } from "@/features/order/api/order-api";
+import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
+import { COOKING_STATUS_LABELS } from "@/features/order/types/order.types";
+>>>>>>> Stashed changes
 
 export const tableStatusMeta: Record<TableStatus, { label: string; cls: string }> = {
   available: { label: "Trống", cls: "status-available" },
@@ -301,8 +311,19 @@ function OrderDialog({
 const methods = ["Tiền mặt", "VNPAY"];
 
 function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
-  const { tables, dish, completePayment } = useRestaurant();
+  const { tables, completePayment } = useRestaurant();
+  const queryClient = useQueryClient();
   const table = tables.find((t) => t.id === tableId)!;
+  const realTablesQuery = useQuery({ queryKey: ["tables"], queryFn: () => tableApi.list(), staleTime: 0 });
+  const realTable = realTablesQuery.data?.find((t) => t.tableNumber === table.name);
+  const sentOrdersQuery = useQuery({
+    queryKey: ["orders", "table", realTable?.id, "unpaid"],
+    queryFn: () => orderApi.list({ tableId: realTable!.id, status: "IN_PROGRESS" }),
+    enabled: Boolean(realTable?.id),
+    staleTime: 0,
+  });
+  const sentItems = (sentOrdersQuery.data ?? []).flatMap((order) => order.items)
+    .filter((item) => item.cookingStatus !== "CANCELLED");
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
@@ -313,14 +334,14 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherValidated, setVoucherValidated] = useState(false);
   const [voucherDiscount, setVoucherDiscount] = useState(0);
-  const subtotal = table.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
+  // Hóa đơn chỉ lấy món đã được lưu và gửi bếp từ backend; không lấy giỏ nháp/local mock.
+  const subtotal = sentItems.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
   const vat = subtotal * 0.1;
   // Chỉ áp dụng giảm giá sau khi backend đã xác nhận voucher hợp lệ.
-  const discount = voucherValidated ? Math.min(voucherDiscount, subtotal) : 0;
+  const discount = voucherValidated ? Math.min(voucherDiscount, subtotal + vat) : 0;
   const beforeRedeem = subtotal + vat - discount;
   const redeemed = redeem ? Math.min(loyaltyBalance, beforeRedeem) : 0;
   const total = beforeRedeem - redeemed;
-  const cashback = Math.round(total * 0.05);
 
   const Row = ({ l, v, cls }: { l: string; v: string; cls?: string }) => (
     <div className={cn("flex justify-between text-sm", cls)}>
@@ -336,13 +357,16 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           <DialogTitle className="font-display text-3xl">Hoá đơn · {table.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
-          {table.order.map((o) => (
+          {sentItems.map((item) => (
             <Row
-              key={o.dishId}
-              l={`${o.qty} × ${dish(o.dishId)?.name}`}
-              v={formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}
+              key={item.id}
+              l={`${item.quantity} × ${item.itemName ?? "Món ăn"}`}
+              v={formatVND(Number(item.lineTotal || 0))}
             />
           ))}
+          {!realTable && <p className="text-sm text-alert">Không tìm thấy bàn trong dữ liệu hệ thống.</p>}
+          {realTable && sentOrdersQuery.isLoading && <p className="text-sm text-muted-foreground">Đang tải món đã gửi bếp…</p>}
+          {realTable && sentOrdersQuery.isSuccess && sentItems.length === 0 && <p className="text-sm text-alert">Bàn chưa có món nào đã gửi bếp để tính hóa đơn.</p>}
         </div>
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />
@@ -406,7 +430,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                   const result = await validateVoucher(
                     code.trim(),
                     phoneNumber.trim(),
-                    method === "VNPAY" ? subtotal + vat : subtotal,
+                    subtotal + vat,
                   );
                   if (!result.valid) {
                     setVoucherValidated(false);
@@ -452,7 +476,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           <p className="text-xs text-muted-foreground">
             {method === "VNPAY"
               ? "Điểm VNPAY sẽ được cộng theo tỷ lệ do Manager cấu hình sau khi giao dịch thành công."
-              : `Điểm demo tại quầy 5%: +${formatVND(cashback)} vào tài khoản khách`}
+              : `Điểm thưởng sẽ được cộng vào ví của số điện thoại đã nhập sau khi thanh toán thành công.`}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -472,7 +496,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
         </div>
         <Button
           className="w-full bg-primary hover:bg-primary-hover"
-          disabled={voucherBusy || (!!code.trim() && !voucherValidated)}
+          disabled={voucherBusy || sentOrdersQuery.isLoading || !realTable || sentItems.length === 0 || (!!code.trim() && !voucherValidated)}
           onClick={async () => {
             if (method === "VNPAY") {
               if (redeem) {
@@ -503,32 +527,36 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
               toast.error("Nhập số điện thoại và tra cứu số dư điểm trước khi sử dụng điểm.");
               return;
             }
-            if (code.trim()) {
-              if (!phoneNumber.trim()) {
-                toast.error("Cần nhập số điện thoại khách để dùng voucher.");
-                return;
-              }
-              setVoucherBusy(true);
-              try {
-                const result = await redeemVoucher(code.trim(), phoneNumber.trim(), subtotal);
-                if (!result.valid) {
-                  setVoucherValidated(false);
-                  setVoucherDiscount(0);
-                  toast.error(result.message);
-                  return;
-                }
-              } catch (error) {
-                toast.error(
-                  error instanceof Error ? error.message : "Không ghi nhận được lượt dùng voucher.",
-                );
-                return;
-              } finally {
-                setVoucherBusy(false);
-              }
+            if (!realTable?.id) {
+              toast.error("Không tìm thấy bàn trong dữ liệu backend.");
+              return;
             }
-            completePayment(table.id, total, cashback, redeemed, method);
-            toast.success(`Thanh toán ${formatVND(total)} thành công — ${table.name} đã trống`);
-            onClose();
+            if (sentOrdersQuery.isLoading || sentItems.length === 0) {
+              toast.error("Chưa tải được các món đã gửi bếp của bàn.");
+              return;
+            }
+            if (code.trim() && (!phoneNumber.trim() || !voucherValidated)) {
+              toast.error("Vui lòng nhập số điện thoại và kiểm tra voucher hợp lệ trước khi thanh toán.");
+              return;
+            }
+            setVoucherBusy(true);
+            try {
+              const settled = await orderApi.checkoutCash(realTable.id, {
+                phoneNumber: phoneNumber.trim() || undefined,
+                voucherCode: code.trim() || undefined,
+                usePoints: redeem,
+              });
+              // Backend đã chốt các order, cộng/trừ điểm và giải phóng bàn trong một transaction.
+              completePayment(table.id, Number(settled.total), Number(settled.pointsAwarded), 0, method);
+              await queryClient.invalidateQueries({ queryKey: ["tables"] });
+              await queryClient.invalidateQueries({ queryKey: ["orders"] });
+              toast.success(`Thanh toán ${formatVND(Number(settled.total))} thành công — ${table.name} đã trống. Điểm thưởng: ${formatVND(Number(settled.pointsAwarded))}`);
+              onClose();
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : "Không thể hoàn tất thanh toán tiền mặt.");
+            } finally {
+              setVoucherBusy(false);
+            }
           }}
         >
           Hoàn Tất Thanh Toán
