@@ -111,6 +111,18 @@
             <version>8.10.1</version>
         </dependency>
 
+        <!-- Cloudinary (lưu trữ ảnh món ăn) -->
+        <dependency>
+            <groupId>com.cloudinary</groupId>
+            <artifactId>cloudinary-core</artifactId>
+            <version>1.39.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudinary</groupId>
+            <artifactId>cloudinary-http44</artifactId>
+            <version>1.39.0</version>
+        </dependency>
+
     </dependencies>
 
     <build>

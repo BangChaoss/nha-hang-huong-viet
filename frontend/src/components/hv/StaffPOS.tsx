@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -12,18 +13,58 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   formatVND,
   useRestaurant,
-  type OrderLine,
   type Table,
-  type TableStatus,
+  type TableStatus as MockTableStatus,
   type Zone,
 } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
 import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
+import { tableApi, type TableStatus } from "@/lib/table-api";
+import { menuApi } from "@/features/menu/api/menu-api";
+import { useActiveOrder } from "@/features/order/hooks/use-orders";
+import { useCreateOrder } from "@/features/order/hooks/use-create-order";
+import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
+import { COOKING_STATUS_LABELS } from "@/features/order/types/order.types";
 
-export const tableStatusMeta: Record<TableStatus, { label: string; cls: string }> = {
+/** Một dòng món trong giỏ gọi món (chưa gửi xuống bếp). */
+type CartLine = { menuItemId: string; quantity: number; note: string };
+
+/**
+ * Nhãn tiếng Việt của các trạng thái bàn (theo backend).
+ * - AVAILABLE: bàn trống, sẵn sàng đón khách
+ * - RESERVED:  khách đã đặt trước, chờ tới giờ
+ * - OCCUPIED:  khách đang ngồi — chỉ trạng thái này mới gọi món được
+ * - CLEANING:  bàn cần dọn dẹp
+ * - MAINTENANCE: bàn đang bảo trì, không phục vụ
+ */
+const TABLE_STATUS_LABELS: Record<TableStatus, string> = {
+  AVAILABLE: "Trống",
+  RESERVED: "Đã đặt trước",
+  OCCUPIED: "Đang phục vụ",
+  CLEANING: "Cần dọn dẹp",
+  MAINTENANCE: "Bảo trì",
+};
+
+/** Màu badge cho từng trạng thái bàn thật (dùng lại class của design system). */
+const REAL_STATUS_CLASSES: Record<TableStatus, string> = {
+  AVAILABLE: "status-available",
+  RESERVED: "status-reserved",
+  OCCUPIED: "status-occupied",
+  CLEANING: "status-available",
+  MAINTENANCE: "status-maintenance",
+};
+
+export const tableStatusMeta: Record<MockTableStatus, { label: string; cls: string }> = {
   available: { label: "Trống", cls: "status-available" },
   reserved: { label: "Đã Đặt", cls: "status-reserved" },
   occupied: { label: "Đang Ăn", cls: "status-occupied" },
@@ -38,7 +79,20 @@ export function StaffPOS() {
   const [billing, setBilling] = useState<number | null>(null);
   const table = tables.find((t) => t.id === active);
 
-  const counts = (s: TableStatus) => tables.filter((t) => t.status === s).length;
+  // Trạng thái bàn lấy từ hệ thống thật — lưới bàn và hộp thoại gọi món
+  // phải thống nhất, nếu không nhân viên sẽ thấy hai trạng thái khác nhau.
+  const realTablesQuery = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tableApi.list(),
+    staleTime: 15_000,
+  });
+  const realStatusByNumber = useMemo(() => {
+    const map = new Map<string, TableStatus>();
+    (realTablesQuery.data ?? []).forEach((t) => map.set(t.tableNumber, t.status));
+    return map;
+  }, [realTablesQuery.data]);
+
+  const counts = (s: MockTableStatus) => tables.filter((t) => t.status === s).length;
 
   return (
     <div className="space-y-8">
@@ -48,7 +102,7 @@ export function StaffPOS() {
           <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          {(Object.keys(tableStatusMeta) as TableStatus[]).map((s) => (
+          {(Object.keys(tableStatusMeta) as MockTableStatus[]).map((s) => (
             <span
               key={s}
               className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}
@@ -67,22 +121,24 @@ export function StaffPOS() {
               .filter((t) => t.zone === z)
               .map((t) => {
                 const total = t.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
+                const realStatus = realStatusByNumber.get(t.name);
+                const isMaintenance = realStatus === "MAINTENANCE" || t.status === "maintenance";
+                const statusLabel = realStatus
+                  ? TABLE_STATUS_LABELS[realStatus]
+                  : tableStatusMeta[t.status].label;
+                const statusClass = realStatus
+                  ? (REAL_STATUS_CLASSES[realStatus] ?? tableStatusMeta[t.status].cls)
+                  : tableStatusMeta[t.status].cls;
                 return (
                   <button
                     key={t.id}
-                    disabled={t.status === "maintenance"}
-                    onClick={() =>
-                      t.status === "available"
-                        ? toast.info(`${t.name} đang trống — sẵn sàng đón khách`)
-                        : setActive(t.id)
-                    }
+                    disabled={isMaintenance}
+                    onClick={() => setActive(t.id)}
                     className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className="flex items-start justify-between">
                       <span className="font-display text-2xl font-semibold">{t.name}</span>
-                      {t.status === "maintenance" && (
-                        <Wrench className="h-4 w-4 text-muted-foreground" />
-                      )}
+                      {isMaintenance && <Wrench className="h-4 w-4 text-muted-foreground" />}
                     </div>
                     <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                       <Users className="h-3 w-3" /> {t.seats} ghế
@@ -90,10 +146,10 @@ export function StaffPOS() {
                     <span
                       className={cn(
                         "mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        tableStatusMeta[t.status].cls,
+                        statusClass,
                       )}
                     >
-                      {tableStatusMeta[t.status].label}
+                      {statusLabel}
                     </span>
                     {t.status === "reserved" && (
                       <p className="mt-2 text-xs text-muted-foreground">
@@ -113,7 +169,7 @@ export function StaffPOS() {
       {table?.status === "reserved" && (
         <ReservationDialog table={table} onClose={() => setActive(null)} />
       )}
-      {table?.status === "occupied" && (
+      {table && table.status !== "reserved" && (
         <OrderDialog
           table={table}
           onClose={() => setActive(null)}
@@ -173,18 +229,60 @@ function OrderDialog({
   onClose: () => void;
   onBill: () => void;
 }) {
-  const { dishes, dish, sendToKitchen } = useRestaurant();
-  const [draft, setDraft] = useState<OrderLine[]>([]);
-  const [note, setNote] = useState("");
-  const change = (dishId: string, d: number) =>
-    setDraft((cur) => {
-      const ex = cur.find((l) => l.dishId === dishId);
-      if (!ex) return d > 0 ? [...cur, { dishId, qty: 1 }] : cur;
+  const queryClient = useQueryClient();
+  const [cart, setCart] = useState<CartLine[]>([]);
+
+  // Bàn thật trong hệ thống — ánh xạ theo số bàn để áp dụng đúng quy tắc nghiệp vụ.
+  const tablesQuery = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tableApi.list(),
+    staleTime: 15_000,
+  });
+  const realTable = tablesQuery.data?.find((t) => t.tableNumber === table.name);
+
+  const menuQuery = useQuery({
+    queryKey: ["menu"],
+    queryFn: () => menuApi.getOverview(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const dishes = menuQuery.data?.categories.flatMap((c) => c.items ?? []) ?? [];
+
+  const activeOrder = useActiveOrder(realTable?.id);
+  const createOrder = useCreateOrder();
+
+  const updateTableStatus = useMutation({
+    mutationFn: (payload: { id: string; status: TableStatus }) =>
+      tableApi.updateStatus(payload.id, payload.status),
+    onSuccess: (updated) => {
+      toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // STT 90: bếp báo món xong thì phục vụ nhận thông báo ngay.
+  useKitchenCompleted((message) => {
+    if (message.tableId !== realTable?.id) return;
+    toast.success(`${message.tableNumber}: ${message.itemName} đã xong, sẵn sàng phục vụ.`);
+    void queryClient.invalidateQueries({ queryKey: ["orders"] });
+  });
+
+  const change = (menuItemId: string, delta: number) =>
+    setCart((cur) => {
+      const existing = cur.find((l) => l.menuItemId === menuItemId);
+      if (!existing) return delta > 0 ? [...cur, { menuItemId, quantity: 1, note: "" }] : cur;
       return cur
-        .map((l) => (l.dishId === dishId ? { ...l, qty: l.qty + d } : l))
-        .filter((l) => l.qty > 0);
+        .map((l) => (l.menuItemId === menuItemId ? { ...l, quantity: l.quantity + delta } : l))
+        .filter((l) => l.quantity > 0);
     });
-  const qty = (id: string) => draft.find((l) => l.dishId === id)?.qty ?? 0;
+
+  const setNote = (menuItemId: string, note: string) =>
+    setCart((cur) => cur.map((l) => (l.menuItemId === menuItemId ? { ...l, note } : l)));
+
+  const qty = (menuItemId: string) => cart.find((l) => l.menuItemId === menuItemId)?.quantity ?? 0;
+  const dishName = (menuItemId: string) => dishes.find((d) => d.id === menuItemId)?.itemName ?? "";
+  const isOccupied = realTable?.status === "OCCUPIED";
+  const canSubmit = Boolean(realTable) && isOccupied && cart.length > 0 && !createOrder.isPending;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -193,21 +291,86 @@ function OrderDialog({
           <DialogTitle className="font-display text-3xl">{table.name} · Gọi món</DialogTitle>
           <DialogDescription>Món hết hàng sẽ không thể chọn.</DialogDescription>
         </DialogHeader>
+
+        {tablesQuery.isLoading && (
+          <p className="text-sm text-muted-foreground">Đang tải thông tin bàn…</p>
+        )}
+
+        {realTable && !isOccupied && (
+          <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <strong>{realTable.tableNumber}</strong> đang ở trạng thái{" "}
+                <strong>{TABLE_STATUS_LABELS[realTable.status]}</strong>. Cần mở bàn (đang phục vụ)
+                trước khi gọi món.
+              </span>
+              <Button
+                size="sm"
+                className="bg-primary hover:bg-primary-hover"
+                disabled={updateTableStatus.isPending}
+                onClick={() => updateTableStatus.mutate({ id: realTable.id, status: "OCCUPIED" })}
+              >
+                Mở bàn
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-amber-500/20 pt-2">
+              <span className="text-xs text-muted-foreground">Đổi trạng thái bàn:</span>
+              <Select
+                value={realTable.status}
+                onValueChange={(value) =>
+                  updateTableStatus.mutate({
+                    id: realTable.id,
+                    status: value as TableStatus,
+                  })
+                }
+              >
+                <SelectTrigger className="h-8 w-[10rem] bg-card">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(TABLE_STATUS_LABELS) as TableStatus[]).map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {TABLE_STATUS_LABELS[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+
+        {tablesQuery.isSuccess && !realTable && (
+          <p className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
+            Không tìm thấy bàn này trong hệ thống. Vui lòng kiểm tra lại danh sách bàn.
+          </p>
+        )}
+
         <div className="grid gap-6 md:grid-cols-2">
           <div className="space-y-2">
             <p className="text-xs uppercase tracking-widest text-muted-foreground">Thực đơn</p>
+            {menuQuery.isLoading && (
+              <p className="text-sm text-muted-foreground">Đang tải thực đơn…</p>
+            )}
+            {menuQuery.isError && (
+              <p className="text-sm text-alert">
+                {menuQuery.error instanceof Error
+                  ? menuQuery.error.message
+                  : "Không tải được thực đơn."}
+              </p>
+            )}
             {dishes.map((d) => (
               <div
                 key={d.id}
                 className={cn(
                   "flex items-center justify-between rounded-lg border p-3",
-                  !d.inStock && "opacity-50",
+                  !d.isAvailable && "opacity-50",
                 )}
               >
                 <div>
-                  <p className="text-sm font-medium">{d.name}</p>
+                  <p className="text-sm font-medium">{d.itemName}</p>
                   <p className="text-xs tabular-nums text-muted-foreground">
-                    {d.inStock ? formatVND(d.price) : "Hết món"}
+                    {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -215,7 +378,7 @@ function OrderDialog({
                     size="icon"
                     variant="outline"
                     className="h-7 w-7"
-                    disabled={!d.inStock || qty(d.id) === 0}
+                    disabled={!d.isAvailable || qty(d.id) === 0}
                     onClick={() => change(d.id, -1)}
                   >
                     <Minus className="h-3 w-3" />
@@ -225,7 +388,7 @@ function OrderDialog({
                     size="icon"
                     variant="outline"
                     className="h-7 w-7"
-                    disabled={!d.inStock}
+                    disabled={!d.isAvailable}
                     onClick={() => change(d.id, 1)}
                   >
                     <Plus className="h-3 w-3" />
@@ -239,17 +402,22 @@ function OrderDialog({
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
                 Đã gửi bếp
               </p>
-              {table.order.length === 0 && (
+              {activeOrder.isLoading && (
+                <p className="text-sm text-muted-foreground">Đang tải đơn hàng…</p>
+              )}
+              {activeOrder.data && activeOrder.data.items.length === 0 && (
                 <p className="text-sm text-muted-foreground">Chưa có món.</p>
               )}
-              {table.order.map((o) => (
-                <div key={o.dishId} className="flex justify-between border-b py-1.5 text-sm">
+              {activeOrder.data?.items.map((item) => (
+                <div key={item.id} className="flex justify-between gap-3 border-b py-1.5 text-sm">
                   <span>
-                    {o.qty} × {dish(o.dishId)?.name}
+                    {item.quantity} × {item.itemName}
+                    {item.note && <span className="ml-2 text-xs text-alert">({item.note})</span>}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {COOKING_STATUS_LABELS[item.cookingStatus]}
+                    </span>
                   </span>
-                  <span className="tabular-nums">
-                    {formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}
-                  </span>
+                  <span className="shrink-0 tabular-nums">{formatVND(item.lineTotal)}</span>
                 </div>
               ))}
             </div>
@@ -257,36 +425,56 @@ function OrderDialog({
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
                 Món mới
               </p>
-              {draft.length === 0 ? (
+              {cart.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
               ) : (
-                draft.map((l) => (
-                  <p key={l.dishId} className="text-sm">
-                    {l.qty} × {dish(l.dishId)?.name}
-                  </p>
-                ))
+                <div className="space-y-2">
+                  {cart.map((line) => (
+                    <div key={line.menuItemId} className="space-y-1">
+                      <p className="text-sm">
+                        {line.quantity} × {dishName(line.menuItemId)}
+                      </p>
+                      <Input
+                        className="h-8 text-xs"
+                        placeholder="Ghi chú cho bếp (vd: Ít cay, không hành)"
+                        value={line.note}
+                        onChange={(e) => setNote(line.menuItemId, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-            <Input
-              placeholder="Ghi chú cho bếp (vd: Ít cay, không hành)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
             <Button
               className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
-              disabled={draft.length === 0}
+              disabled={!canSubmit}
               onClick={() => {
-                sendToKitchen(table.id, draft, note);
-                toast.success(`Đã gửi ${draft.length} món xuống bếp`);
-                setDraft([]);
-                setNote("");
+                if (!realTable) return;
+                createOrder.mutate(
+                  {
+                    tableId: realTable.id,
+                    items: cart.map((line) => ({
+                      menuItemId: line.menuItemId,
+                      quantity: line.quantity,
+                      note: line.note.trim() || undefined,
+                    })),
+                    submit: true,
+                  },
+                  {
+                    onSuccess: () => {
+                      toast.success(`Đã gửi ${cart.length} món xuống bếp`);
+                      setCart([]);
+                    },
+                    onError: (error: Error) => toast.error(error.message),
+                  },
+                );
               }}
             >
               <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
             </Button>
             <Button
               className="w-full bg-primary hover:bg-primary-hover"
-              disabled={table.order.length === 0}
+              disabled={!activeOrder.data || activeOrder.data.items.length === 0}
               onClick={onBill}
             >
               <Receipt className="mr-2 h-4 w-4" /> Tạo Hoá Đơn / Thanh Toán
@@ -383,11 +571,15 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                   const result = await paymentApi.getLoyaltyBalance(phoneNumber.trim());
                   setLoyaltyBalance(Math.max(0, Number(result.pointsBalance) || 0));
                   setLoyaltyChecked(true);
-                  toast.success(`Số dư điểm: ${formatVND(Math.max(0, Number(result.pointsBalance) || 0))}`);
+                  toast.success(
+                    `Số dư điểm: ${formatVND(Math.max(0, Number(result.pointsBalance) || 0))}`,
+                  );
                 } catch (error) {
                   setLoyaltyBalance(0);
                   setRedeem(false);
-                  toast.error(error instanceof Error ? error.message : "Không tra cứu được số dư điểm.");
+                  toast.error(
+                    error instanceof Error ? error.message : "Không tra cứu được số dư điểm.",
+                  );
                 } finally {
                   setLoyaltyBusy(false);
                 }
@@ -439,10 +631,22 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           {discount > 0 && <Row l="Voucher" v={`-${formatVND(discount)}`} cls="text-moss" />}
           <div className="flex items-center justify-between rounded-lg bg-muted p-3 text-sm">
             <span>Dùng điểm tích luỹ ({formatVND(loyaltyChecked ? loyaltyBalance : 0)})</span>
-            <Switch checked={redeem} disabled={!phoneNumber.trim() || !loyaltyChecked || loyaltyBalance <= 0} onCheckedChange={setRedeem} />
+            <Switch
+              checked={redeem}
+              disabled={!phoneNumber.trim() || !loyaltyChecked || loyaltyBalance <= 0}
+              onCheckedChange={setRedeem}
+            />
           </div>
-          {!phoneNumber.trim() && <p className="text-xs text-muted-foreground">Nhập số điện thoại để tra cứu điểm và dùng voucher.</p>}
-          {phoneNumber.trim() && !loyaltyChecked && <p className="text-xs text-muted-foreground">Nhấn “Tra cứu số dư điểm” trước khi sử dụng điểm tích luỹ.</p>}
+          {!phoneNumber.trim() && (
+            <p className="text-xs text-muted-foreground">
+              Nhập số điện thoại để tra cứu điểm và dùng voucher.
+            </p>
+          )}
+          {phoneNumber.trim() && !loyaltyChecked && (
+            <p className="text-xs text-muted-foreground">
+              Nhấn “Tra cứu số dư điểm” trước khi sử dụng điểm tích luỹ.
+            </p>
+          )}
           {redeemed > 0 && <Row l="Điểm đã dùng" v={`-${formatVND(redeemed)}`} cls="text-moss" />}
           <Row
             l="Tổng thanh toán"
@@ -476,7 +680,9 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           onClick={async () => {
             if (method === "VNPAY") {
               if (redeem) {
-                toast.error("Chưa hỗ trợ thanh toán VNPay kèm sử dụng điểm. Vui lòng tắt sử dụng điểm hoặc chọn tiền mặt.");
+                toast.error(
+                  "Chưa hỗ trợ thanh toán VNPay kèm sử dụng điểm. Vui lòng tắt sử dụng điểm hoặc chọn tiền mặt.",
+                );
                 return;
               }
               if (code.trim() && !voucherValidated) {

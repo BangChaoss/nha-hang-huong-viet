@@ -33,3 +33,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+### Thư mục ảnh tải lên (không commit) ###
+uploads/
+backend/uploads/

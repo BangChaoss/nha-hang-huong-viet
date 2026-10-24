@@ -27,6 +27,8 @@ public interface TableRepository extends JpaRepository<RestaurantTable, String> 
 
     boolean existsByZoneIdAndDeletedAtIsNull(String zoneId);
 
+    long countByDeletedAtIsNull();
+
     /**
      * UC10: Finds available tables for reservation assignment in a given zone with sufficient capacity.
      * Orders by capacity ascending (best fit) and tableNumber ascending.
