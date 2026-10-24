@@ -56,6 +56,12 @@ export const orderApi = {
 
   getActiveByTable: (tableId: string): Promise<OrderResponse> =>
     request<OrderResponse>(`/api/orders/table/${tableId}/active`),
+
+  checkoutCash: (tableId: string, payload: { phoneNumber?: string; voucherCode?: string; usePoints: boolean }) =>
+    request<{ tableId: string; subtotal: number; vat: number; discountAmount: number; pointsRedeemed: number; total: number; pointsAwarded: number; tableNumber: string }>(
+      `/api/orders/table/${encodeURIComponent(tableId)}/checkout-cash`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
 };
 
 /** API của màn hình bếp (UC-16). */

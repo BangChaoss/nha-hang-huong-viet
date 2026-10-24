@@ -42,6 +42,13 @@ public class OrderController {
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
+    /** Thanh toán tiền mặt cho tất cả món đã gửi bếp của bàn. */
+    @PostMapping("/table/{tableId}/checkout-cash")
+    public ResponseEntity<CashCheckoutResponse> checkoutCash(@PathVariable String tableId,
+            @RequestBody CashCheckoutRequest request) {
+        return ResponseEntity.ok(orderService.checkoutCash(tableId, request));
+    }
+
     /**
      * GET /api/orders?tableId=...&status=...
      */
