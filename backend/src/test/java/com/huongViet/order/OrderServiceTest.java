@@ -38,6 +38,9 @@ class OrderServiceTest {
     private KitchenTicketRepository kitchenTicketRepository;
 
     @Mock
+    private OrderItemAuditRepository orderItemAuditRepository;
+
+    @Mock
     private MenuItemRepository menuItemRepository;
 
     @Mock
@@ -58,6 +61,7 @@ class OrderServiceTest {
             orderRepository,
             orderItemRepository,
             kitchenTicketRepository,
+            orderItemAuditRepository,
             menuItemRepository,
             tableRepository,
             messagingTemplate
@@ -248,5 +252,135 @@ class OrderServiceTest {
 
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
         assertEquals("Bàn này chưa có đơn hàng đang mở.", ex.getReason());
+    }
+
+    // ---------- UC-17: them / sua / huy mon trong don ----------
+
+    private Order openOrder() {
+        Order order = new Order("order-1", "table-1", "staff-1", OrderType.DINE_IN);
+        order.setTable(occupiedTable);
+        return order;
+    }
+
+    private OrderItem queuedItem() {
+        OrderItem item = new OrderItem("item-1", "order-1", "menu-1", 2,
+            new BigDecimal("55000"), null);
+        item.setMenuItem(pho);
+        return item;
+    }
+
+    @Test
+    @DisplayName("addItem - them mon vao don dang mo, tao phieu bep va ghi nhat ky")
+    void addItem_Success() {
+        Order order = openOrder();
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of());
+
+        OrderResponse response = orderService.addItem("order-1",
+            new AddOrderItemRequest("menu-1", 2, "Ít cay"), "staff-1");
+
+        assertNotNull(response.id());
+        verify(kitchenTicketRepository).save(any(KitchenTicket.class));
+        verify(orderItemAuditRepository).save(any(OrderItemAudit.class));
+        verify(messagingTemplate).convertAndSend(eq("/topic/kitchen/tickets"), any(KitchenTicketEvent.class));
+    }
+
+    @Test
+    @DisplayName("addItem - ném lỗi 409 nếu món đã hết hàng (BR-40)")
+    void addItem_UnavailableDish_ThrowsConflict() {
+        Order order = openOrder();
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-2")).thenReturn(Optional.of(unavailableDish));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.addItem("order-1", new AddOrderItemRequest("menu-2", 1, null), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    @DisplayName("updateItem - đổi số lượng, đồng bộ phiếu bếp và ghi nhật ký")
+    void updateItem_Success() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
+
+        orderService.updateItem("order-1", "item-1", new UpdateOrderItemRequest(5, "Không cay"), "staff-1");
+
+        assertEquals(5, item.getQuantity());
+        verify(orderItemAuditRepository).save(any(OrderItemAudit.class));
+    }
+
+    @Test
+    @DisplayName("updateItem - ném lỗi 409 nếu bếp đã nấu xong món (BR-39)")
+    void updateItem_AlreadyReady_ThrowsConflict() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        item.setCookingStatus(CookingStatus.READY);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.updateItem("order-1", "item-1", new UpdateOrderItemRequest(3, null), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    @DisplayName("cancelItem - đánh dấu hủy món và hủy luôn phiếu bếp")
+    void cancelItem_Success() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        KitchenTicket ticket = new KitchenTicket("ticket-1", "item-1", "order-1", "Bàn 1", "Phở Bò", 2, null);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.of(ticket));
+        when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
+
+        orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("Khách đổi món"), "staff-1");
+
+        assertEquals(CookingStatus.CANCELLED, item.getCookingStatus());
+        assertEquals("Khách đổi món", item.getCancelReason());
+        assertEquals(CookingStatus.CANCELLED, ticket.getStatus());
+        verify(orderItemAuditRepository).save(any(OrderItemAudit.class));
+    }
+
+    @Test
+    @DisplayName("cancelItem - ném lỗi 409 nếu món đã được phục vụ (BR-39)")
+    void cancelItem_AlreadyServed_ThrowsConflict() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        item.setCookingStatus(CookingStatus.SERVED);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("test"), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    @DisplayName("updateItem - ném lỗi 409 nếu đơn đã đóng")
+    void updateItem_ClosedOrder_ThrowsConflict() {
+        Order order = openOrder();
+        order.setStatus(OrderStatus.COMPLETED);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.updateItem("order-1", "item-1", new UpdateOrderItemRequest(3, null), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
     }
 }
