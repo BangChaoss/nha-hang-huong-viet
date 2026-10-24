@@ -120,6 +120,7 @@ CREATE TABLE reservations (
     reservation_date DATE NOT NULL,
     reservation_time TIME NOT NULL,
     deposit_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    special_requests TEXT NULL,
     status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL DEFAULT 'PENDING_HOLD',
     cancellation_reason TEXT NULL,
     version BIGINT NOT NULL DEFAULT 0,
@@ -436,7 +437,8 @@ CREATE TABLE voucher_usages (
     id CHAR(36) NOT NULL,
     voucher_id CHAR(36) NOT NULL,
     customer_id CHAR(36) NULL,
-    invoice_id CHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    invoice_id CHAR(36) NULL,
     discount_applied DECIMAL(12, 2) NOT NULL,
     used_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
