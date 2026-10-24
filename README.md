@@ -10,6 +10,11 @@ Hệ thống quản lý nhà hàng: đặt bàn, thực đơn, gọi món, màn 
 
 ## Chạy nhanh
 
+Trên Windows, chạy `start-all.bat` để mở backend và frontend trong các cửa sổ riêng
+rồi mở trang web tại `http://localhost:5173`. Cần bật MySQL trước.
+
+Chạy thủ công:
+
 ```bash
 # 1. Database
 mysql -u root -p < database/schema.sql
