@@ -260,7 +260,7 @@ public class VoucherService {
     }
 
     private String normalizePhone(String phone) {
-        return phone.replaceAll("[\\s-]", "");
+        return phone == null ? "" : phone.replaceAll("[\\s()-]", "").trim();
     }
 
     @Transactional

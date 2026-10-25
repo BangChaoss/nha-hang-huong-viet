@@ -49,6 +49,15 @@ class OrderServiceTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private com.huongViet.payment.LoyaltyAccountRepository loyaltyAccounts;
+
+    @Mock
+    private com.huongViet.payment.LoyaltySettingsRepository loyaltySettings;
+
+    @Mock
+    private com.huongViet.voucher.VoucherService voucherService;
+
     private OrderService orderService;
 
     private RestaurantTable occupiedTable;
@@ -64,7 +73,10 @@ class OrderServiceTest {
             orderItemAuditRepository,
             menuItemRepository,
             tableRepository,
-            messagingTemplate
+            messagingTemplate,
+            loyaltyAccounts,
+            loyaltySettings,
+            voucherService
         );
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
