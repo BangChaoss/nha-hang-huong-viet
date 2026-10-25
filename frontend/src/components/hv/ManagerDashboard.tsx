@@ -10,6 +10,7 @@ import {
   Plus,
   LayoutGrid,
   Trash2,
+  ChefHat,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
+import { KitchenKDS } from "@/components/hv/KitchenKDS";
 import { MenuManagement } from "@/features/menu/components/menu-management";
 
 const week = [
@@ -69,7 +71,7 @@ const formatVoucherDate = (value: string) => {
 
 export function ManagerDashboard() {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "permissions" | "vouchers" | "loyalty" | "tables"
+    "overview" | "permissions" | "vouchers" | "loyalty" | "tables" | "kitchen"
   >("overview");
   const [userRoles, setUserRoles] = useState([
     { phone: "0903123456", name: "Nguyễn Văn A", role: "CUSTOMER" as UserRole },
@@ -162,8 +164,19 @@ export function ManagerDashboard() {
           <LayoutGrid className="mr-2 h-4 w-4" />
           Sơ đồ & Bàn ăn
         </Button>
+        <Button
+          variant={activeTab === "kitchen" ? "default" : "outline"}
+          onClick={() => setActiveTab("kitchen")}
+        >
+          <ChefHat className="mr-2 h-4 w-4" />
+          Điều phối bếp
+        </Button>
       </div>
       {activeTab === "tables" && <TableManagement />}
+      {activeTab === "kitchen" && (
+        // Đầu bếp chỉ xem phiếu; quản lý/quản trị cập nhật trạng thái nấu tại đây.
+        <KitchenKDS />
+      )}
       {activeTab === "permissions" && (
         <section className="surface-card space-y-4 p-5">
           <h2 className="text-2xl font-medium">Phân quyền người dùng</h2>

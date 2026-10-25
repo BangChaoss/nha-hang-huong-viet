@@ -29,7 +29,7 @@ const destinations = [
   {
     to: "/chef" as const,
     title: "Màn hình bếp",
-    description: "Theo dõi và xử lý các món cần chế biến.",
+    description: "Chỉ theo dõi phiếu bếp — cập nhật trạng thái nằm ở mục Quản lý nhà hàng.",
     icon: ChefHat,
   },
 ];

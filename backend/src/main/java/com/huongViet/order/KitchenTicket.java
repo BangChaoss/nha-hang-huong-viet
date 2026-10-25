@@ -107,6 +107,10 @@ public class KitchenTicket {
         return quantity;
     }
 
+    public void setQuantity(Integer quantity) {
+        this.quantity = quantity;
+    }
+
     public String getNote() {
         return note;
     }

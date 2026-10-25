@@ -66,7 +66,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/orders/**").hasAnyAuthority(
                     "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
-                // UC-16: màn hình bếp
+                // UC-16: màn hình bếp chỉ để xem — đầu bếp không được đổi trạng thái phiếu.
+                .requestMatchers(HttpMethod.PATCH, "/api/kitchen/tickets/*/status").hasAnyAuthority(
+                    "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                // UC-16: hàng đợi phiếu bếp cho bếp, phục vụ và quản lý cùng theo dõi
                 .requestMatchers("/api/kitchen/**").hasAnyAuthority(
                     "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
