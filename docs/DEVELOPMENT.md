@@ -239,11 +239,40 @@ DELETE /api/orders/{orderId}/items/{itemId}     huỷ món (body: { reason })
 | Quy tắc | Hành vi |
 |---|---|
 | BR-38 | Mọi thay đổi được đồng bộ xuống phiếu bếp và phát WebSocket ngay lập tức |
-| BR-39 | Món đã ở trạng thái `READY` hoặc `SERVED` không được sửa/huỷ (bếp đã nấu xong) → 409 |
+| BR-39 | Món đã ở trạng thái `READY` hoặc `SERVED` không được sửa (bếp đã nấu xong) → 409 |
 | BR-40 | Món hết hàng không được thêm vào đơn → 409 |
+| BR-41 | Chỉ huỷ được món còn ở mục **chờ chế biến** (`QUEUED`). Món đã được xác nhận đang nấu (`PREPARING`) trở đi thì không huỷ được → 409 |
 
 Mọi thay đổi đều được ghi vào bảng `order_item_audits` (số lượng và trạng thái trước/sau,
 lý do, ai thay đổi) để đối soát khi lập hoá đơn.
+
+### 8.1. Món đã huỷ không vào hoá đơn (BR-41)
+
+Huỷ món **không xoá** dòng món: dòng đó được đánh dấu `CANCELLED` kèm lý do để giữ lịch sử,
+nhưng bị loại khỏi mọi phép tính tiền.
+
+`OrderResponse` trả về sẵn hai con số do backend tính, để mọi màn hình dùng chung một nguồn:
+
+| Trường | Ý nghĩa |
+|---|---|
+| `subtotal` | Tổng tiền các món **chưa huỷ** — chính là tạm tính của hoá đơn |
+| `cancelledAmount` | Tổng tiền các món đã huỷ, chỉ để đối soát |
+
+Màn thu ngân (`StaffPOS`) dựng hoá đơn từ `items` của đơn đang mở, bỏ qua món `CANCELLED`
+(hàm thuần `splitBillItems` trong `features/order/utils/bill.ts`) và hiển thị thêm dòng
+“Món đã huỷ — không tính tiền”.
+
+### 8.2. Phân quyền màn hình bếp (UC-16)
+
+| Vai trò | Xem phiếu bếp | Đổi trạng thái phiếu |
+|---|---|---|
+| `CHEF` (đầu bếp) | ✅ | ❌ — màn `/chef` chỉ để xem, backend trả 403 |
+| `STAFF` | ✅ | ❌ |
+| `MANAGER`, `ADMIN` | ✅ | ✅ — tab **Điều phối bếp** trong `/manager` |
+
+Chỉ `PATCH /api/kitchen/tickets/{id}/status` bị giới hạn cho `MANAGER`/`ADMIN`; các API đọc
+phiếu bếp vẫn mở cho mọi vai trò vận hành. Giao diện tương ứng: `KitchenKDS` nhận prop
+`readOnly` — `/chef` luôn truyền `readOnly`, tab điều phối bếp của quản lý thì không.
 
 ## 9. WebSocket
 
