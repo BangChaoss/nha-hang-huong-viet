@@ -50,6 +50,7 @@ import {
   useUpdateOrderItem,
 } from "@/features/order/hooks/use-order-items";
 import { COOKING_STATUS_LABELS, type OrderItemResponse } from "@/features/order/types/order.types";
+import { splitBillItems } from "@/features/order/utils/bill";
 
 /** Một dòng món trong giỏ gọi món (chưa gửi xuống bếp). */
 type CartLine = { menuItemId: string; quantity: number; note: string };
@@ -363,6 +364,12 @@ function OrderDialog({
     item.cookingStatus === "SERVED" ||
     item.cookingStatus === "CANCELLED";
 
+  /**
+   * BR-41: chỉ món còn ở mục "Chờ chế biến" mới huỷ được — món đã được xác nhận
+   * đang nấu thì phải xử lý khi thanh toán.
+   */
+  const isCancellable = (item: OrderItemResponse) => item.cookingStatus === "QUEUED";
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
@@ -494,6 +501,7 @@ function OrderDialog({
                 const locked = isLockedItem(item);
                 const cancelled = item.cookingStatus === "CANCELLED";
                 const cooked = item.cookingStatus === "READY" || item.cookingStatus === "SERVED";
+                const preparing = item.cookingStatus === "PREPARING";
                 return (
                   <div key={item.id} className="border-b py-2 text-sm">
                     <div className="flex items-center justify-between gap-3">
@@ -509,6 +517,11 @@ function OrderDialog({
                       {cooked && (
                         <span className="text-xs text-muted-foreground">
                           · Bếp đã nấu xong, không sửa/huỷ được
+                        </span>
+                      )}
+                      {preparing && (
+                        <span className="text-xs text-muted-foreground">
+                          · Đang nấu, không huỷ được nữa
                         </span>
                       )}
                       {cancelled && item.cancelReason && (
@@ -547,16 +560,18 @@ function OrderDialog({
                           }
                           onBlur={() => saveItemNote(item)}
                         />
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-alert hover:bg-alert/10 hover:text-alert"
-                          disabled={cancelItem.isPending}
-                          onClick={() => openCancelDialog(item)}
-                          aria-label="Huỷ món"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {isCancellable(item) && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-alert hover:bg-alert/10 hover:text-alert"
+                            disabled={cancelItem.isPending}
+                            onClick={() => openCancelDialog(item)}
+                            aria-label="Huỷ món"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -692,7 +707,31 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherValidated, setVoucherValidated] = useState(false);
   const [voucherDiscount, setVoucherDiscount] = useState(0);
-  const subtotal = table.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
+
+  // Hoá đơn lấy từ đơn đang mở thật của bàn; bàn chưa có đơn thật thì dùng dữ liệu demo.
+  const tablesQuery = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tableApi.list(),
+    staleTime: 15_000,
+  });
+  const realTable = tablesQuery.data?.find((t) => t.tableNumber === table.name);
+  const activeOrder = useActiveOrder(realTable?.id);
+
+  /**
+   * BR-41: món đã huỷ không được tính tiền — hoá đơn chỉ cộng các món còn lại.
+   * Bàn chưa có đơn thật thì dùng dữ liệu demo của sơ đồ bàn.
+   */
+  const bill = splitBillItems(activeOrder.data?.items ?? []);
+  const lines =
+    bill.lines.length > 0
+      ? bill.lines
+      : table.order.map((line) => ({
+          key: line.dishId,
+          label: `${line.qty} × ${dish(line.dishId)?.name}`,
+          amount: (dish(line.dishId)?.price ?? 0) * line.qty,
+        }));
+
+  const subtotal = lines.reduce((sum, line) => sum + line.amount, 0);
   const vat = subtotal * 0.1;
   // Chỉ áp dụng giảm giá sau khi backend đã xác nhận voucher hợp lệ.
   const discount = voucherValidated ? Math.min(voucherDiscount, subtotal) : 0;
@@ -715,13 +754,21 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           <DialogTitle className="font-display text-3xl">Hoá đơn · {table.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
-          {table.order.map((o) => (
-            <Row
-              key={o.dishId}
-              l={`${o.qty} × ${dish(o.dishId)?.name}`}
-              v={formatVND((dish(o.dishId)?.price ?? 0) * o.qty)}
-            />
+          {lines.map((line) => (
+            <Row key={line.key} l={line.label} v={formatVND(line.amount)} />
           ))}
+          {bill.cancelled.length > 0 && (
+            <div className="pt-1">
+              <Row
+                l={`Món đã huỷ (${bill.cancelled.length}) — không tính tiền`}
+                v={`-${formatVND(bill.cancelledAmount)}`}
+                cls="text-muted-foreground line-through"
+              />
+              <p className="text-xs text-muted-foreground">
+                Món huỷ khi còn ở mục chờ chế biến được loại khỏi hoá đơn.
+              </p>
+            </div>
+          )}
         </div>
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />

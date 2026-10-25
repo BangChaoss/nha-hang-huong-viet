@@ -33,6 +33,13 @@ export type OrderResponse = {
   status: OrderStatus;
   createdAt: string;
   closedAt: string | null;
+  /**
+   * Tạm tính của đơn do backend tính: chỉ cộng các món **chưa huỷ**.
+   * Món đã huỷ (CANCELLED) không bao giờ vào hoá đơn (BR-41).
+   */
+  subtotal: number;
+  /** Phần tiền của các món đã huỷ — giữ lại để đối soát, không tính vào hoá đơn. */
+  cancelledAmount: number;
   items: OrderItemResponse[];
 };
 

@@ -20,7 +20,7 @@ function Page() {
               <div>
                 <p className="font-display text-2xl font-semibold tracking-wide">HƯƠNG VIỆT</p>
                 <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                  Màn Hình Bếp
+                  Màn Hình Bếp · Chỉ xem
                 </p>
               </div>
             </Link>
@@ -36,7 +36,8 @@ function Page() {
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-          <KitchenKDS />
+          {/* Vai trò đầu bếp chỉ theo dõi phiếu; cập nhật trạng thái nằm ở màn quản lý/quản trị. */}
+          <KitchenKDS readOnly />
         </main>
       </div>
     </RestaurantProvider>
