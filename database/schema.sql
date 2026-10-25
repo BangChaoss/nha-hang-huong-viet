@@ -484,7 +484,7 @@ CREATE TABLE invoices (
 -- ==============================================================================
 CREATE TABLE invoice_items (
     id CHAR(36) NOT NULL,
-    invoice_id CHAR(36) NOT NULL,
+    invoice_id CHAR(36) NULL,
     dish_id CHAR(36) NOT NULL,
     dish_name_snapshot VARCHAR(100) NOT NULL,
     unit_price_snapshot DECIMAL(12, 2) NOT NULL,
@@ -675,11 +675,14 @@ CREATE TABLE loyalty_settings (
 -- ==============================================================================
 CREATE TABLE payment_orders (
     id VARCHAR(36) NOT NULL,
-    customer_phone VARCHAR(20) NOT NULL,
+	customer_phone VARCHAR(20) NOT NULL,
     subtotal DECIMAL(14, 2) NOT NULL,
     discount_amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     amount DECIMAL(14, 2) NOT NULL,
     voucher_code VARCHAR(50) NULL,
+    table_id CHAR(36) NULL,
+    order_ids TEXT NULL,
+    points_redeemed DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) NOT NULL,
     vnp_transaction_no VARCHAR(100) NULL,
     vnp_response_code VARCHAR(10) NULL,
@@ -690,7 +693,8 @@ CREATE TABLE payment_orders (
     PRIMARY KEY (id),
     KEY idx_payment_orders_txn (vnp_transaction_no),
     KEY idx_payment_orders_phone (customer_phone),
-    KEY idx_payment_orders_status (status)
+    KEY idx_payment_orders_status (status),
+    KEY idx_payment_orders_table_status (table_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
