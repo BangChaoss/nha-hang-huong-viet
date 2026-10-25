@@ -272,14 +272,17 @@ public class OrderService {
     /**
      * UC-17 / STT 85: Huỷ một món trong đơn.
      *
-     * <p>BR-39: không huỷ được món bếp đã nấu xong. Dòng món không bị xoá hẳn mà
-     * được đánh dấu CANCELLED để giữ lại lịch sử và đối soát hoá đơn.</p>
+     * <p>BR-41: chỉ huỷ được món còn nằm ở mục chờ chế biến. Khi bếp đã xác nhận
+     * món đang nấu (PREPARING) trở đi thì không huỷ được nữa. Dòng món không bị xoá
+     * hẳn mà được đánh dấu CANCELLED — món đã huỷ không được tính vào hoá đơn
+     * (xem {@link OrderResponse#subtotal()}) nhưng vẫn còn trong lịch sử đối soát.</p>
      */
     @Transactional
     public OrderResponse cancelItem(String orderId, String itemId, CancelOrderItemRequest request, String staffId) {
         Order order = findOpenOrderOrThrow(orderId);
         OrderItem item = findItemOfOrder(order, itemId);
-        assertEditable(item);
+        KitchenTicket ticket = kitchenTicketRepository.findByOrderItemId(itemId).orElse(null);
+        assertCancellable(item, ticket);
 
         int oldQuantity = item.getQuantity();
         CookingStatus oldStatus = item.getCookingStatus();
@@ -295,18 +298,47 @@ public class OrderService {
             oldStatus, CookingStatus.CANCELLED, reason);
 
         // Huỷ luôn phiếu bếp tương ứng để bếp không nấu món đó nữa.
-        kitchenTicketRepository.findByOrderItemId(itemId).ifPresent(ticket -> {
+        if (ticket != null) {
             ticket.setStatus(CookingStatus.CANCELLED);
             KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
             publishTicketEvent(new KitchenTicketEvent("UPDATED", KitchenTicketResponse.from(savedTicket)));
-        });
+        }
 
         logger.info("Cancelled order item {} with reason: {}", itemId, reason);
         return toResponse(order);
     }
 
     /**
-     * BR-39: chỉ những món bếp chưa nấu xong mới được điều chỉnh.
+     * BR-41: chỉ món còn ở hàng đợi (QUEUED) mới được huỷ.
+     *
+     * <p>Khi bếp đã xác nhận món đang nấu — trạng thái món hoặc phiếu bếp đã sang
+     * PREPARING — thì món đã tiêu tốn nguyên liệu nên không huỷ được nữa, phải xử
+     * lý khi thanh toán.</p>
+     */
+    private void assertCancellable(OrderItem item, KitchenTicket ticket) {
+        CookingStatus itemStatus = item.getCookingStatus();
+        if (itemStatus == CookingStatus.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Món này đã được huỷ trước đó.");
+        }
+
+        CookingStatus ticketStatus = (ticket != null) ? ticket.getStatus() : null;
+        boolean ticketStarted = ticketStatus != null
+            && ticketStatus != CookingStatus.QUEUED
+            && ticketStatus != CookingStatus.CANCELLED;
+
+        if (itemStatus != CookingStatus.QUEUED || ticketStarted) {
+            CookingStatus effective = (ticketStatus != null && ticketStatus != CookingStatus.CANCELLED)
+                ? ticketStatus
+                : itemStatus;
+            logger.warn("BR-41 violation blocked: cannot cancel item {} in status {}", item.getId(), effective);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, effective == CookingStatus.PREPARING
+                ? "Món đang nấu nên không thể huỷ. Chỉ huỷ được món còn ở mục chờ chế biến."
+                : "Món đã qua khâu chờ chế biến nên không thể huỷ. Vui lòng xử lý khi thanh toán.");
+        }
+    }
+
+    /**
+     * BR-39: chỉ những món bếp chưa nấu xong mới được sửa số lượng / ghi chú.
      */
     private void assertEditable(OrderItem item) {
         CookingStatus status = item.getCookingStatus();
@@ -315,7 +347,7 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 status == CookingStatus.CANCELLED
                     ? "Món này đã được huỷ, không thể điều chỉnh."
-                    : "Món này đã được bếp nấu xong, không thể huỷ hoặc thay đổi. Vui lòng xử lý khi thanh toán.");
+                    : "Món này đã được bếp nấu xong, không thể thay đổi. Vui lòng xử lý khi thanh toán.");
         }
     }
 

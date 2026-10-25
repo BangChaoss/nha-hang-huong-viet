@@ -372,6 +372,94 @@ class OrderServiceTest {
     }
 
     @Test
+    @DisplayName("cancelItem - ném lỗi 409 khi món đã được xác nhận đang nấu (BR-41)")
+    void cancelItem_PreparingItem_ThrowsConflict() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        item.setCookingStatus(CookingStatus.PREPARING);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("Khách đổi món"), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("đang nấu"));
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+        verify(kitchenTicketRepository, never()).save(any(KitchenTicket.class));
+    }
+
+    @Test
+    @DisplayName("cancelItem - ném lỗi 409 khi phiếu bếp đã sang PREPARING dù món còn QUEUED (BR-41)")
+    void cancelItem_TicketAlreadyStarted_ThrowsConflict() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        KitchenTicket ticket = new KitchenTicket("ticket-1", "item-1", "order-1", "Bàn 1", "Phở Bò", 2, null);
+        ticket.setStatus(CookingStatus.PREPARING);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+        when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.of(ticket));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("Khách đổi món"), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(CookingStatus.QUEUED, item.getCookingStatus());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    @DisplayName("cancelItem - ném lỗi 409 khi món đã được huỷ trước đó")
+    void cancelItem_AlreadyCancelled_ThrowsConflict() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        item.setCookingStatus(CookingStatus.CANCELLED);
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("test"), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("đã được huỷ"));
+    }
+
+    @Test
+    @DisplayName("cancelItem - món vừa đặt (QUEUED) huỷ được và không tính vào tạm tính của đơn (BR-41)")
+    void cancelItem_QueuedItem_ExcludedFromSubtotal() {
+        Order order = openOrder();
+        OrderItem item = queuedItem();
+        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.empty());
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
+
+        OrderResponse response = orderService.cancelItem("order-1", "item-1",
+            new CancelOrderItemRequest("Khách đổi món"), "staff-1");
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(response.subtotal()));
+        assertEquals(0, new BigDecimal("110000").compareTo(response.cancelledAmount()));
+        assertEquals(CookingStatus.CANCELLED, response.items().get(0).cookingStatus());
+    }
+
+    @Test
+    @DisplayName("OrderResponse - tạm tính chỉ cộng các món chưa huỷ")
+    void orderResponse_SubtotalSkipsCancelledItems() {
+        Order order = openOrder();
+        OrderItem kept = queuedItem();
+        OrderItem cancelled = new OrderItem("item-2", "order-1", "menu-1", 1,
+            new BigDecimal("55000"), null);
+        cancelled.setMenuItem(pho);
+        cancelled.setCookingStatus(CookingStatus.CANCELLED);
+
+        OrderResponse response = OrderResponse.from(order, List.of(kept, cancelled));
+
+        assertEquals(0, new BigDecimal("110000").compareTo(response.subtotal()));
+        assertEquals(0, new BigDecimal("55000").compareTo(response.cancelledAmount()));
+    }
+
+    @Test
     @DisplayName("updateItem - ném lỗi 409 nếu đơn đã đóng")
     void updateItem_ClosedOrder_ThrowsConflict() {
         Order order = openOrder();
