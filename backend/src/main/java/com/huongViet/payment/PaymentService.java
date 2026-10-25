@@ -101,14 +101,9 @@ public class PaymentService {
         // IPN and browser return may race; a paid order must never earn points twice.
         if ("PAID".equals(order.getStatus())) return "00";
         if ("00".equals(response) && "00".equals(txnStatus)) {
-            if (order.getVoucherCode()!=null) {
-                VoucherValidationResponse used=voucherService.redeem(new VoucherValidationRequest(
-                    order.getVoucherCode(), order.getCustomerPhone(), order.getSubtotal()));
-                if (!used.valid()) {
-                    // A race may invalidate the voucher after checkout. Payment itself is still successful;
-                    // do not count the invalid voucher, but continue awarding points for the paid amount.
-                }
-            }
+            // PaymentOrder hiện không liên kết với orders/invoices. Không ghi voucher_usages tại callback
+            // bằng invoiceId giả: FK voucher_usages.invoice_id bắt buộc tham chiếu invoices.id thật.
+            // Cần gắn PaymentOrder với invoiceId khi luồng VNPay được khởi tạo từ hóa đơn POS.
             BigDecimal points = BigDecimal.ZERO;
             if (order.getCustomerPhone() != null && !order.getCustomerPhone().isBlank()) {
                 BigDecimal rate=settings.findById("default")

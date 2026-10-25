@@ -2,6 +2,8 @@ package com.huongViet.order;
 
 import com.huongViet.menu.MenuItem;
 import com.huongViet.menu.MenuItemRepository;
+import com.huongViet.auth.SystemUserInitializer;
+import org.springframework.jdbc.core.JdbcTemplate;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableStatus;
@@ -46,6 +48,7 @@ public class OrderService {
     private final LoyaltyAccountRepository loyaltyAccounts;
     private final LoyaltySettingsRepository loyaltySettings;
     private final VoucherService voucherService;
+    private final JdbcTemplate jdbcTemplate;
 
     public OrderService(OrderRepository orderRepository,
                         OrderItemRepository orderItemRepository,
@@ -55,7 +58,8 @@ public class OrderService {
                         SimpMessagingTemplate messagingTemplate,
                         LoyaltyAccountRepository loyaltyAccounts,
                         LoyaltySettingsRepository loyaltySettings,
-                        VoucherService voucherService) {
+                        VoucherService voucherService,
+                        JdbcTemplate jdbcTemplate) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.kitchenTicketRepository = kitchenTicketRepository;
@@ -65,6 +69,7 @@ public class OrderService {
         this.loyaltyAccounts = loyaltyAccounts;
         this.loyaltySettings = loyaltySettings;
         this.voucherService = voucherService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -215,17 +220,31 @@ public class OrderService {
         BigDecimal total = afterDiscount.subtract(redeemed).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
         if (total.signum() < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tổng thanh toán không hợp lệ.");
 
-        if (!voucherCode.isBlank()) {
-            VoucherValidationResponse used = voucherService.redeem(new VoucherValidationRequest(voucherCode, phone, beforeDiscount));
-            if (!used.valid()) throw new ResponseStatusException(HttpStatus.CONFLICT, used.message());
-        }
         BigDecimal awarded = BigDecimal.ZERO;
         if (!phone.isBlank()) {
-            if (account == null) account = new LoyaltyAccount(java.util.UUID.randomUUID().toString(), phone);
             BigDecimal rate = loyaltySettings.findById("default")
                 .orElseGet(() -> loyaltySettings.save(new LoyaltySettings("default", new BigDecimal("5.000"))))
                 .getEarnRatePercent();
             awarded = total.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        }
+
+        // Tạo hóa đơn thật trước khi ghi voucher_usages để invoice_id luôn tham chiếu invoices.id.
+        String voucherId = null;
+        if (!voucherCode.isBlank()) {
+            List<String> ids = jdbcTemplate.query(
+                "SELECT id FROM vouchers WHERE UPPER(voucher_code) = UPPER(?) AND deleted_at IS NULL LIMIT 1",
+                (rs, rowNum) -> rs.getString(1), voucherCode);
+            if (!ids.isEmpty()) voucherId = ids.get(0);
+        }
+        String voucherInvoiceId = createCheckoutInvoices(openOrders, phone, voucherId, voucherCode,
+            discount, redeemed, awarded);
+        if (!voucherCode.isBlank()) {
+            VoucherValidationResponse used = voucherService.redeemForInvoice(
+                new VoucherValidationRequest(voucherCode, phone, beforeDiscount), voucherInvoiceId);
+            if (!used.valid()) throw new ResponseStatusException(HttpStatus.CONFLICT, used.message());
+        }
+        if (!phone.isBlank()) {
+            if (account == null) account = new LoyaltyAccount(java.util.UUID.randomUUID().toString(), phone);
             account.addPoints(awarded);
             loyaltyAccounts.save(account);
         }
@@ -237,6 +256,55 @@ public class OrderService {
         table.setStatus(TableStatus.AVAILABLE);
         tableRepository.save(table);
         return new CashCheckoutResponse(tableId, subtotal, vat, discount, redeemed, total, awarded, table.getTableNumber());
+    }
+
+    /**
+     * Lưu hóa đơn và snapshot món ăn trong cùng transaction với checkout.
+     * Voucher được gắn vào hóa đơn đầu tiên vì một checkout có thể gom nhiều order của cùng bàn.
+     */
+    private String createCheckoutInvoices(List<Order> orders, String phone, String voucherId,
+                                          String voucherCode, BigDecimal voucherDiscount,
+                                          BigDecimal pointsRedeemed, BigDecimal pointsAwarded) {
+        String voucherInvoiceId = null;
+        boolean first = true;
+        for (Order order : orders) {
+            List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
+                .filter(i -> i.getCookingStatus() != CookingStatus.CANCELLED).toList();
+            BigDecimal itemSubtotal = items.stream()
+                .map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal tax = itemSubtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal invoiceVoucherDiscount = first ? voucherDiscount : BigDecimal.ZERO;
+            BigDecimal invoicePoints = first ? pointsRedeemed : BigDecimal.ZERO;
+            BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePoints)
+                .max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+            String invoiceId = UUID.randomUUID().toString();
+            String invoiceCode = "HV-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+                .format(java.time.LocalDateTime.now()) + "-" + invoiceId.substring(0, 8).toUpperCase(java.util.Locale.ROOT);
+            String currentVoucherId = first ? voucherId : null;
+            String currentVoucherCode = first && voucherId != null ? voucherCode : null;
+            int earned = first ? pointsAwarded.setScale(0, RoundingMode.DOWN).intValue() : 0;
+            jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, voucher_id, " +
+                    "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                    "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                    "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                invoiceId, invoiceCode, order.getId(), SystemUserInitializer.SYSTEM_USER_ID, currentVoucherId,
+                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePoints),
+                tax, finalAmount, earned);
+            for (OrderItem item : items) {
+                String dishName = item.getMenuItem() != null ? item.getMenuItem().getItemName() :
+                    menuItemRepository.findById(item.getMenuItemId()).map(MenuItem::getItemName).orElse("Món đã xóa");
+                BigDecimal lineTotal = item.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()))
+                    .setScale(2, RoundingMode.HALF_UP);
+                jdbcTemplate.update("INSERT INTO invoice_items (id, invoice_id, dish_id, dish_name_snapshot, " +
+                        "unit_price_snapshot, quantity, total_price) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    UUID.randomUUID().toString(), invoiceId, item.getMenuItemId(), dishName,
+                    item.getUnitPriceSnapshot(), item.getQuantity(), lineTotal);
+            }
+            if (first) voucherInvoiceId = invoiceId;
+            first = false;
+        }
+        return voucherInvoiceId;
     }
 
     /**
