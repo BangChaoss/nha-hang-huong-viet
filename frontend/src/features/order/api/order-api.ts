@@ -31,6 +31,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Fallback khi body không phải JSON
     }
+    if (response.status === 404 && path.includes("/table/") && path.endsWith("/active")
+        && message.includes("Bàn này chưa có đơn hàng đang mở")) {
+      return null as T;
+    }
     throw new Error(message);
   }
 
@@ -56,8 +60,8 @@ export const orderApi = {
 
   getById: (id: string): Promise<OrderResponse> => request<OrderResponse>(`/api/orders/${id}`),
 
-  getActiveByTable: (tableId: string): Promise<OrderResponse> =>
-    request<OrderResponse>(`/api/orders/table/${tableId}/active`),
+  getActiveByTable: (tableId: string): Promise<OrderResponse | null> =>
+    request<OrderResponse | null>(`/api/orders/table/${tableId}/active`),
 
   /** Thêm món vào một đơn đang mở (STT 84). */
   addItem: (orderId: string, payload: AddOrderItemRequest): Promise<OrderResponse> =>

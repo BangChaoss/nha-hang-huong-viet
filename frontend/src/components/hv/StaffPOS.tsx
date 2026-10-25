@@ -925,10 +925,8 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
           }
           onClick={async () => {
             if (method === "VNPAY") {
-              if (redeem) {
-                toast.error(
-                  "Chưa hỗ trợ thanh toán VNPay kèm sử dụng điểm. Vui lòng tắt sử dụng điểm hoặc chọn tiền mặt.",
-                );
+              if (redeem && (!phoneNumber.trim() || !loyaltyChecked)) {
+                toast.error("Nhập số điện thoại và tra cứu số dư điểm trước khi sử dụng điểm.");
                 return;
               }
               if (code.trim() && !voucherValidated) {
@@ -941,6 +939,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                   subtotal: subtotal + vat,
                   phoneNumber: phoneNumber.trim(),
                   ...(code.trim() ? { voucherCode: code.trim() } : {}),
+                  ...(redeem && redeemed > 0 ? { pointsToUse: redeemed } : {}),
                 });
                 window.location.assign(payment.paymentUrl);
               } catch (error) {

@@ -13,10 +13,10 @@ export function useOrders(params?: { tableId?: string; status?: OrderStatus }) {
 
 /**
  * Đơn đang mở của một bàn.
- * `retry: false` vì bàn chưa có đơn sẽ trả về 404 — không cần thử lại.
+ * Bàn chưa có đơn đang mở được chuẩn hoá thành null; lỗi 404 khác vẫn được ném ra.
  */
 export function useActiveOrder(tableId: string | undefined) {
-  return useQuery<OrderResponse, Error>({
+  return useQuery<OrderResponse | null, Error>({
     queryKey: ["orders", "active", tableId ?? ""],
     queryFn: () => orderApi.getActiveByTable(tableId as string),
     enabled: Boolean(tableId),
