@@ -116,17 +116,30 @@ export function StaffBookingRow({
       <TableCell className="text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-1.5">
           {isPending && (
-            <Button
-              type="button"
-              size="sm"
-              variant="default"
-              onClick={() => onOpenConfirm(booking)}
-              disabled={isActionPending}
-              className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-              Xác nhận & Gán bàn
-            </Button>
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                onClick={() => onOpenConfirm(booking)}
+                disabled={isActionPending}
+                className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                Xác nhận & Gán bàn
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => onCancel(booking)}
+                disabled={isActionPending}
+                className="h-7 text-xs text-destructive hover:bg-destructive/10"
+              >
+                <XCircle className="h-3.5 w-3.5 mr-1" />
+                Hủy
+              </Button>
+            </>
           )}
 
           {isConfirmed && (
