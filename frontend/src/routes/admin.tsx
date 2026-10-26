@@ -4,6 +4,8 @@ import { RestaurantProvider } from "@/lib/restaurant-store";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 import { RoleGuard } from "@/components/hv/RoleGuard";
 
+import { BackButton } from "@/components/hv/BackButton";
+
 export const Route = createFileRoute("/admin")({
   head: () => ({ meta: [{ title: "Trung tâm quản trị IT — Hương Việt" }] }),
   component: AdminPage,
@@ -40,13 +42,18 @@ function AdminPage() {
             </div>
           </header>
           <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-            <div className="mb-8 flex items-center gap-4">
-              <div className="rounded-xl bg-primary/10 p-3 text-primary">
-                <ShieldCheck className="h-7 w-7" />
-              </div>
+            <div className="mb-8 space-y-4">
               <div>
-                <h1 className="text-3xl font-semibold">Trung tâm quản trị IT</h1>
-                <p className="mt-1 text-muted-foreground">Truy cập các giao diện vận hành của hệ thống.</p>
+                <BackButton to="/" label="Trang chủ" />
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="rounded-xl bg-primary/10 p-3 text-primary">
+                  <ShieldCheck className="h-7 w-7" />
+                </div>
+                <div>
+                  <h1 className="text-3xl font-semibold">Trung tâm quản trị IT</h1>
+                  <p className="mt-1 text-muted-foreground">Truy cập các giao diện vận hành của hệ thống.</p>
+                </div>
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-3">

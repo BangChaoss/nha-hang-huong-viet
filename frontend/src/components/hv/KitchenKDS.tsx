@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { BackButton } from "@/components/hv/BackButton";
 import { useRestaurant, type TicketStatus } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
 
@@ -18,9 +19,14 @@ export function KitchenKDS() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Màn hình bếp · FIFO</p>
-        <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+      <div className="space-y-4">
+        <div>
+          <BackButton />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Màn hình bếp · FIFO</p>
+          <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+        </div>
       </div>
       <div className="grid gap-5 lg:grid-cols-3">
         {cols.map((c) => {

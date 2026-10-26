@@ -9,6 +9,8 @@ import { formatVND, useRestaurant, type OrderLine, type Table, type TableStatus,
 import { cn } from "@/lib/utils";
 import { validateVoucher, redeemVoucher } from "@/lib/voucher-api";
 
+import { BackButton } from "@/components/hv/BackButton";
+
 export const tableStatusMeta: Record<TableStatus, { label: string; cls: string }> = {
   available: { label: "Trống", cls: "status-available" },
   reserved: { label: "Đã Đặt", cls: "status-reserved" },
@@ -28,17 +30,22 @@ export function StaffPOS() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="space-y-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
-          <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          <BackButton />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(tableStatusMeta) as TableStatus[]).map((s) => (
-            <span key={s} className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}>
-              {tableStatusMeta[s].label} · {counts(s)}
-            </span>
-          ))}
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
+            <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(tableStatusMeta) as TableStatus[]).map((s) => (
+              <span key={s} className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}>
+                {tableStatusMeta[s].label} · {counts(s)}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 

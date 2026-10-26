@@ -30,6 +30,7 @@ import {
   type ChangePasswordPayload,
   type UserAccount,
 } from "@/lib/account-api";
+import { BackButton } from "@/components/hv/BackButton";
 import { cn } from "@/lib/utils";
 
 const PROFILE_KEY = ["account", "profile"] as const;
@@ -39,9 +40,14 @@ export function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tài khoản</p>
-        <h1 className="text-3xl font-semibold sm:text-4xl">Hồ sơ cá nhân</h1>
+      <div className="space-y-4">
+        <div>
+          <BackButton />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tài khoản</p>
+          <h1 className="text-3xl font-semibold sm:text-4xl">Hồ sơ cá nhân</h1>
+        </div>
       </div>
       {profile.isPending && (
         <div className="flex justify-center py-20 text-muted-foreground">
