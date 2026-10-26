@@ -218,8 +218,10 @@ public class PaymentService {
              * - Số dư ví điểm hiện tại.
              * - Số tiền còn lại sau khi áp dụng voucher.
              */
-            pointsUsed = balance.min(afterVoucher)
-                    .setScale(2, RoundingMode.DOWN);
+            // Điểm dùng để giảm giá phải là bội số 100 và không vượt số dư/hóa đơn.
+            BigDecimal redeemable = balance.min(afterVoucher);
+            pointsUsed = redeemable.divide(new BigDecimal("100"), 0, RoundingMode.DOWN)
+                    .multiply(new BigDecimal("100")).setScale(0, RoundingMode.UNNECESSARY);
         }
 
         /*
