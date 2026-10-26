@@ -14,7 +14,4 @@ export default defineConfig({
   },
   // Local dev defaults to 8080 (clashes with the Spring backend); 5173 is also allowed by backend CORS.
   // Ignored inside the Lovable sandbox, which always forces 8080.
-  vite: {
-    server: { port: 5173, strictPort: true },
-  },
 });

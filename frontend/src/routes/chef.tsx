@@ -27,7 +27,9 @@ function Page() {
                 </div>
                 <div>
                   <p className="font-display text-2xl font-semibold tracking-wide">HƯƠNG VIỆT</p>
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">Màn Hình Bếp</p>
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                    Màn Hình Bếp · Chỉ xem
+                  </p>
                 </div>
               </Link>
               <div className="flex items-center gap-4">
@@ -40,7 +42,10 @@ function Page() {
                     Về Trung tâm IT
                   </Link>
                 )}
-                <Link to="/" className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">
+                <Link
+                  to="/"
+                  className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"
+                >
                   Trang khách hàng
                 </Link>
                 <AccountMenu />
@@ -48,11 +53,11 @@ function Page() {
             </div>
           </header>
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-            <KitchenKDS />
+            {/* Vai trò đầu bếp chỉ theo dõi phiếu; cập nhật trạng thái nằm ở màn quản lý/quản trị. */}
+            <KitchenKDS readOnly />
           </main>
         </div>
       </RestaurantProvider>
     </RoleGuard>
   );
 }
-

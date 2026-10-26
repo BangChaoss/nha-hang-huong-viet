@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ChefRouteImport } from './routes/chef'
+import { Route as DatBanRouteImport } from './routes/dat-ban'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManagerRouteImport } from './routes/manager'
@@ -38,6 +39,11 @@ const AdminRoute = AdminRouteImport.update({
 const ChefRoute = ChefRouteImport.update({
   id: '/chef',
   path: '/chef',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DatBanRoute = DatBanRouteImport.update({
+  id: '/dat-ban',
+  path: '/dat-ban',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/dat-ban': typeof DatBanRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/dat-ban': typeof DatBanRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/chef': typeof ChefRoute
+  '/dat-ban': typeof DatBanRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/manager': typeof ManagerRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/dat-ban'
     | '/forgot-password'
     | '/login'
     | '/manager'
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/dat-ban'
     | '/forgot-password'
     | '/login'
     | '/manager'
@@ -139,6 +150,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/chef'
+    | '/dat-ban'
     | '/forgot-password'
     | '/login'
     | '/manager'
@@ -152,6 +164,7 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AdminRoute: typeof AdminRoute
   ChefRoute: typeof ChefRoute
+  DatBanRoute: typeof DatBanRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
   ManagerRoute: typeof ManagerRoute
@@ -188,6 +201,13 @@ declare module '@tanstack/react-router' {
       path: '/chef'
       fullPath: '/chef'
       preLoaderRoute: typeof ChefRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dat-ban': {
+      id: '/dat-ban'
+      path: '/dat-ban'
+      fullPath: '/dat-ban'
+      preLoaderRoute: typeof DatBanRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/forgot-password': {
@@ -240,6 +260,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AdminRoute: AdminRoute,
   ChefRoute: ChefRoute,
+  DatBanRoute: DatBanRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
   ManagerRoute: ManagerRoute,

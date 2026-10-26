@@ -1,6 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { authApi, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
-import { getSession, setSession, updateSession, useSession, type AuthSession } from "@/lib/auth-session";
+import {
+  getSession,
+  setSession,
+  updateSession,
+  useSession,
+  type AuthSession,
+} from "@/lib/auth-session";
 
 type AuthCtx = {
   session: AuthSession | null;
@@ -23,17 +37,30 @@ function migrateLegacySession() {
     if (!raw) return;
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
     if (getSession()) return;
-    const { user, token, refreshToken } = JSON.parse(raw) as { user?: AuthUser; token?: string; refreshToken?: string | null };
+    const { user, token, refreshToken } = JSON.parse(raw) as {
+      user?: AuthUser;
+      token?: string;
+      refreshToken?: string | null;
+    };
     if (user && token) setSession({ ...user, token, refreshToken: refreshToken ?? null });
-  } catch { /* storage may be unavailable (private mode) */ }
+  } catch {
+    /* storage may be unavailable (private mode) */
+  }
 }
 
-const toUser = ({ id, username, email, role }: AuthSession): AuthUser => ({ id, username, email, role });
+const toUser = ({ id, username, email, role }: AuthSession): AuthUser => ({
+  id,
+  username,
+  email,
+  role,
+});
 
 /** Đọc `exp` trong JWT (giây). Trả về true nếu token đã/sắp hết hạn trong 30s. */
 function isExpired(token: string) {
   try {
-    const payload = JSON.parse(atob((token.split(".")[1] ?? "").replace(/-/g, "+").replace(/_/g, "/")));
+    const payload = JSON.parse(
+      atob((token.split(".")[1] ?? "").replace(/-/g, "+").replace(/_/g, "/")),
+    );
     return typeof payload.exp === "number" && payload.exp * 1000 < Date.now() + 30_000;
   } catch {
     return true;
@@ -57,7 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setReady(true);
       return;
     }
-    authApi.refresh(stored.refreshToken)
+    authApi
+      .refresh(stored.refreshToken)
       .then((r) => updateSession({ token: r.token, refreshToken: r.refreshToken }))
       .catch(() => setSession(null))
       .finally(() => setReady(true));

@@ -52,7 +52,10 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = (import.meta.env["VITE_API_BASE_URL"] ?? "http://localhost:8080").replace(/\/$/, "");
+const API_BASE = (import.meta.env["VITE_API_BASE_URL"] ?? "http://localhost:8080").replace(
+  /\/$/,
+  "",
+);
 
 async function toApiError(response: Response): Promise<ApiError> {
   let message =

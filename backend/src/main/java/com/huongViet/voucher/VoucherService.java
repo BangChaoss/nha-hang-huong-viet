@@ -1,17 +1,21 @@
+
 package com.huongViet.voucher;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 public class VoucherService {
+
     private final VoucherRepository repository;
     private final VoucherUsageRepository usageRepository;
 
@@ -34,12 +38,26 @@ public class VoucherService {
 
     @Transactional
     public synchronized VoucherResponse create(VoucherRequest r) {
+        if (r.voucherCode() == null || r.voucherCode().isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Mã voucher không được để trống."
+            );
+        }
+
         String code = r.voucherCode().trim().toUpperCase();
 
         if (repository.existsByVoucherCodeIgnoreCaseAndDeletedAtIsNull(code)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Voucher Code đã tồn tại."
+            );
+        }
+
+        if (r.startDate() == null || r.endDate() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Ngày bắt đầu và ngày kết thúc không được để trống."
             );
         }
 
@@ -52,10 +70,12 @@ public class VoucherService {
         }
 
         if (r.discountType() == Voucher.DiscountType.PERCENTAGE
-                && r.discountValue().compareTo(BigDecimal.valueOf(100)) > 0) {
+                && (r.discountValue() == null
+                || r.discountValue().compareTo(BigDecimal.ZERO) <= 0
+                || r.discountValue().compareTo(BigDecimal.valueOf(100)) > 0)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Mức giảm theo phần trăm không được vượt quá 100%."
+                    "Mức giảm theo phần trăm phải lớn hơn 0% và không vượt quá 100%."
             );
         }
 
@@ -67,7 +87,15 @@ public class VoucherService {
             );
         }
 
-        // Tạo ID voucher dạng số: "1", "2", "3", ...
+        if (r.discountType() == Voucher.DiscountType.FIXED_AMOUNT
+                && (r.discountValue() == null
+                || r.discountValue().compareTo(BigDecimal.ZERO) <= 0)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Số tiền giảm phải lớn hơn 0."
+            );
+        }
+
         String voucherId = nextNumericVoucherId();
 
         Voucher v = new Voucher(
@@ -124,6 +152,12 @@ public class VoucherService {
     public VoucherValidationResponse validate(
             VoucherValidationRequest request
     ) {
+        if (request == null
+                || request.voucherCode() == null
+                || request.voucherCode().isBlank()) {
+            return invalid("Vui lòng nhập mã voucher.", "");
+        }
+
         String code = request.voucherCode().trim().toUpperCase();
         String phone = normalizePhone(request.phoneNumber());
 
@@ -139,10 +173,31 @@ public class VoucherService {
         );
     }
 
+    /**
+     * Ghi nhận sử dụng voucher khi đã có hóa đơn thật trong bảng invoices.
+     * invoiceId phải tham chiếu tới invoices.id hiện có.
+     */
     @Transactional
-    public VoucherValidationResponse redeem(
-            VoucherValidationRequest request
+    public VoucherValidationResponse redeemForInvoice(
+            VoucherValidationRequest request,
+            String invoiceId
     ) {
+        if (request == null
+                || request.voucherCode() == null
+                || request.voucherCode().isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Vui lòng nhập mã voucher."
+            );
+        }
+
+        if (invoiceId == null || invoiceId.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Không thể ghi nhận voucher khi chưa có hóa đơn."
+            );
+        }
+
         String code = request.voucherCode().trim().toUpperCase();
         String phone = normalizePhone(request.phoneNumber());
 
@@ -159,23 +214,41 @@ public class VoucherService {
             return check;
         }
 
-        // ID của lịch sử sử dụng voucher vẫn giữ UUID như trước.
-        usageRepository.save(
-                new VoucherUsage(
-                        UUID.randomUUID().toString(),
-                        v.getId(),
-                        phone,
-                        check.discountAmount()
-                )
-        );
+        // Lưu invoiceId thật, không tự tạo UUID thay cho hóa đơn.
+        usageRepository.save(new VoucherUsage(
+                UUID.randomUUID().toString(),
+                v.getId(),
+                phone,
+                invoiceId,
+                check.discountAmount()
+        ));
 
-        v.setUsedQuantity(v.getUsedQuantity() + 1);
+        v.setUsedQuantity(
+                v.getUsedQuantity() == null
+                        ? 1
+                        : v.getUsedQuantity() + 1
+        );
 
         return new VoucherValidationResponse(
                 true,
                 "Đã ghi nhận lượt sử dụng voucher.",
                 check.discountAmount(),
                 code
+        );
+    }
+
+    /**
+     * Endpoint cũ không nhận invoiceId nên không thể ghi lịch sử sử dụng.
+     * Checkout phải tạo hóa đơn trước rồi gọi redeemForInvoice().
+     */
+    @Transactional(readOnly = true)
+    public VoucherValidationResponse redeem(
+            VoucherValidationRequest request
+    ) {
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Không thể ghi nhận lượt dùng voucher nếu chưa có hóa đơn. "
+                        + "Hãy dùng luồng checkout để tạo hóa đơn và lịch sử voucher."
         );
     }
 
@@ -192,10 +265,14 @@ public class VoucherService {
             );
         }
 
-        // Voucher có hiệu lực theo ngày lịch.
-        java.time.LocalDate today = java.time.LocalDate.now();
+        if (orderAmount == null || orderAmount.compareTo(BigDecimal.ZERO) < 0) {
+            return invalid("Giá trị đơn hàng không hợp lệ.", code);
+        }
 
-        if (today.isBefore(v.getStartDate().toLocalDate())
+        LocalDate today = LocalDate.now();
+
+        if (v.getStartDate() == null || v.getEndDate() == null
+                || today.isBefore(v.getStartDate().toLocalDate())
                 || today.isAfter(v.getEndDate().toLocalDate())) {
             return invalid(
                     "Voucher chưa đến thời gian áp dụng hoặc đã hết hạn.",
@@ -203,32 +280,49 @@ public class VoucherService {
             );
         }
 
-        if (v.getUsedQuantity() >= v.getTotalQuantity()) {
+        Integer usedQuantity = v.getUsedQuantity();
+        Integer totalQuantity = v.getTotalQuantity();
+
+        if (totalQuantity != null
+                && (usedQuantity == null ? 0 : usedQuantity) >= totalQuantity) {
             return invalid("Voucher đã hết lượt phát hành.", code);
         }
 
-        if (orderAmount.compareTo(v.getMinOrderAmount()) < 0) {
+        if (v.getMinOrderAmount() != null
+                && orderAmount.compareTo(v.getMinOrderAmount()) < 0) {
             return invalid("Đơn hàng chưa đạt giá trị tối thiểu.", code);
         }
 
-        if (usageRepository.countByVoucherAndPhone(v.getId(), phone)
-                >= v.getMaxUsesPerCustomer()) {
+        if (phone.isBlank()) {
+            return invalid(
+                    "Vui lòng nhập số điện thoại để sử dụng voucher.",
+                    code
+            );
+        }
+
+        Integer maxUses = v.getMaxUsesPerCustomer();
+
+        if (maxUses != null
+                && usageRepository.countByVoucherAndPhone(v.getId(), phone) >= maxUses) {
             return invalid(
                     "Số điện thoại này đã sử dụng hết lượt voucher cho phép.",
                     code
             );
         }
 
-        BigDecimal discount =
-                v.getDiscountType() == Voucher.DiscountType.PERCENTAGE
-                        ? orderAmount
-                        .multiply(v.getDiscountValue())
-                        .divide(
-                                BigDecimal.valueOf(100),
-                                2,
-                                RoundingMode.HALF_UP
-                        )
-                        : v.getDiscountValue();
+        BigDecimal discount;
+
+        if (v.getDiscountType() == Voucher.DiscountType.PERCENTAGE) {
+            discount = orderAmount
+                    .multiply(v.getDiscountValue())
+                    .divide(
+                            BigDecimal.valueOf(100),
+                            2,
+                            RoundingMode.HALF_UP
+                    );
+        } else {
+            discount = v.getDiscountValue();
+        }
 
         if (v.getMaxDiscountAmount() != null
                 && discount.compareTo(v.getMaxDiscountAmount()) > 0) {
@@ -260,7 +354,9 @@ public class VoucherService {
     }
 
     private String normalizePhone(String phone) {
-        return phone.replaceAll("[\\s-]", "");
+        return phone == null
+                ? ""
+                : phone.replaceAll("[\\s()-]", "").trim();
     }
 
     @Transactional

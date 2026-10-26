@@ -5,11 +5,16 @@ export type RoleHome = "/" | "/staff" | "/chef" | "/manager" | "/admin";
 
 export function getHomeForRole(role: AppRole): RoleHome {
   switch (role) {
-    case "CUSTOMER": return "/";
-    case "STAFF": return "/staff";
-    case "CHEF": return "/chef";
-    case "MANAGER": return "/manager";
-    case "ADMIN": return "/admin";
+    case "CUSTOMER":
+      return "/";
+    case "STAFF":
+      return "/staff";
+    case "CHEF":
+      return "/chef";
+    case "MANAGER":
+      return "/manager";
+    case "ADMIN":
+      return "/admin";
   }
 }
 

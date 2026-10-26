@@ -1,8 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, ChefHat, ClipboardList, ShieldCheck, UtensilsCrossed, Users } from "lucide-react";
+import {
+  ArrowRight,
+  ChefHat,
+  ClipboardList,
+  ShieldCheck,
+  UtensilsCrossed,
+  Users,
+} from "lucide-react";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 import { RoleGuard } from "@/components/hv/RoleGuard";
+import { BackButton } from "@/components/hv/BackButton";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({ meta: [{ title: "Trung tâm quản trị IT — Hương Việt" }] }),
@@ -10,9 +18,24 @@ export const Route = createFileRoute("/admin")({
 });
 
 const destinations = [
-  { to: "/manager" as const, title: "Quản lý nhà hàng", description: "Thực đơn, đặt bàn và hoạt động quản lý.", icon: ClipboardList },
-  { to: "/staff" as const, title: "Nhân viên & Thu ngân", description: "Bán hàng và xử lý đơn tại quầy.", icon: Users },
-  { to: "/chef" as const, title: "Màn hình bếp", description: "Theo dõi và xử lý các món cần chế biến.", icon: ChefHat },
+  {
+    to: "/manager" as const,
+    title: "Quản lý nhà hàng",
+    description: "Thực đơn, đặt bàn và hoạt động quản lý.",
+    icon: ClipboardList,
+  },
+  {
+    to: "/staff" as const,
+    title: "Nhân viên & Thu ngân",
+    description: "Bán hàng và xử lý đơn tại quầy.",
+    icon: Users,
+  },
+  {
+    to: "/chef" as const,
+    title: "Màn hình bếp",
+    description: "Chỉ theo dõi phiếu bếp — cập nhật trạng thái nằm ở mục Quản lý nhà hàng.",
+    icon: ChefHat,
+  },
 ];
 
 function AdminPage() {
@@ -28,11 +51,16 @@ function AdminPage() {
                 </div>
                 <div>
                   <p className="font-display text-2xl font-semibold tracking-wide">HƯƠNG VIỆT</p>
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">Quản trị IT</p>
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                    Quản trị IT
+                  </p>
                 </div>
               </Link>
               <div className="flex items-center gap-4">
-                <Link to="/" className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">
+                <Link
+                  to="/"
+                  className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"
+                >
                   Trang khách hàng
                 </Link>
                 <AccountMenu />
@@ -40,13 +68,20 @@ function AdminPage() {
             </div>
           </header>
           <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-            <div className="mb-8 flex items-center gap-4">
-              <div className="rounded-xl bg-primary/10 p-3 text-primary">
-                <ShieldCheck className="h-7 w-7" />
-              </div>
+            <div className="mb-8 space-y-4">
               <div>
-                <h1 className="text-3xl font-semibold">Trung tâm quản trị IT</h1>
-                <p className="mt-1 text-muted-foreground">Truy cập các giao diện vận hành của hệ thống.</p>
+                <BackButton to="/" label="Trang chủ" />
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="rounded-xl bg-primary/10 p-3 text-primary">
+                  <ShieldCheck className="h-7 w-7" />
+                </div>
+                <div>
+                  <h1 className="text-3xl font-semibold">Trung tâm quản trị IT</h1>
+                  <p className="mt-1 text-muted-foreground">
+                    Truy cập các giao diện vận hành của hệ thống.
+                  </p>
+                </div>
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
@@ -60,7 +95,8 @@ function AdminPage() {
                   <h2 className="text-lg font-semibold">{title}</h2>
                   <p className="mt-2 min-h-12 text-sm text-muted-foreground">{description}</p>
                   <span className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-primary">
-                    Mở giao diện <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    Mở giao diện{" "}
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                   </span>
                 </Link>
               ))}
@@ -71,4 +107,3 @@ function AdminPage() {
     </RoleGuard>
   );
 }
-

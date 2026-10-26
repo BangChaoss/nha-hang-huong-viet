@@ -37,9 +37,14 @@ DROP TABLE IF EXISTS menu_items;
 DROP TABLE IF EXISTS categories;
 DROP TABLE IF EXISTS reservation_audits;
 DROP TABLE IF EXISTS reservations;
+DROP TABLE IF EXISTS floor_plan_layouts;
 DROP TABLE IF EXISTS restaurant_tables;
 DROP TABLE IF EXISTS table_zones;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS payment_orders;
+DROP TABLE IF EXISTS loyalty_accounts;
+DROP TABLE IF EXISTS loyalty_settings;
+DROP TABLE IF EXISTS system_settings;
 
 -- ==============================================================================
 -- 1. IDENTITY & USER MANAGEMENT (users)
@@ -147,7 +152,7 @@ CREATE TABLE restaurant_tables (
     zone_id CHAR(36) NOT NULL,
     table_number VARCHAR(20) NOT NULL,
     capacity INT NOT NULL,
-    status ENUM('AVAILABLE', 'OCCUPIED', 'CLEANING', 'MAINTENANCE') NOT NULL DEFAULT 'AVAILABLE',
+    status ENUM('AVAILABLE', 'RESERVED', 'OCCUPIED', 'CLEANING', 'MAINTENANCE') NOT NULL DEFAULT 'AVAILABLE',
     version BIGINT NOT NULL DEFAULT 0,
     deleted_at DATETIME(6) NULL,
 
@@ -161,6 +166,26 @@ CREATE TABLE restaurant_tables (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==============================================================================
+-- 3b. FLOOR PLAN LAYOUTS (floor_plan_layouts)
+-- ==============================================================================
+CREATE TABLE floor_plan_layouts (
+    id          CHAR(36)     NOT NULL,
+    table_id    CHAR(36)     NOT NULL,
+    position_x  DOUBLE       NOT NULL DEFAULT 0,
+    position_y  DOUBLE       NOT NULL DEFAULT 0,
+    width       DOUBLE       NOT NULL DEFAULT 80,
+    height      DOUBLE       NOT NULL DEFAULT 80,
+    rotation    DOUBLE       NOT NULL DEFAULT 0,
+    shape       ENUM('RECTANGLE', 'CIRCLE') NOT NULL DEFAULT 'RECTANGLE',
+    updated_at  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_fpl_table (table_id),
+    CONSTRAINT fk_fpl_table FOREIGN KEY (table_id) REFERENCES restaurant_tables (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
 -- 4. TABLE RESERVATIONS (reservations)
 -- ==============================================================================
 CREATE TABLE reservations (
@@ -170,10 +195,12 @@ CREATE TABLE reservations (
     guest_phone VARCHAR(20) NOT NULL,
     guest_email VARCHAR(100) NULL,
     table_id CHAR(36) NULL,
+    zone_id CHAR(36) NULL,
     party_size INT NOT NULL,
     reservation_date DATE NOT NULL,
     reservation_time TIME NOT NULL,
     deposit_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    special_requests TEXT NULL,
     status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL DEFAULT 'PENDING_HOLD',
     cancellation_reason TEXT NULL,
     version BIGINT NOT NULL DEFAULT 0,
@@ -184,6 +211,7 @@ CREATE TABLE reservations (
     PRIMARY KEY (id),
     KEY idx_reservations_check_slot (reservation_date, reservation_time, table_id, status),
     KEY idx_reservations_customer (customer_id, status),
+    KEY idx_reservations_zone_date (reservation_date, status),
     CONSTRAINT fk_res_customer FOREIGN KEY (customer_id) REFERENCES users (id) ON DELETE SET NULL,
     CONSTRAINT fk_res_table FOREIGN KEY (table_id) REFERENCES restaurant_tables (id) ON DELETE SET NULL,
     CONSTRAINT chk_res_party CHECK (party_size > 0),
@@ -301,6 +329,8 @@ CREATE TABLE order_items (
     order_id CHAR(36) NOT NULL,
     menu_item_id CHAR(36) NOT NULL,
     quantity INT NOT NULL,
+    unit_price_snapshot DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    note VARCHAR(255) NULL,
     cooking_status ENUM('QUEUED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED') NOT NULL DEFAULT 'QUEUED',
     cancel_reason TEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -342,9 +372,11 @@ CREATE TABLE order_item_audits (
 CREATE TABLE kitchen_tickets (
     id CHAR(36) NOT NULL,
     order_item_id CHAR(36) NOT NULL,
+    order_id CHAR(36) NULL,
     table_number VARCHAR(20) NOT NULL,
     item_name VARCHAR(100) NOT NULL,
     quantity INT NOT NULL,
+    note VARCHAR(255) NULL,
     priority INT NOT NULL DEFAULT 1,
     status ENUM('QUEUED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED') NOT NULL DEFAULT 'QUEUED',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -353,7 +385,9 @@ CREATE TABLE kitchen_tickets (
     PRIMARY KEY (id),
     UNIQUE KEY uq_kitchen_order_item (order_item_id),
     KEY idx_kds_live_queue (status, priority, created_at),
-    CONSTRAINT fk_kitchen_order_item FOREIGN KEY (order_item_id) REFERENCES order_items (id) ON DELETE CASCADE
+    KEY idx_kds_order (order_id),
+    CONSTRAINT fk_kitchen_order_item FOREIGN KEY (order_item_id) REFERENCES order_items (id) ON DELETE CASCADE,
+    CONSTRAINT fk_kitchen_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==============================================================================
@@ -450,7 +484,7 @@ CREATE TABLE invoices (
 -- ==============================================================================
 CREATE TABLE invoice_items (
     id CHAR(36) NOT NULL,
-    invoice_id CHAR(36) NOT NULL,
+    invoice_id CHAR(36) NULL,
     dish_id CHAR(36) NOT NULL,
     dish_name_snapshot VARCHAR(100) NOT NULL,
     unit_price_snapshot DECIMAL(12, 2) NOT NULL,
@@ -471,7 +505,7 @@ CREATE TABLE invoice_items (
 CREATE TABLE payments (
     id CHAR(36) NOT NULL,
     invoice_id CHAR(36) NOT NULL,
-    payment_method ENUM('CASH', 'CREDIT_CARD', 'BANK_TRANSFER') NOT NULL,
+    payment_method ENUM('CASH', 'CREDIT_CARD', 'BANK_TRANSFER', 'VNPAY') NOT NULL,
     transaction_reference VARCHAR(100) NULL,
     amount_paid DECIMAL(12, 2) NOT NULL,
     payment_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -527,7 +561,7 @@ CREATE TABLE loyalty_transactions (
     id CHAR(36) NOT NULL,
     wallet_id CHAR(36) NOT NULL,
     invoice_id CHAR(36) NULL,
-    transaction_type ENUM('EARN_5_PERCENT', 'REDEEM', 'EXPIRE', 'ADJUSTMENT') NOT NULL,
+    transaction_type ENUM('EARN_5_PERCENT','EARN_PAYMENT', 'REDEEM', 'EXPIRE', 'ADJUSTMENT') NOT NULL,
     points INT NOT NULL,
     balance_after INT NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -596,6 +630,90 @@ CREATE TABLE daily_dish_sales_summaries (
     KEY idx_daily_dish_rank (summary_date, total_quantity_sold),
     CONSTRAINT fk_daily_dish_menu FOREIGN KEY (dish_id) REFERENCES menu_items (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 24. LEGACY LOYALTY ACCOUNTS (loyalty_accounts)
+-- Giữ tương thích với hệ thống tích điểm theo số điện thoại ở bản 2
+-- ==============================================================================
+CREATE TABLE loyalty_accounts (
+    id VARCHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) NOT NULL,
+    points_balance DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    updated_at DATETIME NOT NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_loyalty_phone (customer_phone),
+
+    CONSTRAINT chk_loyalty_accounts_points
+        CHECK (points_balance >= 0.00)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 25. LOYALTY SETTINGS (loyalty_settings)
+-- Cấu hình tỷ lệ tích điểm
+-- ==============================================================================
+CREATE TABLE loyalty_settings (
+    id VARCHAR(36) NOT NULL,
+    earn_rate_percent DECIMAL(7, 3) NOT NULL DEFAULT 5.000,
+    updated_at DATETIME NOT NULL,
+
+    PRIMARY KEY (id),
+
+    CONSTRAINT chk_loyalty_rate
+        CHECK (
+            earn_rate_percent >= 0.000
+            AND earn_rate_percent <= 100.000
+        )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 26. PAYMENT ORDERS (payment_orders)
+-- Lưu thông tin đơn hàng thanh toán VNPay
+-- ==============================================================================
+CREATE TABLE payment_orders (
+    id VARCHAR(36) NOT NULL,
+	customer_phone VARCHAR(20) NOT NULL,
+    subtotal DECIMAL(14, 2) NOT NULL,
+    discount_amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    amount DECIMAL(14, 2) NOT NULL,
+    voucher_id VARCHAR(36) NULL,
+    voucher_code VARCHAR(50) NULL,
+    table_id VARCHAR(36) NULL,
+    order_ids TEXT NULL,
+    points_redeemed DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    status VARCHAR(20) NOT NULL,
+    vnp_transaction_no VARCHAR(100) NULL,
+    vnp_response_code VARCHAR(10) NULL,
+    points_awarded DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+    created_at DATETIME NOT NULL,
+    paid_at DATETIME NULL,
+
+    PRIMARY KEY (id),
+    KEY idx_payment_orders_txn (vnp_transaction_no),
+    KEY idx_payment_orders_phone (customer_phone),
+    KEY idx_payment_orders_status (status),
+    KEY idx_payment_orders_table_status (table_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ==============================================================================
+-- 27. SYSTEM SETTINGS (system_settings)
+-- Cấu hình chung của hệ thống
+-- ==============================================================================
+CREATE TABLE system_settings (
+    setting_key VARCHAR(100) NOT NULL,
+    setting_value VARCHAR(255) NOT NULL,
+    description VARCHAR(500) NULL,
+    updated_at DATETIME(6) NOT NULL
+        DEFAULT CURRENT_TIMESTAMP(6)
+        ON UPDATE CURRENT_TIMESTAMP(6),
+
+    PRIMARY KEY (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;
