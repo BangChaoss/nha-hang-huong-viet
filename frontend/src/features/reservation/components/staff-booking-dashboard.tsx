@@ -35,6 +35,7 @@ import { useAdminReservations } from "../hooks/use-admin-reservations";
 import { useUpdateReservationStatus } from "../hooks/use-update-reservation-status";
 import { StaffBookingRow } from "./staff-booking-row";
 import { ConfirmBookingDialog } from "./confirm-booking-dialog";
+import { CancelBookingDialog } from "./cancel-booking-dialog";
 import type { ReservationResponse, ReservationStatus } from "../types/reservation.types";
 
 export function StaffBookingDashboard() {
@@ -48,6 +49,10 @@ export function StaffBookingDashboard() {
   const [confirmDialogBooking, setConfirmDialogBooking] =
     React.useState<ReservationResponse | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = React.useState<boolean>(false);
+  const [cancelDialogBooking, setCancelDialogBooking] = React.useState<ReservationResponse | null>(
+    null,
+  );
+  const [isCancelOpen, setIsCancelOpen] = React.useState<boolean>(false);
 
   // Queries & Mutations
   const statusParam = selectedStatus !== "ALL" ? (selectedStatus as ReservationStatus) : undefined;
@@ -64,6 +69,21 @@ export function StaffBookingDashboard() {
     setIsConfirmOpen(true);
   };
 
+  const handleOpenCancel = (booking: ReservationResponse) => {
+    setCancelDialogBooking(booking);
+    setIsCancelOpen(true);
+  };
+
+  const handleStaffCancel = async (booking: ReservationResponse, reason?: string) => {
+    await updateStatusMutation.mutateAsync({
+      id: booking.id,
+      payload: {
+        status: "CANCELLED",
+        reason: reason || "Nhân viên hủy đơn",
+      },
+    });
+  };
+
   const handleCheckIn = async (booking: ReservationResponse) => {
     const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
     try {
@@ -76,28 +96,6 @@ export function StaffBookingDashboard() {
       toast.success(`Check-in thành công cho đơn HV-${code}. Bàn đã chuyển sang trạng thái Đang Phục Vụ.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Check-in thất bại";
-      toast.error(msg);
-    }
-  };
-
-  const handleStaffCancel = async (booking: ReservationResponse) => {
-    const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
-    const reasonPrompt = window.prompt(`Nhập lý do hủy đơn đặt bàn HV-${code}:`, "Khách hủy qua điện thoại");
-    if (reasonPrompt === null) {
-      return; // Cancelled prompt
-    }
-
-    try {
-      await updateStatusMutation.mutateAsync({
-        id: booking.id,
-        payload: {
-          status: "CANCELLED",
-          reason: reasonPrompt.trim() || "Nhân viên hủy đơn",
-        },
-      });
-      toast.info(`Đã hủy đơn đặt bàn HV-${code}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Hủy đơn thất bại";
       toast.error(msg);
     }
   };
@@ -279,7 +277,7 @@ export function StaffBookingDashboard() {
                     booking={booking}
                     onOpenConfirm={handleOpenConfirm}
                     onCheckIn={(b) => void handleCheckIn(b)}
-                    onCancel={(b) => void handleStaffCancel(b)}
+                    onCancel={handleOpenCancel}
                     isActionPending={updateStatusMutation.isPending}
                   />
                 ))
@@ -303,6 +301,12 @@ export function StaffBookingDashboard() {
         booking={confirmDialogBooking}
         open={isConfirmOpen}
         onOpenChange={setIsConfirmOpen}
+      />
+      <CancelBookingDialog
+        booking={cancelDialogBooking}
+        open={isCancelOpen}
+        onOpenChange={setIsCancelOpen}
+        onConfirmCancel={handleStaffCancel}
       />
     </div>
   );
