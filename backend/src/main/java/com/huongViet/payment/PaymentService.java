@@ -2,6 +2,8 @@
 package com.huongViet.payment;
 
 import com.huongViet.order.OrderRepository;
+import com.huongViet.order.OrderService;
+import com.huongViet.order.CashCheckoutRequest;
 import com.huongViet.table.TableRepository;
 import com.huongViet.voucher.VoucherService;
 import com.huongViet.voucher.VoucherValidationRequest;
@@ -48,6 +50,7 @@ public class PaymentService {
      */
     private final TableRepository tableRepository;
     private final OrderRepository orderRepository;
+    private final OrderService orderService;
 
     @Value("${VNPAY_SANDBOX_TMN_CODE:${vnpay.tmn-code:}}")
     private String tmnCode;
@@ -79,7 +82,8 @@ public class PaymentService {
             LoyaltySettingsRepository settings,
             VoucherService voucherService,
             TableRepository tableRepository,
-            OrderRepository orderRepository
+            OrderRepository orderRepository,
+            OrderService orderService
     ) {
         this.orders = orders;
         this.loyaltyAccounts = loyaltyAccounts;
@@ -87,6 +91,7 @@ public class PaymentService {
         this.voucherService = voucherService;
         this.tableRepository = tableRepository;
         this.orderRepository = orderRepository;
+        this.orderService = orderService;
     }
 
     /**
@@ -242,6 +247,7 @@ public class PaymentService {
 
         PaymentOrder paymentOrder = new PaymentOrder(
                 orderId,
+                req.tableId(),
                 phone,
                 subtotal,
                 discount,
@@ -402,116 +408,35 @@ public class PaymentService {
             return "PAYMENT_FAILED";
         }
 
-        String phone = normalizePhone(
-                order.getCustomerPhone() == null
-                        ? ""
-                        : order.getCustomerPhone()
-        );
-
-        BigDecimal pointsUsed = order.getPointsUsed() == null
-                ? ZERO
-                : order.getPointsUsed();
-
-        BigDecimal pointsAwarded = ZERO;
-
-        if (!phone.isBlank()) {
-            /*
-             * Lấy ví điểm hiện tại. Nếu khách đã sử dụng điểm,
-             * ví phải tồn tại và có đủ số dư để thực hiện việc trừ.
-             */
-            LoyaltyAccount account = loyaltyAccounts
-                    .findByCustomerPhone(phone)
-                    .orElseGet(() -> {
-                        if (pointsUsed.compareTo(ZERO) > 0) {
-                            throw new ResponseStatusException(
-                                    HttpStatus.CONFLICT,
-                                    "Không tìm thấy ví điểm để trừ điểm đã sử dụng."
-                            );
-                        }
-
-                        return new LoyaltyAccount(
-                                UUID.randomUUID().toString(),
-                                phone
-                        );
-                    });
-
-            BigDecimal currentBalance = account.getPointsBalance() == null
-                    ? ZERO
-                    : account.getPointsBalance();
-
-            /*
-             * Kiểm tra số dư lần nữa tại thời điểm callback.
-             * Không để ví điểm bị âm nếu số dư đã thay đổi
-             * trong thời gian khách đang thanh toán.
-             */
-            if (pointsUsed.compareTo(ZERO) > 0
-                    && currentBalance.compareTo(pointsUsed) < 0) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Số dư ví điểm đã thay đổi. Không thể trừ số điểm đã chọn."
-                );
-            }
-
-            /*
-             * 1. Trừ điểm khách sử dụng.
-             */
-            if (pointsUsed.compareTo(ZERO) > 0) {
-                account.redeemPoints(pointsUsed);
-            }
-
-            /*
-             * 2. Đọc tỷ lệ tích điểm đang được cấu hình.
-             * Mặc định 5% nếu chưa có cấu hình.
-             */
-            LoyaltySettings loyaltySettings = settings
-                    .findById(DEFAULT_SETTINGS_ID)
-                    .orElseGet(() -> settings.save(
-                            new LoyaltySettings(
-                                    DEFAULT_SETTINGS_ID,
-                                    new BigDecimal("5.000")
-                            )
-                    ));
-
-            BigDecimal rate = loyaltySettings.getEarnRatePercent();
-
-            if (rate == null || rate.compareTo(ZERO) < 0) {
-                rate = ZERO;
-            }
-
-            /*
-             * 3. Tính điểm thưởng trên số tiền thực trả qua VNPay,
-             * sau khi trừ voucher và điểm đã sử dụng.
-             *
-             * Ví dụ:
-             * Tổng tiền:      500.000
-             * Voucher:         50.000
-             * Điểm sử dụng:   100.000
-             * Thực trả:       350.000
-             * Tỷ lệ:                5%
-             * Điểm thưởng:     17.500
-             */
-            pointsAwarded = order.getAmount()
-                    .multiply(rate)
-                    .divide(ONE_HUNDRED, 2, RoundingMode.DOWN);
-
-            /*
-             * 4. Cộng điểm thưởng mới và lưu số dư ví.
-             *
-             * Thao tác trừ điểm, cộng điểm và lưu PaymentOrder
-             * nằm trong cùng transaction.
-             */
-            if (pointsAwarded.compareTo(ZERO) > 0) {
-                account.addPoints(pointsAwarded);
-            }
-
-            loyaltyAccounts.save(account);
+        String phone = normalizePhone(order.getCustomerPhone() == null ? "" : order.getCustomerPhone());
+        if (order.getTableId() == null || order.getTableId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Giao dịch không được liên kết với bàn POS.");
         }
 
         /*
-         * Đánh dấu PAID sau khi xử lý ví điểm.
-         * Nếu transaction bị rollback, thay đổi ví điểm và trạng thái
-         * PaymentOrder cũng được rollback cùng nhau.
+         * Dùng đúng nghiệp vụ checkout của tiền mặt để tạo hóa đơn,
+         * ghi nhận voucher, trừ điểm, cộng điểm thưởng và giải phóng bàn.
+         * Nếu số tiền checkout không khớp giao dịch VNPay, ném exception để
+         * rollback toàn bộ thay đổi trong transaction.
          */
+        var checkout = orderService.checkoutCash(
+                order.getTableId(),
+                new CashCheckoutRequest(
+                        phone.isBlank() ? null : phone,
+                        order.getVoucherCode(),
+                        order.getPointsUsed() != null && order.getPointsUsed().compareTo(ZERO) > 0
+                )
+        );
+
+        BigDecimal checkoutTotal = checkout.total() == null ? ZERO : checkout.total();
+        if (checkoutTotal.compareTo(order.getAmount()) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Số tiền checkout không khớp số tiền giao dịch VNPay đã lưu.");
+        }
+
+        BigDecimal pointsAwarded = checkout.pointsAwarded() == null ? ZERO : checkout.pointsAwarded();
+        order.markPointsDeducted();
         order.markPaid(transaction, response, pointsAwarded);
 
         return "00";
@@ -609,6 +534,7 @@ public class PaymentService {
 
         return Map.of(
                 "orderId", paymentOrder.getId(),
+                "tableId", paymentOrder.getTableId() == null ? "" : paymentOrder.getTableId(),
                 "status", paymentOrder.getStatus(),
                 "amount", paymentOrder.getAmount(),
                 "phoneNumber",
@@ -626,7 +552,11 @@ public class PaymentService {
                 "responseCode",
                 paymentOrder.getVnpResponseCode() == null
                         ? ""
-                        : paymentOrder.getVnpResponseCode()
+                        : paymentOrder.getVnpResponseCode(),
+                "transactionNo",
+                paymentOrder.getVnpTransactionNo() == null
+                        ? ""
+                        : paymentOrder.getVnpTransactionNo()
         );
     }
 

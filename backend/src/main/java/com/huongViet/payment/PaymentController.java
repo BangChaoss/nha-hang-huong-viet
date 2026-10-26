@@ -41,11 +41,19 @@ public class PaymentController {
     @GetMapping("/return")
     public RedirectView returned(@RequestParam Map<String,String> params) {
         String orderId=params.getOrDefault("vnp_TxnRef","");
-        String result=service.processCallback(params);
-        String status="00".equals(result)
-            && "00".equals(params.get("vnp_ResponseCode"))
-            && "00".equals(params.get("vnp_TransactionStatus")) ? "success" : "failed";
-        return new RedirectView(frontendUrl.replaceAll("/$","")+"/?paymentOrderId="+
+        String status = "failed";
+        try {
+            String result = service.processCallback(params);
+            if ("00".equals(result)
+                    && "00".equals(params.get("vnp_ResponseCode"))
+                    && "00".equals(params.get("vnp_TransactionStatus"))) {
+                status = "success";
+            }
+        } catch (RuntimeException ex) {
+            // Luôn đưa nhân viên trở lại POS; trạng thái giao dịch có thể tra cứu tại đây.
+            status = "failed";
+        }
+        return new RedirectView(frontendUrl.replaceAll("/$","")+"/staff?paymentOrderId="+
             java.net.URLEncoder.encode(orderId,java.nio.charset.StandardCharsets.UTF_8)+"&paymentStatus="+status);
     }
 

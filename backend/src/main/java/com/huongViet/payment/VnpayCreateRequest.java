@@ -4,6 +4,7 @@ import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 
 public record VnpayCreateRequest(
+        @NotBlank @Size(max = 36) String tableId,
         @NotNull
         @DecimalMin(value = "1000.00")
         @Digits(integer = 12, fraction = 2)

@@ -680,7 +680,7 @@ CREATE TABLE payment_orders (
     discount_amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     amount DECIMAL(14, 2) NOT NULL,
     voucher_code VARCHAR(50) NULL,
-    table_id CHAR(36) NULL,
+    table_id VARCHAR(36) NULL,
     order_ids TEXT NULL,
     points_redeemed DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) NOT NULL,

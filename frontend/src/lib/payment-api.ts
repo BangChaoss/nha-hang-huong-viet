@@ -33,12 +33,14 @@ export type PaymentOrderStatus = {
   phoneNumber: string;
   pointsAwarded: number;
   responseCode: string;
+  transactionNo?: string;
+  pointsUsed?: number;
 };
 
 export const paymentApi = {
   getLoyaltyBalance: (phoneNumber: string) =>
     request<{ phoneNumber: string; pointsBalance: number }>(`/api/payments/loyalty/${encodeURIComponent(phoneNumber)}`),
-  createVnpay: (payload: { subtotal: number; phoneNumber: string; voucherCode?: string; pointsToUse?: number }) =>
+  createVnpay: (payload: { tableId: string; subtotal: number; phoneNumber: string; voucherCode?: string; pointsToUse?: number; usePoints?: boolean }) =>
     request<{ orderId: string; paymentUrl: string }>("/api/payments/vnpay/create", {
       method: "POST",
       body: JSON.stringify(payload),
