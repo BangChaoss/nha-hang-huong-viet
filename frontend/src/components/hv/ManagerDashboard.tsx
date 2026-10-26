@@ -1,19 +1,38 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Award,
+  Banknote,
+  CheckCircle2,
+  Plus,
+  ShieldCheck,
+  TicketPercent,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { BackButton } from "@/components/hv/BackButton";
+import { StaffManagement } from "@/components/hv/StaffManagement";
+import { useSession } from "@/lib/auth-session";
 import { voucherApi, type Voucher, type VoucherPayload, type DiscountType } from "@/lib/voucher-api";
 
 const week = [
   { d: "T2", v: 18.2 }, { d: "T3", v: 21.5 }, { d: "T4", v: 19.8 }, { d: "T5", v: 24.1 }, { d: "T6", v: 31.4 }, { d: "T7", v: 38.9 },
 ];
 
-type UserRole = "CUSTOMER" | "STAFF" | "CHEF" | "MANAGER";
+export type ManagerTab = "overview" | "permissions" | "vouchers";
+
+export interface ManagerDashboardProps {
+  activeTab?: ManagerTab;
+  onTabChange?: (tab: ManagerTab) => void;
+}
+
 type VoucherForm = {
   voucherCode: string; title: string; description: string; discountType: DiscountType;
   discountValue: string; maxDiscountAmount: string; minOrderAmount: string;
@@ -30,13 +49,21 @@ const formatVoucherDate = (value: string) => {
   return new Date(year, month - 1, day).toLocaleDateString("vi-VN");
 };
 
-export function ManagerDashboard() {
-  const [activeTab, setActiveTab] = useState<"overview" | "permissions" | "vouchers">("overview");
-  const [userRoles, setUserRoles] = useState([
-    { phone: "0903123456", name: "Nguyễn Văn A", role: "CUSTOMER" as UserRole },
-    { phone: "0903987654", name: "Trần Thị B", role: "STAFF" as UserRole },
-    { phone: "0903555666", name: "Lê Văn C", role: "CHEF" as UserRole },
-  ]);
+export function ManagerDashboard({
+  activeTab: controlledTab,
+  onTabChange,
+}: ManagerDashboardProps = {}) {
+  const [internalTab, setInternalTab] = useState<ManagerTab>("overview");
+  const activeTab = controlledTab ?? internalTab;
+  const handleTabChange = (tab: ManagerTab) => {
+    if (onTabChange) {
+      onTabChange(tab);
+    } else {
+      setInternalTab(tab);
+    }
+  };
+  const { session } = useSession();
+
   const [voucherForm, setVoucherForm] = useState(emptyVoucher);
   const [vouchersList, setVouchersList] = useState<Voucher[]>([]);
   const [voucherSaving, setVoucherSaving] = useState(false);
@@ -73,26 +100,73 @@ export function ManagerDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tổng quan vận hành</p>
-        <h1 className="text-4xl font-semibold">Bảng điều khiển Quản lý</h1>
+      <div className="space-y-4">
+        <div>
+          <BackButton to={session?.role === "ADMIN" ? "/admin" : "/"} label="Quay lại" />
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="rounded-xl bg-primary/10 p-3 text-primary">
+            <ShieldCheck className="h-7 w-7" />
+          </div>
+          <div className="flex flex-col">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tổng quan vận hành</p>
+            <h1 className="text-4xl font-semibold">Bảng điều khiển Quản lý</h1>
+          </div>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2 border-b pb-3">
-        <Button variant={activeTab === "overview" ? "default" : "outline"} onClick={() => setActiveTab("overview")}>Tổng quan</Button>
-        <Button variant={activeTab === "permissions" ? "default" : "outline"} onClick={() => setActiveTab("permissions")}><ShieldCheck className="mr-2 h-4 w-4" />Phân quyền người dùng</Button>
-        <Button variant={activeTab === "vouchers" ? "default" : "outline"} onClick={() => setActiveTab("vouchers")}><TicketPercent className="mr-2 h-4 w-4" />Voucher nhà hàng</Button>
+        <Button variant={activeTab === "overview" ? "default" : "outline"} onClick={() => handleTabChange("overview")}>
+          Tổng quan
+        </Button>
+        <Button variant={activeTab === "permissions" ? "default" : "outline"} onClick={() => handleTabChange("permissions")}>
+          <ShieldCheck className="mr-2 h-4 w-4" />
+          Phân quyền người dùng
+        </Button>
+        <Button variant={activeTab === "vouchers" ? "default" : "outline"} onClick={() => handleTabChange("vouchers")}>
+          <TicketPercent className="mr-2 h-4 w-4" />
+          Voucher nhà hàng
+        </Button>
       </div>
-      {activeTab === "permissions" && <section className="surface-card space-y-4 p-5">
-        <h2 className="text-2xl font-medium">Phân quyền người dùng</h2>
-        <p className="text-sm text-muted-foreground">Gán vai trò theo số điện thoại. Bản frontend hiện lưu trạng thái trong bộ nhớ trình duyệt; cần API backend để lưu và áp dụng quyền thật.</p>
-        <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Họ tên</th><th>Số điện thoại</th><th>Vai trò</th></tr></thead><tbody>
-          {userRoles.map((u) => <tr key={u.phone} className="border-b last:border-0"><td className="py-3">{u.name}</td><td>{u.phone}</td><td><select className="rounded-md border bg-background p-2" value={u.role} onChange={(e) => setUserRoles((all) => all.map((x) => x.phone === u.phone ? { ...x, role: e.target.value as UserRole } : x))}>{(["CUSTOMER","STAFF","CHEF","MANAGER"] as UserRole[]).map((r) => <option key={r} value={r}>{r}</option>)}</select></td></tr>)}
-        </tbody></table></div>
-      </section>}
-      {activeTab === "vouchers" && <section className="space-y-6">
-        <div className="surface-card space-y-4 p-5">
-          <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
-          <p className="text-sm text-muted-foreground">Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính theo số điện thoại.</p>
+      {activeTab === "permissions" && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => handleTabChange("overview")}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về trang Tổng quan
+            </Button>
+          </div>
+          {session ? (
+            <StaffManagement actor={session} title="Quản lý nhân sự & Phân quyền" />
+          ) : (
+            <div className="surface-card p-6 text-center text-sm text-muted-foreground">
+              Vui lòng đăng nhập để xem danh sách nhân sự.
+            </div>
+          )}
+        </section>
+      )}
+      {activeTab === "vouchers" && (
+        <section className="space-y-6">
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => handleTabChange("overview")}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về trang Tổng quan
+            </Button>
+          </div>
+          <div className="surface-card space-y-4 p-5">
+            <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
+            <p className="text-sm text-muted-foreground">Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính theo số điện thoại.</p>
           <form className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" onSubmit={async (e) => {
             e.preventDefault();
             const value = Number(voucherForm.discountValue);
@@ -142,7 +216,8 @@ export function ManagerDashboard() {
         <div className="surface-card overflow-x-auto p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-medium">Danh sách voucher</h2><Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>{voucherLoading ? "Đang tải..." : "Làm mới"}</Button></div>
           {voucherLoading && vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Đang tải dữ liệu...</p> : vouchersList.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p> : <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Mã / Chương trình</th><th>Ưu đãi</th><th>Hiệu lực</th><th>Đã dùng / phát hành</th><th>Giới hạn/khách</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{vouchersList.map((v) => <tr key={v.id} className="border-b last:border-0"><td className="py-3"><b>{v.voucherCode}</b><p>{v.title}</p><p className="max-w-xs text-xs text-muted-foreground">{v.description}</p></td><td>{v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : `${formatVND(v.discountValue)}`}<p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>{v.maxDiscountAmount != null && <p className="text-xs text-muted-foreground">Tối đa {formatVND(v.maxDiscountAmount)}</p>}</td><td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td><td>{v.usedQuantity} / {v.totalQuantity}</td><td>{v.maxUsesPerCustomer} lượt / SĐT</td><td><span className={v.active ? "text-green-600" : "text-muted-foreground"}>{v.active ? "Đang bật" : "Đã tắt"}</span></td><td><div className="flex gap-1"><Button type="button" size="sm" variant="outline" onClick={async () => { try { await voucherApi.setActive(v.id, !v.active); await loadVouchers(); } catch (error) { toast.error(error instanceof Error ? error.message : "Không cập nhật được trạng thái."); } }}>{v.active ? "Tắt" : "Bật"}</Button><Button type="button" size="icon" variant="ghost" aria-label="Xóa voucher" onClick={async () => { if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return; try { await voucherApi.remove(v.id); await loadVouchers(); toast.success("Đã xóa voucher."); } catch (error) { toast.error(error instanceof Error ? error.message : "Không xóa được voucher."); } }}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody></table>}
         </div>
-      </section>}
+      </section>
+      )}
       {activeTab === "overview" && <>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((k) => (

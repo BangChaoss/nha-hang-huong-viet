@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { LayoutGrid, LogIn, LogOut, UserRound, UsersRound } from "lucide-react";
+import { LayoutGrid, LogIn, LogOut, UserRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { authApi, ROLE_LABEL } from "@/lib/account-api";
-import { isUserManager, useSession } from "@/lib/auth-session";
+import { useSession } from "@/lib/auth-session";
 import { getHomeForRole } from "@/lib/role-routing";
 
 export function initials(name: string) {
@@ -75,14 +75,6 @@ export function AccountMenu() {
             Hồ sơ của tôi
           </Link>
         </DropdownMenuItem>
-        {isUserManager(session.role) && (
-          <DropdownMenuItem asChild>
-            <Link to="/users">
-              <UsersRound className="mr-2 h-4 w-4" />
-              Quản lý nhân sự
-            </Link>
-          </DropdownMenuItem>
-        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
