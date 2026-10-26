@@ -211,8 +211,11 @@ public class OrderService {
             if (!phone.matches("^[0-9+]{8,20}$")) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Số điện thoại không hợp lệ.");
             account = loyaltyAccounts.findByCustomerPhone(phone).orElse(null);
             if (Boolean.TRUE.equals(request.usePoints()) && account != null) {
-                redeemed = account.getPointsBalance().min(afterDiscount);
-                account.redeemPoints(redeemed);
+                // Điểm chỉ được quy đổi theo bội số 100; không vượt số dư hoặc hóa đơn sau voucher.
+                BigDecimal redeemable = account.getPointsBalance().min(afterDiscount);
+                redeemed = redeemable.divide(new BigDecimal("100"), 0, RoundingMode.DOWN)
+                    .multiply(new BigDecimal("100")).setScale(0, RoundingMode.UNNECESSARY);
+                if (redeemed.signum() > 0) account.redeemPoints(redeemed);
             }
         } else if (Boolean.TRUE.equals(request.usePoints())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhập số điện thoại để sử dụng điểm.");
@@ -225,7 +228,10 @@ public class OrderService {
             BigDecimal rate = loyaltySettings.findById("default")
                 .orElseGet(() -> loyaltySettings.save(new LoyaltySettings("default", new BigDecimal("5.000"))))
                 .getEarnRatePercent();
-            awarded = total.multiply(rate).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            // Làm tròn điểm thưởng đến hàng trăm gần nhất (100, 200, 300, ...).
+            BigDecimal rawPoints = total.multiply(rate).divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP);
+            awarded = rawPoints.divide(new BigDecimal("100"), 0, RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100")).setScale(0, RoundingMode.UNNECESSARY);
         }
 
         // Tạo hóa đơn thật trước khi ghi voucher_usages để invoice_id luôn tham chiếu invoices.id.

@@ -519,7 +519,8 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   // Chỉ áp dụng giảm giá sau khi backend đã xác nhận voucher hợp lệ.
   const discount = voucherValidated ? Math.min(voucherDiscount, subtotal + vat) : 0;
   const beforeRedeem = subtotal + vat - discount;
-  const redeemed = redeem ? Math.min(loyaltyBalance, beforeRedeem) : 0;
+  // Điểm chỉ dùng theo bội số 100, không vượt số dư hoặc số tiền còn lại.
+  const redeemed = redeem ? Math.floor(Math.min(loyaltyBalance, beforeRedeem) / 100) * 100 : 0;
   const total = beforeRedeem - redeemed;
 
   const Row = ({ l, v, cls }: { l: string; v: string; cls?: string }) => (
