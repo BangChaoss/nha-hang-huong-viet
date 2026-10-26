@@ -704,11 +704,16 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
               }
               setVoucherBusy(true);
               try {
+                if (!realTable?.id) {
+                  toast.error("Không tìm thấy bàn trong dữ liệu backend.");
+                  return;
+                }
                 const payment = await paymentApi.createVnpay({
+                  tableId: String(realTable.id),
                   subtotal: subtotal + vat,
                   phoneNumber: phoneNumber.trim(),
                   ...(code.trim() ? { voucherCode: code.trim() } : {}),
-                  ...(redeem && redeemed > 0 ? { pointsToUse: redeemed } : {}),
+                  ...(redeem && redeemed > 0 ? { pointsToUse: redeemed, usePoints: true } : { usePoints: false }),
                 });
                 window.location.assign(payment.paymentUrl);
               } catch (error) {

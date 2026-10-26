@@ -13,6 +13,8 @@ public class PaymentOrder {
     @Id
     @Column(name = "id", length = 36, nullable = false, columnDefinition = "varchar(36)")
     private String id;
+    @Column(name = "table_id", length = 36)
+    private String tableId;
     @Column(name = "customer_phone", nullable = false, length = 20)
     private String customerPhone;
     @Column(name = "subtotal", nullable = false, precision = 14, scale = 2)
@@ -47,11 +49,15 @@ public class PaymentOrder {
     }
     public PaymentOrder(String id, String phone, BigDecimal subtotal, BigDecimal discount,
                         BigDecimal amount, String voucherCode, BigDecimal pointsUsed) {
-        this.id=id; this.customerPhone=phone; this.subtotal=subtotal; this.discountAmount=discount;
+        this(id, null, phone, subtotal, discount, amount, voucherCode, pointsUsed);
+    }
+    public PaymentOrder(String id, String tableId, String phone, BigDecimal subtotal, BigDecimal discount,
+                        BigDecimal amount, String voucherCode, BigDecimal pointsUsed) {
+        this.id=id; this.tableId=tableId; this.customerPhone=phone; this.subtotal=subtotal; this.discountAmount=discount;
         this.amount=amount; this.voucherCode=voucherCode; this.status="PENDING"; this.pointsUsed=pointsUsed == null ? BigDecimal.ZERO : pointsUsed;
         this.pointsAwarded=BigDecimal.ZERO; this.createdAt=LocalDateTime.now();
     }
-    public String getId(){return id;} public String getCustomerPhone(){return customerPhone;}
+    public String getId(){return id;} public String getTableId(){return tableId;} public String getCustomerPhone(){return customerPhone;}
     public BigDecimal getSubtotal(){return subtotal;} public BigDecimal getDiscountAmount(){return discountAmount;}
     public BigDecimal getAmount(){return amount;} public String getVoucherCode(){return voucherCode;}
     public String getStatus(){return status;} public String getVnpTransactionNo(){return vnpTransactionNo;}
