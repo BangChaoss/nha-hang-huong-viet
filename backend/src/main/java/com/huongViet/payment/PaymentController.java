@@ -12,7 +12,7 @@ import java.util.Map;
 @RequestMapping("/api/payments/vnpay")
 public class PaymentController {
     private final PaymentService service;
-    @Value("${app.frontend-url:http://localhost:5173}") private String frontendUrl;
+    @Value("${app.frontend-url:http://localhost:8081}") private String frontendUrl;
     public PaymentController(PaymentService service){this.service=service;}
 
     @PostMapping("/create")
