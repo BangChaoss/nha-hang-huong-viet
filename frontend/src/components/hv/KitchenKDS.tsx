@@ -7,6 +7,7 @@ import { useKitchenTickets } from "@/features/order/hooks/use-kitchen-tickets";
 import { useUpdateTicketStatus } from "@/features/order/hooks/use-ticket-status";
 import { isUserManager, useSession } from "@/lib/auth-session";
 import type { CookingStatus, KitchenTicketResponse } from "@/features/order/types/order.types";
+import { BackButton } from "@/components/hv/BackButton";
 
 const cols: { s: CookingStatus; title: string }[] = [
   { s: "QUEUED", title: "Chờ Chế Biến" },
@@ -55,17 +56,22 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          Màn hình bếp · FIFO
-        </p>
-        <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
-        {!canUpdateStatus && (
-          <p className="mt-3 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-            Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do quản lý
-            hoặc quản trị viên thực hiện.
+      <div className="space-y-4">
+        <div>
+          <BackButton />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Màn hình bếp · FIFO
           </p>
-        )}
+          <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+          {!canUpdateStatus && (
+            <p className="mt-3 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+              Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do quản lý
+              hoặc quản trị viên thực hiện.
+            </p>
+          )}
+        </div>
       </div>
       {isError && (
         <p className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">

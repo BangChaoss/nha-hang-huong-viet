@@ -43,6 +43,7 @@ import { tableApi, type TableStatus } from "@/lib/table-api";
 import { menuApi } from "@/features/menu/api/menu-api";
 import { useActiveOrder } from "@/features/order/hooks/use-orders";
 import { useCreateOrder } from "@/features/order/hooks/use-create-order";
+import { BackButton } from "@/components/hv/BackButton";
 import { orderApi } from "@/features/order/api/order-api";
 import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
 import {
@@ -113,20 +114,25 @@ export function StaffPOS() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="space-y-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
-          <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          <BackButton />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(tableStatusMeta) as MockTableStatus[]).map((s) => (
-            <span
-              key={s}
-              className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}
-            >
-              {tableStatusMeta[s].label} · {counts(s)}
-            </span>
-          ))}
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
+            <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(tableStatusMeta) as MockTableStatus[]).map((s) => (
+              <span
+                key={s}
+                className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}
+              >
+                {tableStatusMeta[s].label} · {counts(s)}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
