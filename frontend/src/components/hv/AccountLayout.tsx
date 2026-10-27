@@ -1,9 +1,9 @@
 import { useEffect, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Loader2, ShieldAlert, UserRound, UsersRound, UtensilsCrossed } from "lucide-react";
+import { Loader2, ShieldAlert, UtensilsCrossed } from "lucide-react";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 import { getHomeForRole } from "@/lib/role-routing";
-import { isUserManager, useSession, type AuthSession } from "@/lib/auth-session";
+import { useSession, type AuthSession } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -20,16 +20,6 @@ export function AccountLayout({ allow, children }: Props) {
   useEffect(() => {
     if (ready && !session) void navigate({ to: "/login" });
   }, [ready, session, navigate]);
-
-  const nav = [
-    { to: "/account" as const, label: "Hồ Sơ", icon: UserRound, show: true },
-    {
-      to: "/users" as const,
-      label: "Nhân Sự",
-      icon: UsersRound,
-      show: isUserManager(session?.role),
-    },
-  ].filter((n) => n.show);
 
   return (
     <div className="min-h-screen">
@@ -50,23 +40,6 @@ export function AccountLayout({ allow, children }: Props) {
             </div>
           </Link>
           <div className="flex items-center gap-2 sm:gap-3">
-            {session && nav.length > 1 && (
-              <nav className="flex items-center gap-1 rounded-full border bg-card p-1 shadow-sm">
-                {nav.map(({ to, label, icon: Icon }) => (
-                  <Link
-                    key={to}
-                    to={to}
-                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                    activeProps={{
-                      className: cn("bg-moss text-moss-foreground hover:text-moss-foreground"),
-                    }}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span className="hidden sm:inline">{label}</span>
-                  </Link>
-                ))}
-              </nav>
-            )}
             <AccountMenu />
           </div>
         </div>

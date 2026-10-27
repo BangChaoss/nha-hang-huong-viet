@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
+  ArrowLeft,
   Banknote,
   Users,
   CheckCircle2,
@@ -26,6 +27,9 @@ import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
 import { KitchenKDS } from "@/components/hv/KitchenKDS";
 import { MenuManagement } from "@/features/menu/components/menu-management";
+import { BackButton } from "@/components/hv/BackButton";
+import { StaffManagement } from "@/components/hv/StaffManagement";
+import { useSession } from "@/lib/auth-session";
 
 const week = [
   { d: "T2", v: 18.2 },
@@ -36,7 +40,19 @@ const week = [
   { d: "T7", v: 38.9 },
 ];
 
-type UserRole = "CUSTOMER" | "STAFF" | "CHEF" | "MANAGER";
+export type ManagerTab =
+  | "overview"
+  | "permissions"
+  | "vouchers"
+  | "loyalty"
+  | "tables"
+  | "kitchen";
+
+export interface ManagerDashboardProps {
+  activeTab?: ManagerTab;
+  onTabChange?: (tab: ManagerTab) => void;
+}
+
 type VoucherForm = {
   voucherCode: string;
   title: string;
@@ -69,15 +85,21 @@ const formatVoucherDate = (value: string) => {
   return new Date(year, month - 1, day).toLocaleDateString("vi-VN");
 };
 
-export function ManagerDashboard() {
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "permissions" | "vouchers" | "loyalty" | "tables" | "kitchen"
-  >("overview");
-  const [userRoles, setUserRoles] = useState([
-    { phone: "0903123456", name: "Nguyễn Văn A", role: "CUSTOMER" as UserRole },
-    { phone: "0903987654", name: "Trần Thị B", role: "STAFF" as UserRole },
-    { phone: "0903555666", name: "Lê Văn C", role: "CHEF" as UserRole },
-  ]);
+export function ManagerDashboard({
+  activeTab: controlledTab,
+  onTabChange,
+}: ManagerDashboardProps = {}) {
+  const [internalTab, setInternalTab] = useState<ManagerTab>("overview");
+  const activeTab = controlledTab ?? internalTab;
+  const handleTabChange = (tab: ManagerTab) => {
+    if (onTabChange) {
+      onTabChange(tab);
+    } else {
+      setInternalTab(tab);
+    }
+  };
+  const { session } = useSession();
+
   const [voucherForm, setVoucherForm] = useState(emptyVoucher);
   const [vouchersList, setVouchersList] = useState<Voucher[]>([]);
   const [voucherSaving, setVoucherSaving] = useState(false);
@@ -123,50 +145,60 @@ export function ManagerDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          Tổng quan vận hành
-        </p>
-        <h1 className="text-4xl font-semibold">Bảng điều khiển Quản lý</h1>
+      <div className="space-y-4">
+        <div>
+          <BackButton to={session?.role === "ADMIN" ? "/admin" : "/"} label="Quay lại" />
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="rounded-xl bg-primary/10 p-3 text-primary">
+            <ShieldCheck className="h-7 w-7" />
+          </div>
+          <div className="flex flex-col">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Tổng quan vận hành
+            </p>
+            <h1 className="text-4xl font-semibold">Bảng điều khiển Quản lý</h1>
+          </div>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2 border-b pb-3">
         <Button
           variant={activeTab === "overview" ? "default" : "outline"}
-          onClick={() => setActiveTab("overview")}
+          onClick={() => handleTabChange("overview")}
         >
           Tổng quan
         </Button>
         <Button
           variant={activeTab === "permissions" ? "default" : "outline"}
-          onClick={() => setActiveTab("permissions")}
+          onClick={() => handleTabChange("permissions")}
         >
           <ShieldCheck className="mr-2 h-4 w-4" />
           Phân quyền người dùng
         </Button>
         <Button
           variant={activeTab === "vouchers" ? "default" : "outline"}
-          onClick={() => setActiveTab("vouchers")}
+          onClick={() => handleTabChange("vouchers")}
         >
           <TicketPercent className="mr-2 h-4 w-4" />
           Voucher nhà hàng
         </Button>
         <Button
           variant={activeTab === "loyalty" ? "default" : "outline"}
-          onClick={() => setActiveTab("loyalty")}
+          onClick={() => handleTabChange("loyalty")}
         >
           <Award className="mr-2 h-4 w-4" />
           Cấu hình tích điểm
         </Button>
         <Button
           variant={activeTab === "tables" ? "default" : "outline"}
-          onClick={() => setActiveTab("tables")}
+          onClick={() => handleTabChange("tables")}
         >
           <LayoutGrid className="mr-2 h-4 w-4" />
           Sơ đồ & Bàn ăn
         </Button>
         <Button
           variant={activeTab === "kitchen" ? "default" : "outline"}
-          onClick={() => setActiveTab("kitchen")}
+          onClick={() => handleTabChange("kitchen")}
         >
           <ChefHat className="mr-2 h-4 w-4" />
           Điều phối bếp
@@ -178,54 +210,42 @@ export function ManagerDashboard() {
         <KitchenKDS />
       )}
       {activeTab === "permissions" && (
-        <section className="surface-card space-y-4 p-5">
-          <h2 className="text-2xl font-medium">Phân quyền người dùng</h2>
-          <p className="text-sm text-muted-foreground">
-            Gán vai trò theo số điện thoại. Bản frontend hiện lưu trạng thái trong bộ nhớ trình
-            duyệt; cần API backend để lưu và áp dụng quyền thật.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left">
-                  <th className="py-2">Họ tên</th>
-                  <th>Số điện thoại</th>
-                  <th>Vai trò</th>
-                </tr>
-              </thead>
-              <tbody>
-                {userRoles.map((u) => (
-                  <tr key={u.phone} className="border-b last:border-0">
-                    <td className="py-3">{u.name}</td>
-                    <td>{u.phone}</td>
-                    <td>
-                      <select
-                        className="rounded-md border bg-background p-2"
-                        value={u.role}
-                        onChange={(e) =>
-                          setUserRoles((all) =>
-                            all.map((x) =>
-                              x.phone === u.phone ? { ...x, role: e.target.value as UserRole } : x,
-                            ),
-                          )
-                        }
-                      >
-                        {(["CUSTOMER", "STAFF", "CHEF", "MANAGER"] as UserRole[]).map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => handleTabChange("overview")}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về trang Tổng quan
+            </Button>
           </div>
+          {session ? (
+            <StaffManagement actor={session} title="Quản lý nhân sự & Phân quyền" />
+          ) : (
+            <div className="surface-card p-6 text-center text-sm text-muted-foreground">
+              Vui lòng đăng nhập để xem danh sách nhân sự.
+            </div>
+          )}
         </section>
       )}
       {activeTab === "vouchers" && (
         <section className="space-y-6">
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => handleTabChange("overview")}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về trang Tổng quan
+            </Button>
+          </div>
           <div className="surface-card space-y-4 p-5">
             <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
             <p className="text-sm text-muted-foreground">

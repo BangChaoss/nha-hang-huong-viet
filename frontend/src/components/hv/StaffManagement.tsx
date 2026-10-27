@@ -66,7 +66,15 @@ const DIALOG_CLASS =
 const ROLE_FILTERS: StaffRole[] = ["STAFF", "CHEF", "MANAGER", "ADMIN"];
 const STATUSES: UserStatus[] = ["ACTIVE", "INACTIVE", "LOCKED"];
 
-export function StaffManagement({ actor }: { actor: AuthSession }) {
+export function StaffManagement({
+  actor,
+  title = "Quản lý nhân sự",
+  subtitle = "Quản trị & Phân quyền",
+}: {
+  actor: AuthSession;
+  title?: string;
+  subtitle?: string;
+}) {
   const queryClient = useQueryClient();
   const [keywordInput, setKeywordInput] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -127,8 +135,8 @@ export function StaffManagement({ actor }: { actor: AuthSession }) {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Quản trị</p>
-          <h1 className="text-3xl font-semibold sm:text-4xl">Quản lý nhân sự</h1>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{subtitle}</p>
+          <h1 className="text-3xl font-semibold sm:text-4xl">{title}</h1>
         </div>
         {/* Scrolls sideways on phones instead of wrapping into several rows. */}
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
