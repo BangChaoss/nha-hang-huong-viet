@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
-  ArrowLeft,
   Banknote,
   Users,
   CheckCircle2,
@@ -211,18 +210,6 @@ export function ManagerDashboard({
       )}
       {activeTab === "permissions" && (
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => handleTabChange("overview")}
-              className="gap-1.5"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Về trang Tổng quan
-            </Button>
-          </div>
           {session ? (
             <StaffManagement actor={session} title="Quản lý nhân sự & Phân quyền" />
           ) : (
@@ -234,18 +221,6 @@ export function ManagerDashboard({
       )}
       {activeTab === "vouchers" && (
         <section className="space-y-6">
-          <div className="flex items-center justify-between">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => handleTabChange("overview")}
-              className="gap-1.5"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Về trang Tổng quan
-            </Button>
-          </div>
           <div className="surface-card space-y-4 p-5">
             <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
             <p className="text-sm text-muted-foreground">
