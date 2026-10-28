@@ -17,7 +17,6 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -237,15 +236,7 @@ export function StaffManagement({
             >
               {rows.map((u) => (
                 <li key={u.id} className="rounded-lg border bg-card p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <AccountIdentity user={u} isSelf={u.id === actor.id} />
-                    <StatusControl
-                      user={u}
-                      editable={canModify(actor, u)}
-                      pending={pendingId === u.id}
-                      onChange={(next) => statusMutation.mutate({ id: u.id, next })}
-                    />
-                  </div>
+                  <AccountIdentity user={u} isSelf={u.id === actor.id} />
                   <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                     <div>
                       <dt className="text-muted-foreground">Số điện thoại</dt>
@@ -329,12 +320,6 @@ export function StaffManagement({
                       <td>
                         <div className="flex items-center justify-end gap-3">
                           <StatusBadge status={u.status} />
-                          <StatusControl
-                            user={u}
-                            editable={canModify(actor, u)}
-                            pending={pendingId === u.id}
-                            onChange={(next) => statusMutation.mutate({ id: u.id, next })}
-                          />
                         </div>
                       </td>
                       <td>
@@ -480,27 +465,6 @@ function IdChip({ id }: { id: string }) {
     >
       {id.slice(0, 8)}
     </button>
-  );
-}
-
-function StatusControl({
-  user,
-  editable,
-  pending,
-  onChange,
-}: {
-  user: UserAccount;
-  editable: boolean;
-  pending: boolean;
-  onChange: (next: UserStatus) => void;
-}) {
-  return (
-    <Switch
-      checked={user.status === "ACTIVE"}
-      disabled={!editable || pending}
-      aria-label={`Kích hoạt ${user.username}`}
-      onCheckedChange={(on) => onChange(on ? "ACTIVE" : "INACTIVE")}
-    />
   );
 }
 
