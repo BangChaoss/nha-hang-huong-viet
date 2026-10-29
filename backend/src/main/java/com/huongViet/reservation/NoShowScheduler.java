@@ -3,6 +3,8 @@ package com.huongViet.reservation;
 import com.huongViet.auth.SystemUserInitializer;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableStatus;
+import com.huongViet.table.TableStatusMessage;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,13 +26,16 @@ public class NoShowScheduler {
     private final ReservationRepository reservationRepository;
     private final ReservationAuditRepository auditRepository;
     private final TableRepository tableRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public NoShowScheduler(ReservationRepository reservationRepository,
                            ReservationAuditRepository auditRepository,
-                           TableRepository tableRepository) {
+                           TableRepository tableRepository,
+                           SimpMessagingTemplate messagingTemplate) {
         this.reservationRepository = reservationRepository;
         this.auditRepository = auditRepository;
         this.tableRepository = tableRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /**
@@ -58,6 +63,14 @@ public class NoShowScheduler {
                         if (table.getStatus() == TableStatus.RESERVED) {
                             table.setStatus(TableStatus.AVAILABLE);
                             tableRepository.save(table);
+                            try {
+                                String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+                                messagingTemplate.convertAndSend("/topic/table-status",
+                                    new TableStatusMessage(table.getId(), table.getTableNumber(),
+                                        TableStatus.RESERVED, TableStatus.AVAILABLE, zoneName));
+                            } catch (Exception ex) {
+                                logger.warn("Không thể phát sự kiện giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
+                            }
                         }
                     });
             }
