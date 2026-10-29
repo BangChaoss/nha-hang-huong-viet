@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useKitchenTickets } from "@/features/order/hooks/use-kitchen-tickets";
 import { useUpdateTicketStatus } from "@/features/order/hooks/use-ticket-status";
+import { isUserManager, useSession } from "@/lib/auth-session";
 import type { CookingStatus, KitchenTicketResponse } from "@/features/order/types/order.types";
 
 const cols: { s: CookingStatus; title: string }[] = [
@@ -20,10 +21,14 @@ function elapsedMinutes(createdAt: string, now: number) {
   return Math.max(0, Math.floor((now - start) / 60000));
 }
 
-export function KitchenKDS() {
+export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
   const { data: tickets, isLoading, isError, error } = useKitchenTickets();
   const updateStatus = useUpdateTicketStatus();
+  const { session } = useSession();
   const [now, setNow] = useState(Date.now());
+
+  // Đầu bếp chỉ theo dõi phiếu: chỉ quản lý / quản trị viên mới được đổi trạng thái.
+  const canUpdateStatus = !readOnly && isUserManager(session?.role);
 
   useEffect(() => {
     const i = setInterval(() => setNow(Date.now()), 30000);
@@ -50,11 +55,19 @@ export function KitchenKDS() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          Màn hình bếp · FIFO
-        </p>
-        <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Màn hình bếp · FIFO
+          </p>
+          <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+          {!canUpdateStatus && (
+            <p className="mt-3 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+              Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do quản lý
+              hoặc quản trị viên thực hiện.
+            </p>
+          )}
+        </div>
       </div>
       {isError && (
         <p className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
@@ -120,7 +133,7 @@ export function KitchenKDS() {
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {t.note}
                           </p>
                         )}
-                        {(c.s === "QUEUED" || c.s === "PREPARING") && (
+                        {canUpdateStatus && (c.s === "QUEUED" || c.s === "PREPARING") && (
                           <Button
                             size="sm"
                             className={cn(

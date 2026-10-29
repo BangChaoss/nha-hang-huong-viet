@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { UtensilsCrossed } from "lucide-react";
-import { UserMenu } from "@/components/hv/UserMenu";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 import { CustomerPortal } from "@/components/hv/CustomerPortal";
 import { AccountMenu } from "@/components/hv/AccountMenu";

@@ -33,6 +33,13 @@ export type OrderResponse = {
   status: OrderStatus;
   createdAt: string;
   closedAt: string | null;
+  /**
+   * Tạm tính của đơn do backend tính: chỉ cộng các món **chưa huỷ**.
+   * Món đã huỷ (CANCELLED) không bao giờ vào hoá đơn (BR-41).
+   */
+  subtotal: number;
+  /** Phần tiền của các món đã huỷ — giữ lại để đối soát, không tính vào hoá đơn. */
+  cancelledAmount: number;
   items: OrderItemResponse[];
 };
 
@@ -53,6 +60,19 @@ export type KitchenTicketResponse = {
 /** Dòng món gửi lên khi tạo đơn. */
 export type OrderItemRequest = {
   menuItemId: string;
+  quantity: number;
+  note?: string | undefined;
+};
+
+/** Body của `POST /api/orders/{orderId}/items` (thêm món vào đơn đang mở). */
+export type AddOrderItemRequest = {
+  menuItemId: string;
+  quantity: number;
+  note?: string | undefined;
+};
+
+/** Body của `PATCH /api/orders/{orderId}/items/{itemId}` (sửa số lượng / ghi chú món). */
+export type UpdateOrderItemRequest = {
   quantity: number;
   note?: string | undefined;
 };

@@ -19,14 +19,17 @@ interface CancelBookingDialogProps {
   booking: ReservationResponse | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onConfirmCancel?: (booking: ReservationResponse, reason?: string) => Promise<void>;
 }
 
 export function CancelBookingDialog({
   booking,
   open,
   onOpenChange,
+  onConfirmCancel,
 }: CancelBookingDialogProps) {
   const [reason, setReason] = React.useState("");
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const cancelMutation = useCancelBooking();
 
   React.useEffect(() => {
@@ -43,16 +46,24 @@ export function CancelBookingDialog({
 
   const handleConfirmCancel = async () => {
     try {
-      await cancelMutation.mutateAsync({
-        id: booking.id,
-        reason: reason.trim() || undefined,
-        phone: booking.guestPhone,
-      });
+      const trimmedReason = reason.trim() || undefined;
+      setIsSubmitting(true);
+      if (onConfirmCancel) {
+        await onConfirmCancel(booking, trimmedReason);
+      } else {
+        await cancelMutation.mutateAsync({
+          id: booking.id,
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
+          phone: booking.guestPhone,
+        });
+      }
       toast.success(`Đã hủy đặt bàn HV-${code} thành công.`);
       onOpenChange(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Hủy đặt bàn thất bại.";
       toast.error(msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -99,10 +110,10 @@ export function CancelBookingDialog({
             variant="destructive"
             size="sm"
             onClick={() => void handleConfirmCancel()}
-            disabled={cancelMutation.isPending}
+            disabled={cancelMutation.isPending || isSubmitting}
             className="text-xs"
           >
-            {cancelMutation.isPending ? (
+            {cancelMutation.isPending || isSubmitting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
             ) : null}
             Xác nhận hủy đặt bàn

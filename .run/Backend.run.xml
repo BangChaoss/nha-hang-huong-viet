@@ -1,0 +1,20 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Backend" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="backend" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.huongViet.huongVietApplication" />
+    <option name="VM_PARAMETERS" value="-Dfile.encoding=UTF-8" />
+    <option name="PROGRAM_PARAMETERS" value="" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/backend" />
+    <option name="ENV_VARIABLES">
+      <map>
+        <entry key="DB_URL" value="jdbc:mysql://127.0.0.1:3306/huong_viet_restaurant?useUnicode=true&amp;characterEncoding=UTF-8&amp;serverTimezone=Asia/Ho_Chi_Minh" />
+        <entry key="DB_USERNAME" value="huongviet" />
+        <entry key="DB_PASSWORD" value="huongviet123" />
+        <entry key="CLOUDINARY_URL" value="cloudinary://819336383876664:fAsa2GTicPn_ZFqvj0LAji-GOCQ@db8sy6nay" />
+      </map>
+    </option>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

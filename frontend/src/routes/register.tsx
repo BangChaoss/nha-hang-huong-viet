@@ -78,6 +78,7 @@ function RegisterPage() {
         password: f.password,
       });
       toast.success(`Tạo tài khoản thành công. Chào mừng ${u.username}!`);
+      void navigate({ to: getHomeForRole(u.role), replace: true });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Đăng ký thất bại");
     } finally {

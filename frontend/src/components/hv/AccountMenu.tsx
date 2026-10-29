@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { LogIn, LogOut, UserRound, UsersRound } from "lucide-react";
+import { LayoutGrid, LogIn, LogOut, UserRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +9,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { authApi, ROLE_LABEL } from "@/lib/account-api";
-import { isUserManager, useSession } from "@/lib/auth-session";
+import { useSession } from "@/lib/auth-session";
+import { getHomeForRole } from "@/lib/role-routing";
 
 export function initials(name: string) {
   return name.trim().slice(0, 2).toUpperCase() || "HV";
@@ -33,6 +34,17 @@ export function AccountMenu() {
     );
   }
 
+  const workspaceLabel =
+    session.role === "ADMIN"
+      ? "Trung tâm quản trị IT"
+      : session.role === "MANAGER"
+      ? "Bảng điều khiển Quản lý"
+      : session.role === "STAFF"
+      ? "Khu vực Bán hàng & Thu ngân"
+      : session.role === "CHEF"
+      ? "Màn hình bếp"
+      : null;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex items-center gap-2 rounded-full border bg-card p-1 text-sm sm:pr-3 transition-colors hover:border-primary/40">
@@ -49,20 +61,20 @@ export function AccountMenu() {
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {workspaceLabel && (
+          <DropdownMenuItem asChild>
+            <Link to={getHomeForRole(session.role)}>
+              <LayoutGrid className="mr-2 h-4 w-4" />
+              {workspaceLabel}
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <Link to="/account">
             <UserRound className="mr-2 h-4 w-4" />
             Hồ sơ của tôi
           </Link>
         </DropdownMenuItem>
-        {isUserManager(session.role) && (
-          <DropdownMenuItem asChild>
-            <Link to="/users">
-              <UsersRound className="mr-2 h-4 w-4" />
-              Quản lý nhân sự
-            </Link>
-          </DropdownMenuItem>
-        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
