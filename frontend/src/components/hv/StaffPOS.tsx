@@ -173,9 +173,13 @@ export function StaffPOS() {
     const realTables = realTablesQuery.data ?? [];
     return realTables.map((realTable, index) => {
       const normalizedNumber = realTable.tableNumber.trim().toLocaleLowerCase("vi-VN");
-      const mock = mockTables.find(
-        (item) => item.name.trim().toLocaleLowerCase("vi-VN") === normalizedNumber,
-      );
+      const realDigits = normalizedNumber.replace(/\D/g, "");
+      const mock = mockTables.find((item) => {
+        const mockNorm = item.name.trim().toLocaleLowerCase("vi-VN");
+        if (mockNorm === normalizedNumber) return true;
+        const mockDigits = mockNorm.replace(/\D/g, "");
+        return Boolean(realDigits && mockDigits && Number(realDigits) === Number(mockDigits));
+      });
       const reservation = reservationsByTable.get(normalizedNumber);
       return {
         id: mock?.id ?? 100000 + index,
@@ -398,7 +402,14 @@ function OrderDialog({
     queryFn: () => tableApi.list(),
     staleTime: 15_000,
   });
-  const realTable = tablesQuery.data?.find((t) => t.tableNumber === table.name);
+  const realTable = tablesQuery.data?.find((t) => {
+    const tNum = t.tableNumber.trim().toLocaleLowerCase("vi-VN");
+    const mNum = table.name.trim().toLocaleLowerCase("vi-VN");
+    if (tNum === mNum) return true;
+    const tDigits = tNum.replace(/\D/g, "");
+    const mDigits = mNum.replace(/\D/g, "");
+    return Boolean(tDigits && mDigits && Number(tDigits) === Number(mDigits));
+  });
 
   const menuQuery = useQuery({
     queryKey: ["menu"],
@@ -838,7 +849,7 @@ function OrderDialog({
 
 const methods = ["Tiền mặt", "VNPAY"];
 
-function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
+export function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
   const { tables, completePayment } = useRestaurant();
   const queryClient = useQueryClient();
   const realTablesQuery = useQuery({
@@ -847,10 +858,15 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
     staleTime: 0,
     refetchInterval: 5000,
   });
+  const realTables = realTablesQuery.data ?? [];
   const mockTable = tables.find((item) => item.id === tableId);
-  const fallbackRealTable = tableId >= 100000
-    ? realTablesQuery.data?.[tableId - 100000]
-    : undefined;
+  const fallbackRealTable =
+    (tableId >= 100000 ? realTables[tableId - 100000] : undefined) ??
+    realTables.find((item) => {
+      if (item.id === String(tableId)) return true;
+      const num = item.tableNumber.replace(/\D/g, "");
+      return Boolean(num && Number(num) === tableId);
+    });
   const table: Table | undefined = mockTable ?? (fallbackRealTable ? {
     id: tableId,
     name: fallbackRealTable.tableNumber,
@@ -859,9 +875,15 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
     status: toMockStatus(fallbackRealTable.status),
     order: [],
   } : undefined);
-  const realTable = realTablesQuery.data?.find((item) =>
-    item.tableNumber.trim().toLocaleLowerCase("vi-VN") === table?.name.trim().toLocaleLowerCase("vi-VN")
-  );
+  const realTable = fallbackRealTable ?? realTables.find((item) => {
+    if (!table?.name) return false;
+    const nameA = item.tableNumber.trim().toLocaleLowerCase("vi-VN");
+    const nameB = table.name.trim().toLocaleLowerCase("vi-VN");
+    if (nameA === nameB) return true;
+    const digitsA = nameA.replace(/\D/g, "");
+    const digitsB = nameB.replace(/\D/g, "");
+    return Boolean(digitsA && digitsB && Number(digitsA) === Number(digitsB));
+  });
   const sentOrdersQuery = useQuery({
     queryKey: ["orders", "table", realTable?.id, "unpaid"],
     queryFn: () => orderApi.list({ tableId: realTable!.id, status: "IN_PROGRESS" }),
@@ -1145,6 +1167,7 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                 Number(settled.pointsAwarded),
                 0,
                 method,
+                table?.name ?? realTable.tableNumber,
               );
               await queryClient.invalidateQueries({ queryKey: ["tables"] });
               await queryClient.invalidateQueries({ queryKey: ["orders"] });
