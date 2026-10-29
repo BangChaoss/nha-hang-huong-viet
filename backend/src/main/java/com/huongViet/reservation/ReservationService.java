@@ -10,11 +10,13 @@ import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableResponse;
 import com.huongViet.table.TableStatus;
+import com.huongViet.table.TableStatusMessage;
 import com.huongViet.table.TableZone;
 import com.huongViet.table.ZoneRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -64,17 +66,20 @@ public class ReservationService {
     private final TableRepository tableRepository;
     private final ReservationAuditRepository reservationAuditRepository;
     private final ReservationEmailService emailService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ReservationService(ReservationRepository reservationRepository,
                               ZoneRepository zoneRepository,
                               TableRepository tableRepository,
                               ReservationAuditRepository reservationAuditRepository,
-                              ReservationEmailService emailService) {
+                              ReservationEmailService emailService,
+                              SimpMessagingTemplate messagingTemplate) {
         this.reservationRepository = reservationRepository;
         this.zoneRepository = zoneRepository;
         this.tableRepository = tableRepository;
         this.reservationAuditRepository = reservationAuditRepository;
         this.emailService = emailService;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /**
@@ -387,17 +392,15 @@ public class ReservationService {
                 }
             }
 
-            // BR-19: Mark table as RESERVED
-            table.setStatus(TableStatus.RESERVED);
-            tableRepository.save(table);
-
-            // If old table was different and RESERVED, release it back to AVAILABLE
+            // Chỉ ghi nhận bàn khi xác nhận. Bàn vẫn AVAILABLE cho tới đúng giờ đặt;
+            // ReservationTableStatusScheduler sẽ chuyển sang RESERVED khi đến giờ.
             if (oldTableId != null && !oldTableId.equals(targetTableId)) {
                 tableRepository.findByIdAndDeletedAtIsNull(oldTableId)
                     .ifPresent(prevTable -> {
                         if (prevTable.getStatus() == TableStatus.RESERVED) {
                             prevTable.setStatus(TableStatus.AVAILABLE);
                             tableRepository.save(prevTable);
+                            broadcastTableStatus(prevTable, TableStatus.RESERVED, TableStatus.AVAILABLE);
                         }
                     });
             }
@@ -418,8 +421,10 @@ public class ReservationService {
                         String.format("Bàn %s đang ở trạng thái %s, không thể check-in.",
                             table.getTableNumber(), table.getStatus()));
                 }
+                TableStatus previous = table.getStatus();
                 table.setStatus(TableStatus.OCCUPIED);
                 tableRepository.save(table);
+                broadcastTableStatus(table, previous, TableStatus.OCCUPIED);
             }
         }
 
@@ -431,6 +436,7 @@ public class ReservationService {
                         if (table.getStatus() == TableStatus.RESERVED) {
                             table.setStatus(TableStatus.AVAILABLE);
                             tableRepository.save(table);
+                            broadcastTableStatus(table, TableStatus.RESERVED, TableStatus.AVAILABLE);
                         }
                     });
             }
@@ -459,6 +465,16 @@ public class ReservationService {
         logger.info("Updated reservation {} status from {} to {} by {}", saved.getId(), oldStatus, newStatus, changedBy);
 
         return ReservationResponse.from(saved);
+    }
+
+    private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus) {
+        try {
+            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+            messagingTemplate.convertAndSend("/topic/table-status",
+                new TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, newStatus, zoneName));
+        } catch (Exception ex) {
+            logger.warn("Không thể phát sự kiện trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
+        }
     }
 
     /**

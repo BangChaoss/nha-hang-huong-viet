@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench } from "lucide-react";
+import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -9,6 +9,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -29,13 +39,23 @@ import {
 import { cn } from "@/lib/utils";
 import { validateVoucher } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
-import { tableApi, type TableStatus } from "@/lib/table-api";
+import { tableApi, type TableStatus, type TableResponse } from "@/lib/table-api";
+import { reservationApi } from "@/features/reservation/api/reservation-api";
+import type { ReservationResponse } from "@/features/reservation/types/reservation.types";
+import { useTableWebSocket } from "@/lib/use-table-websocket";
 import { menuApi } from "@/features/menu/api/menu-api";
 import { useActiveOrder } from "@/features/order/hooks/use-orders";
 import { useCreateOrder } from "@/features/order/hooks/use-create-order";
+import { BackButton } from "@/components/hv/BackButton";
 import { orderApi } from "@/features/order/api/order-api";
 import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
-import { COOKING_STATUS_LABELS } from "@/features/order/types/order.types";
+import {
+  useAddOrderItem,
+  useCancelOrderItem,
+  useUpdateOrderItem,
+} from "@/features/order/hooks/use-order-items";
+import { COOKING_STATUS_LABELS, type OrderItemResponse } from "@/features/order/types/order.types";
+import { splitBillItems } from "@/features/order/utils/bill";
 
 /** Một dòng món trong giỏ gọi món (chưa gửi xuống bếp). */
 type CartLine = { menuItemId: string; quantity: number; note: string };
@@ -74,90 +94,197 @@ export const tableStatusMeta: Record<MockTableStatus, { label: string; cls: stri
 
 const zones: Zone[] = ["Trong Nhà", "Sân Vườn", "Phòng VIP"];
 
+/**
+ * POS giữ nguyên bố cục và các dialog hiện có.
+ * Nguồn dữ liệu chính của danh sách bàn, trạng thái, sức chứa và đặt bàn là API backend.
+ * restaurant-store chỉ còn được dùng để tương thích với giỏ món cũ khi có bàn khớp tên.
+ */
+function toMockStatus(status: TableStatus): MockTableStatus {
+  switch (status) {
+    case "RESERVED": return "reserved";
+    case "OCCUPIED": return "occupied";
+    case "MAINTENANCE":
+    case "CLEANING": return "maintenance";
+    default: return "available";
+  }
+}
+
+function getZoneFromDatabase(table: TableResponse): Zone {
+  if (table.zoneIsVip) return "Phòng VIP";
+  const name = (table.zoneName ?? "").toLocaleLowerCase("vi-VN");
+  if (name.includes("sân") || name.includes("vườn") || name.includes("ngoài")) return "Sân Vườn";
+  return "Trong Nhà";
+}
+
+function localDateString(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 export function StaffPOS() {
-  const { tables, dish } = useRestaurant();
+  const { tables: mockTables, dish } = useRestaurant();
+  const queryClient = useQueryClient();
   const [active, setActive] = useState<number | null>(null);
   const [billing, setBilling] = useState<number | null>(null);
-  const table = tables.find((t) => t.id === active);
 
-  // Trạng thái bàn lấy từ hệ thống thật — lưới bàn và hộp thoại gọi món
-  // phải thống nhất, nếu không nhân viên sẽ thấy hai trạng thái khác nhau.
+  // Danh sách bàn và trạng thái luôn lấy từ database thông qua API hiện có.
   const realTablesQuery = useQuery({
     queryKey: ["tables"],
     queryFn: () => tableApi.list(),
-    staleTime: 15_000,
+    staleTime: 0,
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
   });
-  const realStatusByNumber = useMemo(() => {
-    const map = new Map<string, TableStatus>();
-    (realTablesQuery.data ?? []).forEach((t) => map.set(t.tableNumber, t.status));
-    return map;
-  }, [realTablesQuery.data]);
 
-  const counts = (s: MockTableStatus) => tables.filter((t) => t.status === s).length;
+  // Thông tin khách/giờ đặt lấy từ reservation API, không lấy từ dữ liệu mẫu.
+  const today = localDateString();
+  const reservationsQuery = useQuery({
+    queryKey: ["staff-pos-reservations", today],
+    queryFn: () => reservationApi.listByDate(today),
+    staleTime: 0,
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
+  });
+
+  // WebSocket giúp cập nhật gần thời gian thực; polling ở trên là đường dự phòng.
+  useTableWebSocket({
+    onTableStatusChange: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+    },
+    onFloorPlanChange: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
+  });
+
+  const reservationsByTable = useMemo(() => {
+    const result = new Map<string, ReservationResponse>();
+    for (const reservation of reservationsQuery.data ?? []) {
+      if (!reservation.tableNumber || !["CONFIRMED", "ARRIVED"].includes(reservation.status)) continue;
+      const key = reservation.tableNumber.trim().toLocaleLowerCase("vi-VN");
+      const current = result.get(key);
+      const candidateTime = `${reservation.reservationDate}T${reservation.reservationTime}`;
+      const currentTime = current ? `${current.reservationDate}T${current.reservationTime}` : "";
+      if (!current || candidateTime < currentTime) result.set(key, reservation);
+    }
+    return result;
+  }, [reservationsQuery.data]);
+
+  // Giữ ID cũ nếu có bàn khớp tên để không phá các dialog hiện hữu.
+  // Bàn chỉ tồn tại trong database được cấp ID giao diện riêng; API vẫn dùng realTable.id.
+  const displayTables: Table[] = useMemo(() => {
+    const realTables = realTablesQuery.data ?? [];
+    return realTables.map((realTable, index) => {
+      const normalizedNumber = realTable.tableNumber.trim().toLocaleLowerCase("vi-VN");
+      const mock = mockTables.find(
+        (item) => item.name.trim().toLocaleLowerCase("vi-VN") === normalizedNumber,
+      );
+      const reservation = reservationsByTable.get(normalizedNumber);
+      return {
+        id: mock?.id ?? 100000 + index,
+        name: realTable.tableNumber,
+        zone: getZoneFromDatabase(realTable),
+        seats: realTable.capacity,
+        status: toMockStatus(realTable.status),
+        guest: reservation?.guestName,
+        time: reservation?.reservationTime?.slice(0, 5),
+        phone: reservation?.guestPhone,
+        partySize: reservation?.partySize,
+        // Giữ giỏ cũ nếu bàn đã có trong store; không dùng store làm nguồn trạng thái.
+        order: mock?.order ?? [],
+      };
+    });
+  }, [realTablesQuery.data, mockTables, reservationsByTable]);
+
+  const table = displayTables.find((item) => item.id === active);
+  const realTables = realTablesQuery.data ?? [];
+  const realStatusByNumber = useMemo(() => {
+    const result = new Map<string, TableStatus>();
+    realTables.forEach((item) => result.set(item.tableNumber.trim().toLocaleLowerCase("vi-VN"), item.status));
+    return result;
+  }, [realTables]);
+  const counts = (status: MockTableStatus) => displayTables.filter((item) => item.status === status).length;
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="space-y-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
-          <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          <BackButton />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(tableStatusMeta) as MockTableStatus[]).map((s) => (
-            <span
-              key={s}
-              className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[s].cls)}
-            >
-              {tableStatusMeta[s].label} · {counts(s)}
-            </span>
-          ))}
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
+            <h1 className="text-4xl font-semibold">Phục vụ & Thu ngân</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(tableStatusMeta) as MockTableStatus[]).map((status) => (
+              <span
+                key={status}
+                className={cn("rounded-full px-3 py-1 text-xs font-medium", tableStatusMeta[status].cls)}
+              >
+                {tableStatusMeta[status].label} · {counts(status)}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
-      {zones.map((z) => (
-        <section key={z}>
-          <h2 className="mb-3 text-2xl font-medium text-moss">{z}</h2>
+      {realTablesQuery.isError && (
+        <p role="alert" className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
+          {realTablesQuery.error instanceof Error
+            ? realTablesQuery.error.message
+            : "Không tải được danh sách bàn từ cơ sở dữ liệu."}
+        </p>
+      )}
+      {realTablesQuery.isLoading && (
+        <p className="text-sm text-muted-foreground">Đang tải danh sách bàn từ cơ sở dữ liệu…</p>
+      )}
+      {reservationsQuery.isError && (
+        <p role="alert" className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
+          Không tải được thông tin đặt bàn từ cơ sở dữ liệu.
+        </p>
+      )}
+
+      {zones.map((zone) => (
+        <section key={zone}>
+          <h2 className="mb-3 text-2xl font-medium text-moss">{zone}</h2>
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
-            {tables
-              .filter((t) => t.zone === z)
-              .map((t) => {
-                const total = t.order.reduce((s, o) => s + (dish(o.dishId)?.price ?? 0) * o.qty, 0);
-                const realStatus = realStatusByNumber.get(t.name);
-                const isMaintenance = realStatus === "MAINTENANCE" || t.status === "maintenance";
-                const statusLabel = realStatus
-                  ? TABLE_STATUS_LABELS[realStatus]
-                  : tableStatusMeta[t.status].label;
+            {displayTables
+              .filter((item) => item.zone === zone)
+              .map((item) => {
+                const total = item.order.reduce((sum, order) => sum + (dish(order.dishId)?.price ?? 0) * order.qty, 0);
+                const normalizedNumber = item.name.trim().toLocaleLowerCase("vi-VN");
+                const realStatus = realStatusByNumber.get(normalizedNumber);
+                const reservation = reservationsByTable.get(normalizedNumber);
+                const isMaintenance = realStatus === "MAINTENANCE" || realStatus === "CLEANING";
+                const statusLabel = realStatus ? TABLE_STATUS_LABELS[realStatus] : tableStatusMeta[item.status].label;
                 const statusClass = realStatus
-                  ? (REAL_STATUS_CLASSES[realStatus] ?? tableStatusMeta[t.status].cls)
-                  : tableStatusMeta[t.status].cls;
+                  ? REAL_STATUS_CLASSES[realStatus]
+                  : tableStatusMeta[item.status].cls;
                 return (
                   <button
-                    key={t.id}
+                    key={item.id}
                     disabled={isMaintenance}
-                    onClick={() => setActive(t.id)}
+                    onClick={() => setActive(item.id)}
                     className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className="flex items-start justify-between">
-                      <span className="font-display text-2xl font-semibold">{t.name}</span>
+                      <span className="font-display text-2xl font-semibold">{item.name}</span>
                       {isMaintenance && <Wrench className="h-4 w-4 text-muted-foreground" />}
                     </div>
                     <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <Users className="h-3 w-3" /> {t.seats} ghế
+                      <Users className="h-3 w-3" /> {item.seats} ghế
                     </p>
-                    <span
-                      className={cn(
-                        "mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        statusClass,
-                      )}
-                    >
+                    <span className={cn("mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium", statusClass)}>
                       {statusLabel}
                     </span>
-                    {t.status === "reserved" && (
+                    {realStatus === "RESERVED" && reservation && (
                       <p className="mt-2 text-xs text-muted-foreground">
-                        {t.guest} · {t.time}
+                        <span className="block">{reservation.guestName} · {reservation.partySize} khách</span>
+                        <span className="block">{reservation.reservationTime.slice(0, 5)} · {reservation.guestPhone}</span>
                       </p>
                     )}
-                    {t.status === "occupied" && (
+                    {realStatus === "RESERVED" && !reservation && (
+                      <p className="mt-2 text-xs text-muted-foreground">Đã đặt trước</p>
+                    )}
+                    {item.status === "occupied" && (
                       <p className="mt-2 text-xs font-medium tabular-nums">{formatVND(total)}</p>
                     )}
                   </button>
@@ -168,7 +295,11 @@ export function StaffPOS() {
       ))}
 
       {table?.status === "reserved" && (
-        <ReservationDialog table={table} onClose={() => setActive(null)} />
+        <ReservationDialog
+          table={table}
+          reservation={reservationsByTable.get(table.name.trim().toLocaleLowerCase("vi-VN"))}
+          onClose={() => setActive(null)}
+        />
       )}
       {table && table.status !== "reserved" && (
         <OrderDialog
@@ -185,36 +316,64 @@ export function StaffPOS() {
   );
 }
 
-function ReservationDialog({ table, onClose }: { table: Table; onClose: () => void }) {
-  const { checkIn } = useRestaurant();
+function ReservationDialog({
+  table,
+  reservation,
+  onClose,
+}: {
+  table: Table;
+  reservation?: ReservationResponse;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const checkInMutation = useMutation({
+    mutationFn: async () => {
+      if (!reservation) throw new Error("Không tìm thấy thông tin đặt bàn trong cơ sở dữ liệu.");
+      const updated = await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
+      const databaseTables = await tableApi.list();
+      const realTable = databaseTables.find(
+        (item) => item.tableNumber.trim().toLocaleLowerCase("vi-VN") ===
+          (reservation.tableNumber ?? table.name).trim().toLocaleLowerCase("vi-VN"),
+      );
+      if (!realTable) throw new Error("Không tìm thấy bàn trong cơ sở dữ liệu để cập nhật check-in.");
+      if (realTable.status !== "OCCUPIED") await tableApi.updateStatus(realTable.id, "OCCUPIED");
+      return updated;
+    },
+    onSuccess: (updated) => {
+      toast.success(`Đã check-in ${updated.guestName} vào ${updated.tableNumber ?? table.name}`);
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+      onClose();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="font-display text-3xl">{table.name} · Đặt trước</DialogTitle>
           <DialogDescription>Thông tin đặt bàn của khách</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
-          <p className="font-display text-xl font-semibold">{table.guest}</p>
+          <p className="font-display text-xl font-semibold">{reservation?.guestName ?? "Chưa có thông tin khách"}</p>
           <p className="flex items-center gap-2">
-            <Clock className="h-4 w-4" /> {table.time} hôm nay
+            <Clock className="h-4 w-4" /> {reservation?.reservationTime?.slice(0, 5) ?? "--:--"} · {reservation?.reservationDate ?? "—"}
           </p>
           <p className="flex items-center gap-2">
-            <Users className="h-4 w-4" /> {table.partySize} khách
+            <Users className="h-4 w-4" /> {reservation?.partySize ?? "—"} khách
           </p>
           <p className="flex items-center gap-2">
-            <Phone className="h-4 w-4" /> {table.phone}
+            <Phone className="h-4 w-4" /> {reservation?.guestPhone ?? "Chưa có số điện thoại"}
           </p>
+          {reservation?.specialRequests && <p className="text-muted-foreground">Ghi chú: {reservation.specialRequests}</p>}
         </div>
         <Button
           className="w-full bg-primary hover:bg-primary-hover"
-          onClick={() => {
-            checkIn(table.id);
-            toast.success(`Đã check-in ${table.guest} vào ${table.name}`);
-            onClose();
-          }}
+          disabled={!reservation || reservation.status !== "CONFIRMED" || checkInMutation.isPending}
+          onClick={() => checkInMutation.mutate()}
         >
-          Xác nhận khách đến (Check-in)
+          {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in)"}
         </Button>
       </DialogContent>
     </Dialog>
@@ -251,6 +410,16 @@ function OrderDialog({
   const activeOrder = useActiveOrder(realTable?.id);
   const createOrder = useCreateOrder();
 
+  // Sửa / huỷ món trong đơn đang mở (STT 84, STT 85).
+  const addItem = useAddOrderItem();
+  const updateItem = useUpdateOrderItem();
+  const cancelItem = useCancelOrderItem();
+
+  // Ghi chú đang sửa của từng món (chỉ gửi API khi blur khỏi ô nhập).
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [cancelTarget, setCancelTarget] = useState<OrderItemResponse | null>(null);
+  const [cancelReason, setCancelReason] = useState("Khách đổi món");
+
   const updateTableStatus = useMutation({
     mutationFn: (payload: { id: string; status: TableStatus }) =>
       tableApi.updateStatus(payload.id, payload.status),
@@ -284,6 +453,66 @@ function OrderDialog({
   const dishName = (menuItemId: string) => dishes.find((d) => d.id === menuItemId)?.itemName ?? "";
   const isOccupied = realTable?.status === "OCCUPIED";
   const canSubmit = Boolean(realTable) && isOccupied && cart.length > 0 && !createOrder.isPending;
+
+  // Đơn đang mở của bàn — khi có đơn, chọn món sẽ thêm thẳng vào đơn (STT 84).
+  const orderId = activeOrder.data?.id;
+  const hasOpenOrder = Boolean(orderId);
+
+  /** Số lượng đang có trong đơn (bỏ qua món đã huỷ). */
+  const orderedQty = (menuItemId: string) =>
+    activeOrder.data?.items
+      .filter((i) => i.menuItemId === menuItemId && i.cookingStatus !== "CANCELLED")
+      .reduce((sum, i) => sum + i.quantity, 0) ?? 0;
+
+  /** Chọn món: có đơn đang mở thì thêm vào đơn, ngược lại cộng vào giỏ. */
+  const selectDish = (menuItemId: string) => {
+    if (orderId) {
+      addItem.mutate({ orderId, payload: { menuItemId, quantity: 1 } });
+      return;
+    }
+    change(menuItemId, 1);
+  };
+
+  /** Tăng/giảm số lượng của một món đã có trong đơn (không cho về 0 — phải huỷ món). */
+  const changeItemQty = (item: OrderItemResponse, delta: number) => {
+    if (!orderId) return;
+    const next = item.quantity + delta;
+    if (next < 1) return;
+    updateItem.mutate({
+      orderId,
+      itemId: item.id,
+      payload: { quantity: next, note: item.note ?? undefined },
+    });
+  };
+
+  /** Lưu ghi chú của món khi người dùng rời khỏi ô nhập. */
+  const saveItemNote = (item: OrderItemResponse) => {
+    if (!orderId) return;
+    const next = (notes[item.id] ?? item.note ?? "").trim();
+    if (next === (item.note ?? "").trim()) return;
+    updateItem.mutate({
+      orderId,
+      itemId: item.id,
+      payload: { quantity: item.quantity, note: next },
+    });
+  };
+
+  const openCancelDialog = (item: OrderItemResponse) => {
+    setCancelReason("Khách đổi món");
+    setCancelTarget(item);
+  };
+
+  /** Món đã nấu xong (READY/SERVED) hoặc đã huỷ thì không sửa/huỷ được (BR-39). */
+  const isLockedItem = (item: OrderItemResponse) =>
+    item.cookingStatus === "READY" ||
+    item.cookingStatus === "SERVED" ||
+    item.cookingStatus === "CANCELLED";
+
+  /**
+   * BR-41: chỉ món còn ở mục "Chờ chế biến" mới huỷ được — món đã được xác nhận
+   * đang nấu thì phải xử lý khi thanh toán.
+   */
+  const isCancellable = (item: OrderItemResponse) => item.cookingStatus === "QUEUED";
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -360,43 +589,46 @@ function OrderDialog({
                   : "Không tải được thực đơn."}
               </p>
             )}
-            {dishes.map((d) => (
-              <div
-                key={d.id}
-                className={cn(
-                  "flex items-center justify-between rounded-lg border p-3",
-                  !d.isAvailable && "opacity-50",
-                )}
-              >
-                <div>
-                  <p className="text-sm font-medium">{d.itemName}</p>
-                  <p className="text-xs tabular-nums text-muted-foreground">
-                    {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
-                  </p>
+            {dishes.map((d) => {
+              const shownQty = hasOpenOrder ? orderedQty(d.id) : qty(d.id);
+              return (
+                <div
+                  key={d.id}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border p-3",
+                    !d.isAvailable && "opacity-50",
+                  )}
+                >
+                  <div>
+                    <p className="text-sm font-medium">{d.itemName}</p>
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                      {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="h-7 w-7"
+                      disabled={!d.isAvailable || hasOpenOrder || qty(d.id) === 0}
+                      onClick={() => change(d.id, -1)}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="w-5 text-center text-sm tabular-nums">{shownQty}</span>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="h-7 w-7"
+                      disabled={!d.isAvailable || addItem.isPending}
+                      onClick={() => selectDish(d.id)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="h-7 w-7"
-                    disabled={!d.isAvailable || qty(d.id) === 0}
-                    onClick={() => change(d.id, -1)}
-                  >
-                    <Minus className="h-3 w-3" />
-                  </Button>
-                  <span className="w-5 text-center text-sm tabular-nums">{qty(d.id)}</span>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="h-7 w-7"
-                    disabled={!d.isAvailable}
-                    onClick={() => change(d.id, 1)}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="space-y-4">
             <div>
@@ -409,24 +641,96 @@ function OrderDialog({
               {activeOrder.data && activeOrder.data.items.length === 0 && (
                 <p className="text-sm text-muted-foreground">Chưa có món.</p>
               )}
-              {activeOrder.data?.items.map((item) => (
-                <div key={item.id} className="flex justify-between gap-3 border-b py-1.5 text-sm">
-                  <span>
-                    {item.quantity} × {item.itemName}
-                    {item.note && <span className="ml-2 text-xs text-alert">({item.note})</span>}
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {COOKING_STATUS_LABELS[item.cookingStatus]}
-                    </span>
-                  </span>
-                  <span className="shrink-0 tabular-nums">{formatVND(item.lineTotal)}</span>
-                </div>
-              ))}
+              {activeOrder.data?.items.map((item) => {
+                const locked = isLockedItem(item);
+                const cancelled = item.cookingStatus === "CANCELLED";
+                const cooked = item.cookingStatus === "READY" || item.cookingStatus === "SERVED";
+                const preparing = item.cookingStatus === "PREPARING";
+                return (
+                  <div key={item.id} className="border-b py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={cn(cancelled && "text-muted-foreground line-through")}>
+                        {item.quantity} × {item.itemName}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatVND(item.lineTotal)}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {COOKING_STATUS_LABELS[item.cookingStatus]}
+                      </span>
+                      {cooked && (
+                        <span className="text-xs text-muted-foreground">
+                          · Bếp đã nấu xong, không sửa/huỷ được
+                        </span>
+                      )}
+                      {preparing && (
+                        <span className="text-xs text-muted-foreground">
+                          · Đang nấu, không huỷ được nữa
+                        </span>
+                      )}
+                      {cancelled && item.cancelReason && (
+                        <span className="text-xs text-alert">Lý do: {item.cancelReason}</span>
+                      )}
+                    </div>
+                    {!locked && (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          disabled={item.quantity <= 1 || updateItem.isPending}
+                          onClick={() => changeItemQty(item, -1)}
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="w-5 text-center text-sm tabular-nums">
+                          {item.quantity}
+                        </span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-7 w-7"
+                          disabled={updateItem.isPending}
+                          onClick={() => changeItemQty(item, 1)}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                        <Input
+                          className="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="Ghi chú cho bếp"
+                          value={notes[item.id] ?? item.note ?? ""}
+                          onChange={(e) =>
+                            setNotes((cur) => ({ ...cur, [item.id]: e.target.value }))
+                          }
+                          onBlur={() => saveItemNote(item)}
+                        />
+                        {isCancellable(item) && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-alert hover:bg-alert/10 hover:text-alert"
+                            disabled={cancelItem.isPending}
+                            onClick={() => openCancelDialog(item)}
+                            aria-label="Huỷ món"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div>
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">
                 Món mới
               </p>
-              {cart.length === 0 ? (
+              {hasOpenOrder ? (
+                <p className="text-sm text-muted-foreground">
+                  Bàn đang có đơn mở. Chọn món ở bên trái để thêm thẳng vào đơn.
+                </p>
+              ) : cart.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
               ) : (
                 <div className="space-y-2">
@@ -446,33 +750,35 @@ function OrderDialog({
                 </div>
               )}
             </div>
-            <Button
-              className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
-              disabled={!canSubmit}
-              onClick={() => {
-                if (!realTable) return;
-                createOrder.mutate(
-                  {
-                    tableId: realTable.id,
-                    items: cart.map((line) => ({
-                      menuItemId: line.menuItemId,
-                      quantity: line.quantity,
-                      note: line.note.trim() || undefined,
-                    })),
-                    submit: true,
-                  },
-                  {
-                    onSuccess: () => {
-                      toast.success(`Đã gửi ${cart.length} món xuống bếp`);
-                      setCart([]);
+            {!hasOpenOrder && (
+              <Button
+                className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
+                disabled={!canSubmit}
+                onClick={() => {
+                  if (!realTable) return;
+                  createOrder.mutate(
+                    {
+                      tableId: realTable.id,
+                      items: cart.map((line) => ({
+                        menuItemId: line.menuItemId,
+                        quantity: line.quantity,
+                        note: line.note.trim() || undefined,
+                      })),
+                      submit: true,
                     },
-                    onError: (error: Error) => toast.error(error.message),
-                  },
-                );
-              }}
-            >
-              <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
-            </Button>
+                    {
+                      onSuccess: () => {
+                        toast.success(`Đã gửi ${cart.length} món xuống bếp`);
+                        setCart([]);
+                      },
+                      onError: (error: Error) => toast.error(error.message),
+                    },
+                  );
+                }}
+              >
+                <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
+              </Button>
+            )}
             <Button
               className="w-full bg-primary hover:bg-primary-hover"
               disabled={!activeOrder.data || activeOrder.data.items.length === 0}
@@ -482,6 +788,49 @@ function OrderDialog({
             </Button>
           </div>
         </div>
+
+        <AlertDialog
+          open={Boolean(cancelTarget)}
+          onOpenChange={(open) => {
+            if (!open) setCancelTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display text-2xl">Huỷ món</AlertDialogTitle>
+              <AlertDialogDescription>
+                Huỷ món {cancelTarget?.itemName} khỏi đơn? Bếp sẽ nhận được yêu cầu huỷ món này.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <Input
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Lý do huỷ món"
+            />
+            <AlertDialogFooter>
+              <AlertDialogCancel>Giữ món</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-alert text-white hover:bg-alert/90"
+                disabled={!cancelReason.trim() || cancelItem.isPending}
+                onClick={(e) => {
+                  // Giữ hộp thoại mở cho tới khi API trả về kết quả.
+                  e.preventDefault();
+                  if (!orderId || !cancelTarget) return;
+                  cancelItem.mutate(
+                    {
+                      orderId,
+                      itemId: cancelTarget.id,
+                      reason: cancelReason.trim(),
+                    },
+                    { onSuccess: () => setCancelTarget(null) },
+                  );
+                }}
+              >
+                Huỷ món
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
@@ -492,17 +841,34 @@ const methods = ["Tiền mặt", "VNPAY"];
 function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => void }) {
   const { tables, completePayment } = useRestaurant();
   const queryClient = useQueryClient();
-  const table = tables.find((t) => t.id === tableId)!;
-  const realTablesQuery = useQuery({ queryKey: ["tables"], queryFn: () => tableApi.list(), staleTime: 0 });
-  const realTable = realTablesQuery.data?.find((t) => t.tableNumber === table.name);
+  const realTablesQuery = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tableApi.list(),
+    staleTime: 0,
+    refetchInterval: 5000,
+  });
+  const mockTable = tables.find((item) => item.id === tableId);
+  const fallbackRealTable = tableId >= 100000
+    ? realTablesQuery.data?.[tableId - 100000]
+    : undefined;
+  const table: Table | undefined = mockTable ?? (fallbackRealTable ? {
+    id: tableId,
+    name: fallbackRealTable.tableNumber,
+    zone: getZoneFromDatabase(fallbackRealTable),
+    seats: fallbackRealTable.capacity,
+    status: toMockStatus(fallbackRealTable.status),
+    order: [],
+  } : undefined);
+  const realTable = realTablesQuery.data?.find((item) =>
+    item.tableNumber.trim().toLocaleLowerCase("vi-VN") === table?.name.trim().toLocaleLowerCase("vi-VN")
+  );
   const sentOrdersQuery = useQuery({
     queryKey: ["orders", "table", realTable?.id, "unpaid"],
     queryFn: () => orderApi.list({ tableId: realTable!.id, status: "IN_PROGRESS" }),
     enabled: Boolean(realTable?.id),
     staleTime: 0,
   });
-  const sentItems = (sentOrdersQuery.data ?? []).flatMap((order) => order.items)
-    .filter((item) => item.cookingStatus !== "CANCELLED");
+  const sentItems = (sentOrdersQuery.data ?? []).flatMap((order) => order.items);
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
@@ -514,7 +880,9 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
   const [voucherValidated, setVoucherValidated] = useState(false);
   const [voucherDiscount, setVoucherDiscount] = useState(0);
   // Hóa đơn chỉ lấy món đã được lưu và gửi bếp từ backend; không lấy giỏ nháp/local mock.
-  const subtotal = sentItems.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+  // BR-41: món đã huỷ vẫn hiển thị để đối soát nhưng không được tính tiền.
+  const bill = splitBillItems(sentItems);
+  const subtotal = bill.subtotal;
   const vat = subtotal * 0.1;
   // Chỉ áp dụng giảm giá sau khi backend đã xác nhận voucher hợp lệ.
   const discount = voucherValidated ? Math.min(voucherDiscount, subtotal + vat) : 0;
@@ -534,19 +902,33 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">Hoá đơn · {table.name}</DialogTitle>
+          <DialogTitle className="font-display text-3xl">Hoá đơn · {table?.name ?? "Bàn"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
-          {sentItems.map((item) => (
-            <Row
-              key={item.id}
-              l={`${item.quantity} × ${item.itemName ?? "Món ăn"}`}
-              v={formatVND(Number(item.lineTotal || 0))}
-            />
+          {bill.lines.map((line) => (
+            <Row key={line.key} l={line.label} v={formatVND(line.amount)} />
           ))}
-          {!realTable && <p className="text-sm text-alert">Không tìm thấy bàn trong dữ liệu hệ thống.</p>}
-          {realTable && sentOrdersQuery.isLoading && <p className="text-sm text-muted-foreground">Đang tải món đã gửi bếp…</p>}
-          {realTable && sentOrdersQuery.isSuccess && sentItems.length === 0 && <p className="text-sm text-alert">Bàn chưa có món nào đã gửi bếp để tính hóa đơn.</p>}
+          {bill.cancelled.length > 0 && (
+            <div className="pt-1">
+              <Row
+                l={`Món đã huỷ (${bill.cancelled.length}) — không tính tiền`}
+                v={`-${formatVND(bill.cancelledAmount)}`}
+                cls="text-muted-foreground line-through"
+              />
+              <p className="text-xs text-muted-foreground">
+                Món huỷ khi còn ở mục chờ chế biến được loại khỏi hoá đơn.
+              </p>
+            </div>
+          )}
+          {!realTable && (
+            <p className="text-sm text-alert">Không tìm thấy bàn trong dữ liệu hệ thống.</p>
+          )}
+          {realTable && sentOrdersQuery.isLoading && (
+            <p className="text-sm text-muted-foreground">Đang tải món đã gửi bếp…</p>
+          )}
+          {realTable && sentOrdersQuery.isSuccess && bill.lines.length === 0 && (
+            <p className="text-sm text-alert">Bàn chưa có món nào đã gửi bếp để tính hóa đơn.</p>
+          )}
         </div>
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />
@@ -692,7 +1074,13 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
         </div>
         <Button
           className="w-full bg-primary hover:bg-primary-hover"
-          disabled={voucherBusy || sentOrdersQuery.isLoading || !realTable || sentItems.length === 0 || (!!code.trim() && !voucherValidated)}
+          disabled={
+            voucherBusy ||
+            sentOrdersQuery.isLoading ||
+            !realTable ||
+            bill.lines.length === 0 ||
+            (!!code.trim() && !voucherValidated)
+          }
           onClick={async () => {
             if (method === "VNPAY") {
               if (redeem && (!phoneNumber.trim() || !loyaltyChecked)) {
@@ -733,12 +1121,14 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
               toast.error("Không tìm thấy bàn trong dữ liệu backend.");
               return;
             }
-            if (sentOrdersQuery.isLoading || sentItems.length === 0) {
+            if (sentOrdersQuery.isLoading || bill.lines.length === 0) {
               toast.error("Chưa tải được các món đã gửi bếp của bàn.");
               return;
             }
             if (code.trim() && (!phoneNumber.trim() || !voucherValidated)) {
-              toast.error("Vui lòng nhập số điện thoại và kiểm tra voucher hợp lệ trước khi thanh toán.");
+              toast.error(
+                "Vui lòng nhập số điện thoại và kiểm tra voucher hợp lệ trước khi thanh toán.",
+              );
               return;
             }
             setVoucherBusy(true);
@@ -749,13 +1139,23 @@ function BillingDialog({ tableId, onClose }: { tableId: number; onClose: () => v
                 usePoints: redeem,
               });
               // Backend đã chốt các order, cộng/trừ điểm và giải phóng bàn trong một transaction.
-              completePayment(table.id, Number(settled.total), Number(settled.pointsAwarded), 0, method);
+              completePayment(
+                table?.id ?? tableId,
+                Number(settled.total),
+                Number(settled.pointsAwarded),
+                0,
+                method,
+              );
               await queryClient.invalidateQueries({ queryKey: ["tables"] });
               await queryClient.invalidateQueries({ queryKey: ["orders"] });
-              toast.success(`Thanh toán ${formatVND(Number(settled.total))} thành công — ${table.name} đã trống. Điểm thưởng: ${formatVND(Number(settled.pointsAwarded))}`);
+              toast.success(
+                `Thanh toán ${formatVND(Number(settled.total))} thành công — ${table?.name ?? realTable.tableNumber} đã trống. Điểm thưởng: ${formatVND(Number(settled.pointsAwarded))}`,
+              );
               onClose();
             } catch (error) {
-              toast.error(error instanceof Error ? error.message : "Không thể hoàn tất thanh toán tiền mặt.");
+              toast.error(
+                error instanceof Error ? error.message : "Không thể hoàn tất thanh toán tiền mặt.",
+              );
             } finally {
               setVoucherBusy(false);
             }
