@@ -10,6 +10,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import com.huongViet.reservation.ReservationRepository;
 
 import java.util.Optional;
 
@@ -33,6 +34,9 @@ class TableServiceTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private ReservationRepository reservationRepository;
+
     private TableService tableService;
 
     private TableZone sampleZone;
@@ -44,6 +48,7 @@ class TableServiceTest {
             tableRepository,
             zoneRepository,
             floorPlanLayoutRepository,
+            reservationRepository,
             messagingTemplate
         );
 
