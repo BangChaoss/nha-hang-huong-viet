@@ -94,6 +94,7 @@ public class OrderService {
                 "Chỉ có thể gọi món cho bàn đang sử dụng. Vui lòng check-in khách trước khi gọi món.");
         }
 
+        // Kiểm tra toàn bộ món trước khi bắt đầu lưu đơn.
         List<MenuItem> menuItems = new ArrayList<>();
         for (OrderItemRequest itemRequest : request.items()) {
             MenuItem menuItem = menuItemRepository.findByIdAndDeletedAtIsNull(itemRequest.menuItemId())
@@ -127,6 +128,7 @@ public class OrderService {
             OrderItemRequest itemRequest = request.items().get(i);
             MenuItem menuItem = menuItems.get(i);
 
+            // Giữ giá tại thời điểm gọi món để lịch sử đơn không đổi theo giá thực đơn.
             OrderItem orderItem = new OrderItem(
                 UUID.randomUUID().toString(),
                 savedOrder.getId(),
@@ -283,6 +285,7 @@ public class OrderService {
                 .map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
             BigDecimal tax = itemSubtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+            // Chỉ hóa đơn đầu tiên giữ khoản giảm giá và điểm của lần thanh toán gộp.
             BigDecimal invoiceVoucherDiscount = first ? voucherDiscount : BigDecimal.ZERO;
             BigDecimal invoicePoints = first ? pointsRedeemed : BigDecimal.ZERO;
             BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePoints)
@@ -301,6 +304,7 @@ public class OrderService {
                 currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePoints),
                 tax, finalAmount, earned);
             for (OrderItem item : items) {
+                // Lưu tên món dạng snapshot để hóa đơn vẫn đọc được nếu món bị xóa sau này.
                 String dishName = item.getMenuItem() != null ? item.getMenuItem().getItemName() :
                     menuItemRepository.findById(item.getMenuItemId()).map(MenuItem::getItemName).orElse("Món đã xóa");
                 BigDecimal lineTotal = item.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()))

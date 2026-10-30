@@ -6,6 +6,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
+/** Repository truy vấn phiếu bếp. */
 @Repository
 public interface KitchenTicketRepository extends JpaRepository<KitchenTicket, String> {
 

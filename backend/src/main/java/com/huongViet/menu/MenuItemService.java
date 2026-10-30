@@ -104,6 +104,7 @@ public class MenuItemService {
     @Transactional
     public MenuItemResponse create(MenuItemRequest request) {
         Category category = validateCategory(request.categoryId());
+        // Chuẩn hóa tên trước khi kiểm tra trùng và lưu để tránh khác biệt do khoảng trắng.
         String trimmedName = request.itemName().trim();
 
         if (menuItemRepository.existsByItemNameIgnoreCaseAndDeletedAtIsNull(trimmedName)) {
@@ -176,6 +177,7 @@ public class MenuItemService {
             item.getId(), item.getItemName(), item.getIsAvailable());
 
         MenuItemResponse response = MenuItemResponse.from(item);
+        // Client cập nhật trạng thái món ngay mà không cần tải lại toàn bộ thực đơn.
         broadcastAvailability(item);
         return response;
     }
