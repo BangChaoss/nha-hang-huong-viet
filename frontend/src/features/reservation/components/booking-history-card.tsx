@@ -99,9 +99,7 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
         {booking.tableNumber && (
           <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-secondary/50 px-2.5 py-1 text-xs font-medium text-secondary-foreground">
             <Sparkles className="h-3.5 w-3.5 text-primary" />
-            <span>
-              Bàn số: <strong>{booking.tableNumber}</strong>
-            </span>
+            <span>{booking.tableNumber.startsWith("Bàn") || booking.tableNumber.includes("+") ? "" : "Bàn số: "}<strong>{booking.tableNumber}</strong></span>
           </div>
         )}
 
