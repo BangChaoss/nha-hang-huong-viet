@@ -207,5 +207,22 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         """)
     List<Reservation> findActiveReservationsForDate(@Param("date") LocalDate date);
 
+
+    /** Reservations that have reached their booking time and have an assigned table. */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        WHERE r.status = com.huongViet.reservation.ReservationStatus.CONFIRMED
+          AND r.reservationDate = :today
+          AND r.reservationTime <= :nowTime
+          AND r.tableId IS NOT NULL
+          AND r.deletedAt IS NULL
+        """)
+    List<Reservation> findConfirmedReservationsDueForTableReservation(
+        @Param("today") LocalDate today,
+        @Param("nowTime") LocalTime nowTime
+    );
+
     Optional<Reservation> findByIdAndDeletedAtIsNull(String id);
 }
