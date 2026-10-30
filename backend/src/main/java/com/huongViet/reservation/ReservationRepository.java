@@ -123,22 +123,6 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         @Param("status") ReservationStatus status
     );
 
-    /** Reservations that have reached their booking time and have an assigned table. */
-    @Query("""
-        SELECT r FROM Reservation r
-        LEFT JOIN FETCH r.table t
-        LEFT JOIN FETCH t.zone z
-        WHERE r.status = com.huongViet.reservation.ReservationStatus.CONFIRMED
-          AND r.reservationDate = :today
-          AND r.reservationTime <= :nowTime
-          AND r.tableId IS NOT NULL
-          AND r.deletedAt IS NULL
-        """)
-    List<Reservation> findConfirmedReservationsDueForTableReservation(
-        @Param("today") LocalDate today,
-        @Param("nowTime") LocalTime nowTime
-    );
-
     /**
      * UC13-E1: Find overdue confirmed reservations that exceeded grace period.
      */
@@ -183,6 +167,45 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
           AND r.deletedAt IS NULL
         """)
     Optional<Reservation> findActiveByIdWithTableAndZone(@Param("id") String id);
+
+    /**
+     * Finds active reservations overlapping with a specific table on a given date and time range.
+     * Matches both primary tableId and mergedTableIds.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        WHERE (r.tableId = :tableId OR r.mergedTableIds LIKE CONCAT('%', :tableId, '%'))
+          AND r.reservationDate = :date
+          AND r.reservationTime BETWEEN :startTime AND :endTime
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED
+          )
+          AND r.deletedAt IS NULL
+        """)
+    List<Reservation> findOverlappingReservationsForTable(
+        @Param("tableId") String tableId,
+        @Param("date") LocalDate date,
+        @Param("startTime") LocalTime startTime,
+        @Param("endTime") LocalTime endTime
+    );
+
+    /**
+     * Finds all confirmed or arrived reservations for a given date with table and zone eager-fetched.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.reservationDate = :date
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED
+          )
+          AND r.deletedAt IS NULL
+        """)
+    List<Reservation> findActiveReservationsForDate(@Param("date") LocalDate date);
 
     Optional<Reservation> findByIdAndDeletedAtIsNull(String id);
 }
