@@ -48,6 +48,7 @@ export type FloorPlanLayoutResponse = {
   tableNumber: string;
   capacity: number;
   status: TableStatus;
+  zoneId?: string | null;
   zoneName: string | null;
   zoneIsVip: boolean | null;
 };
