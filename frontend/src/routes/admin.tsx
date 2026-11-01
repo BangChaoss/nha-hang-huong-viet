@@ -61,7 +61,7 @@ function AdminPage() {
                   to="/"
                   className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"
                 >
-                  Trang khách hàng
+               
                 </Link>
                 <AccountMenu />
               </div>
