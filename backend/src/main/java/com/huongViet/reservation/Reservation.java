@@ -49,6 +49,9 @@ public class Reservation {
     @Column(name = "table_id", length = 36, columnDefinition = "CHAR(36)")
     private String tableId;
 
+    @Column(name = "merged_table_ids", length = 500)
+    private String mergedTableIds;
+
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "zone_id", length = 36, columnDefinition = "CHAR(36)")
     private String zoneId;
@@ -179,6 +182,9 @@ public class Reservation {
 
     public String getTableId() { return tableId; }
     public void setTableId(String tableId) { this.tableId = tableId; }
+
+    public String getMergedTableIds() { return mergedTableIds; }
+    public void setMergedTableIds(String mergedTableIds) { this.mergedTableIds = mergedTableIds; }
 
     public Integer getPartySize() { return partySize; }
     public void setPartySize(Integer partySize) { this.partySize = partySize; }

@@ -25,20 +25,50 @@ public record ReservationResponse(
     Boolean zoneIsVip,
     String tableId,
     String tableNumber,
+    String mergedTableIds,
     BigDecimal depositAmount,
     String cancellationReason,
     LocalDateTime createdAt
 ) {
+    // Backward-compatible constructor for existing tests
+    public ReservationResponse(
+        String id,
+        String guestName,
+        String guestPhone,
+        String guestEmail,
+        Integer partySize,
+        LocalDate reservationDate,
+        LocalTime reservationTime,
+        String specialRequests,
+        ReservationStatus status,
+        String zoneId,
+        String zoneName,
+        Boolean zoneIsVip,
+        String tableId,
+        String tableNumber,
+        BigDecimal depositAmount,
+        String cancellationReason,
+        LocalDateTime createdAt
+    ) {
+        this(id, guestName, guestPhone, guestEmail, partySize, reservationDate, reservationTime,
+             specialRequests, status, zoneId, zoneName, zoneIsVip, tableId, tableNumber, null,
+             depositAmount, cancellationReason, createdAt);
+    }
+
     public static ReservationResponse from(Reservation reservation) {
-        return from(reservation, null, null, null);
+        return from(reservation, null, null, null, null);
     }
 
     public static ReservationResponse from(Reservation reservation, String fallbackZoneId, String fallbackZoneName, Boolean fallbackZoneIsVip) {
+        return from(reservation, fallbackZoneId, fallbackZoneName, fallbackZoneIsVip, null);
+    }
+
+    public static ReservationResponse from(Reservation reservation, String fallbackZoneId, String fallbackZoneName, Boolean fallbackZoneIsVip, String customTableNumber) {
         String zoneId = reservation.getZoneId() != null ? reservation.getZoneId() : fallbackZoneId;
         String zoneName = fallbackZoneName;
         Boolean zoneIsVip = fallbackZoneIsVip;
-        String tableId = null;
-        String tableNumber = null;
+        String tableId = reservation.getTableId();
+        String tableNumber = customTableNumber;
 
         if (reservation.getZone() != null) {
             zoneId = reservation.getZone().getId();
@@ -48,8 +78,12 @@ public record ReservationResponse(
 
         RestaurantTable table = reservation.getTable();
         if (table != null) {
-            tableId = table.getId();
-            tableNumber = table.getTableNumber();
+            if (tableId == null) {
+                tableId = table.getId();
+            }
+            if (tableNumber == null) {
+                tableNumber = table.getTableNumber();
+            }
             if (table.getZone() != null) {
                 zoneId = table.getZoneId();
                 zoneName = table.getZone().getZoneName();
@@ -72,6 +106,7 @@ public record ReservationResponse(
             zoneIsVip,
             tableId,
             tableNumber,
+            reservation.getMergedTableIds(),
             reservation.getDepositAmount(),
             reservation.getCancellationReason(),
             reservation.getCreatedAt()
