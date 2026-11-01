@@ -22,8 +22,7 @@
 --   nhanvien     | NhanVien@12345  | STAFF    | /staff
 --   nhanvien2    | NhanVien@12345  | STAFF    | /staff
 --   dau_bep      | DauBep@12345    | CHEF     | /chef
---   khachhang    | KhachHang@12345 | CUSTOMER | /
---   khachvip     | KhachHang@12345 | CUSTOMER | /
+
 --
 -- ==============================================================================
 
