@@ -27,6 +27,34 @@ export function StaffBookingRow({
   const isPending = booking.status === "PENDING_HOLD";
   const isConfirmed = booking.status === "CONFIRMED";
 
+  const checkInTiming = React.useMemo(() => {
+    if (!booking.reservationDate || !booking.reservationTime) {
+      return { allowed: true, reason: null, diffMinutes: 0 };
+    }
+    const [hours, minutes] = booking.reservationTime.split(":").map(Number);
+    const bookingDate = new Date(booking.reservationDate);
+    bookingDate.setHours(hours ?? 0, minutes ?? 0, 0, 0);
+
+    const now = new Date();
+    const diffMinutes = (now.getTime() - bookingDate.getTime()) / (1000 * 60);
+
+    if (diffMinutes < -30) {
+      return {
+        allowed: false,
+        reason: "Chưa đến giờ check-in (trước tối đa 30p)",
+        diffMinutes,
+      };
+    }
+    if (diffMinutes > 30) {
+      return {
+        allowed: false,
+        reason: "Quá giờ nhận bàn (>30p)",
+        diffMinutes,
+      };
+    }
+    return { allowed: true, reason: null, diffMinutes };
+  }, [booking.reservationDate, booking.reservationTime]);
+
   return (
     <TableRow
       className={`transition-colors text-xs ${
@@ -130,30 +158,46 @@ export function StaffBookingRow({
           )}
 
           {isConfirmed && (
-            <>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                onClick={() => onCheckIn(booking)}
-                disabled={isActionPending}
-                className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
-              >
-                <UserCheck className="h-3.5 w-3.5 mr-1" />
-                Check-in
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => onCancel(booking)}
-                disabled={isActionPending}
-                className="h-7 text-xs text-destructive hover:bg-destructive/10"
-              >
-                <XCircle className="h-3.5 w-3.5 mr-1" />
-                Hủy
-              </Button>
-            </>
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center justify-end gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  onClick={() => onCheckIn(booking)}
+                  disabled={isActionPending || !checkInTiming.allowed}
+                  title={checkInTiming.reason ?? "Xác nhận khách nhận bàn"}
+                  className={`h-7 text-xs ${
+                    checkInTiming.allowed
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "opacity-50 cursor-not-allowed bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <UserCheck className="h-3.5 w-3.5 mr-1" />
+                  Check-in
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onCancel(booking)}
+                  disabled={isActionPending}
+                  className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Hủy
+                </Button>
+              </div>
+              {!checkInTiming.allowed && (
+                <span
+                  className={`text-[10px] font-medium ${
+                    checkInTiming.diffMinutes > 30 ? "text-destructive" : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {checkInTiming.reason}
+                </span>
+              )}
+            </div>
           )}
 
           {!isPending && !isConfirmed && (
