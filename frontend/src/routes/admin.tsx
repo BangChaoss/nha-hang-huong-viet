@@ -61,7 +61,7 @@ function AdminPage() {
                   to="/"
                   className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"
                 >
-                Trang khách hàng
+                  Trang khách hàng
                 </Link>
                 <AccountMenu />
               </div>
@@ -70,7 +70,11 @@ function AdminPage() {
           <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
             <div className="mb-8 space-y-4">
               <div>
-             
+                <BackButton to="/" label="Trang chủ" />
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="rounded-xl bg-primary/10 p-3 text-primary">
+                  <ShieldCheck className="h-7 w-7" />
                 </div>
                 <div>
                   <h1 className="text-3xl font-semibold">Trung tâm quản trị IT</h1>
