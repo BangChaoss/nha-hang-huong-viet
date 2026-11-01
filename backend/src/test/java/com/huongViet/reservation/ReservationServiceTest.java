@@ -44,6 +44,8 @@ class ReservationServiceTest {
 
     @Mock
     private ReservationEmailService emailService;
+    @Mock
+    private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     private ReservationService reservationService;
 
@@ -57,7 +59,8 @@ class ReservationServiceTest {
             zoneRepository,
             tableRepository,
             reservationAuditRepository,
-            emailService
+            emailService,
+            messagingTemplate
         );
 
         sampleZone = new TableZone("zone-1", "Tầng trệt trong nhà", false);

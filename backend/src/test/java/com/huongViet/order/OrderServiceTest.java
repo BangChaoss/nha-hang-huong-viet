@@ -57,6 +57,8 @@ class OrderServiceTest {
 
     @Mock
     private com.huongViet.voucher.VoucherService voucherService;
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private OrderService orderService;
 
@@ -76,7 +78,8 @@ class OrderServiceTest {
             messagingTemplate,
             loyaltyAccounts,
             loyaltySettings,
-            voucherService
+            voucherService,
+            jdbcTemplate
         );
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
