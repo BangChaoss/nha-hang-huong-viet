@@ -15,6 +15,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import com.huongViet.payment.LoyaltyAccountRepository;
+import com.huongViet.payment.LoyaltySettingsRepository;
+import com.huongViet.voucher.VoucherService;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -46,6 +49,15 @@ class OrderServiceTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private LoyaltyAccountRepository loyaltyAccounts;
+
+    @Mock
+    private LoyaltySettingsRepository loyaltySettings;
+
+    @Mock
+    private VoucherService voucherService;
+
     private OrderService orderService;
 
     private RestaurantTable occupiedTable;
@@ -60,7 +72,10 @@ class OrderServiceTest {
             kitchenTicketRepository,
             menuItemRepository,
             tableRepository,
-            messagingTemplate
+            messagingTemplate,
+            loyaltyAccounts,
+            loyaltySettings,
+            voucherService
         );
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
