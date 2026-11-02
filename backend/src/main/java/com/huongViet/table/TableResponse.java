@@ -10,12 +10,16 @@ public record TableResponse(
     Boolean zoneIsVip
 ) {
     public static TableResponse from(RestaurantTable table) {
+        return from(table, table.getStatus());
+    }
+
+    public static TableResponse from(RestaurantTable table, TableStatus dynamicStatus) {
         TableZone zone = table.getZone();
         return new TableResponse(
             table.getId(),
             table.getTableNumber(),
             table.getCapacity(),
-            table.getStatus(),
+            dynamicStatus != null ? dynamicStatus : table.getStatus(),
             table.getZoneId(),
             zone != null ? zone.getZoneName() : null,
             zone != null ? zone.getIsVip() : null

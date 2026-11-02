@@ -64,8 +64,10 @@ export const reservationApi = {
   guestLookup: (phone: string, code?: string): Promise<ReservationResponse[]> => {
     const params = new URLSearchParams({
       phone: phone.trim(),
-      ...(code?.trim() ? { code: code.trim() } : {}),
     });
+    if (code && code.trim()) {
+      params.append('code', code.trim());
+    }
     return request<ReservationResponse[]>(
       `/api/reservations/guest-lookup?${params.toString()}`,
     );

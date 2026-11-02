@@ -198,7 +198,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-200"
           >
             <PhoneCall className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="font-semibold">Quy định đoàn khách lớn</AlertTitle>
+            <AlertTitle className="font-semibold">Quy định đoàn khách lớn (BR-17)</AlertTitle>
             <AlertDescription className="text-xs mt-1 leading-relaxed">
               Đoàn trên 15 khách vui lòng liên hệ trực tiếp hotline <strong>1900 8888</strong> để
               được đặt tiệc (Event Booking) và nhận tư vấn thực đơn riêng biệt từ Quản lý nhà hàng.
@@ -311,13 +311,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
         </div>
       </section>
 
-      {/* THÔNG BÁO THỜI GIAN PHỤC VỤ TIÊU CHUẨN */}
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
-        <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-        <span className="leading-relaxed font-medium">
-          Thời gian phục vụ tiêu chuẩn cho bàn của quý khách là 2 tiếng kể từ giờ đặt. Trường hợp muốn ngồi lâu hơn, vui lòng liên hệ trước với nhà hàng.
-        </span>
-      </div>
+      
 
       {/* NÚT GỬI ĐƠN */}
       <div className="border-t pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
