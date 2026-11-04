@@ -179,6 +179,7 @@ public class OrderService {
     /**
      * Thanh toán tiền mặt cho tất cả đơn đã gửi bếp còn mở của một bàn.
      * Tổng tiền được tính hoàn toàn từ unit_price_snapshot trong DB, không tin tổng frontend.
+     * Món đã hủy không tính tiền; áp dụng voucher trước điểm và chỉ đóng đơn sau khi ghi hóa đơn.
      */
     @Transactional
     public CashCheckoutResponse checkoutCash(String tableId, CashCheckoutRequest request) {
@@ -189,6 +190,7 @@ public class OrderService {
         if (openOrders.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn chưa có món đã gửi bếp để thanh toán.");
         }
+        // Tính tiền từ snapshot trong DB và loại món đã hủy khỏi tổng thanh toán.
         BigDecimal subtotal = BigDecimal.ZERO;
         for (Order order : openOrders) {
             for (OrderItem item : orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId())) {
@@ -264,6 +266,7 @@ public class OrderService {
             order.setClosedAt(java.time.LocalDateTime.now());
             orderRepository.save(order);
         }
+        // Chỉ giải phóng bàn sau khi hóa đơn, voucher và điểm đã được xử lý thành công.
         table.setStatus(TableStatus.AVAILABLE);
         tableRepository.save(table);
         return new CashCheckoutResponse(tableId, subtotal, vat, discount, redeemed, total, awarded, table.getTableNumber());
@@ -279,6 +282,7 @@ public class OrderService {
         String voucherInvoiceId = null;
         boolean first = true;
         for (Order order : orders) {
+            // Hóa đơn chỉ lưu các món được tính tiền; món hủy vẫn được giữ trên đơn để đối soát.
             List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
                 .filter(i -> i.getCookingStatus() != CookingStatus.CANCELLED).toList();
             BigDecimal itemSubtotal = items.stream()
@@ -321,7 +325,7 @@ public class OrderService {
     }
 
     /**
-     * Danh sách đơn hàng, lọc theo bàn và/hoặc trạng thái.
+     * Tra cứu đơn hàng theo bàn và/hoặc trạng thái; thứ tự phụ thuộc bộ lọc được chọn.
      */
     public List<OrderResponse> listAll(String tableId, OrderStatus status) {
         List<Order> orders;
@@ -342,18 +346,14 @@ public class OrderService {
         return orders.stream().map(this::toResponse).toList();
     }
 
-    /**
-     * Chi tiết đơn hàng.
-     */
+    /** Lấy chi tiết đơn hàng cùng các dòng món theo thứ tự tạo. */
     public OrderResponse getById(String id) {
         Order order = orderRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
         return toResponse(order);
     }
 
-    /**
-     * Đơn hàng đang mở (IN_PROGRESS) gần nhất của một bàn.
-     */
+    /** Lấy đơn đang mở mới nhất của bàn để tiếp tục phục vụ. */
     public OrderResponse getActiveByTable(String tableId) {
         Order order = orderRepository
             .findFirstByTableIdAndStatusOrderByCreatedAtDesc(tableId, OrderStatus.IN_PROGRESS)

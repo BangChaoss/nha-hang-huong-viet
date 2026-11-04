@@ -78,6 +78,7 @@ public class MenuItemService {
     private Specification<MenuItem> buildSpecification(String categoryId, String q, Boolean available) {
         return (root, query, criteriaBuilder) -> {
             List<Predicate> predicates = new ArrayList<>();
+            // Món đã xóa mềm không xuất hiện trong tìm kiếm quản trị.
             predicates.add(criteriaBuilder.isNull(root.get("deletedAt")));
 
             if (categoryId != null && !categoryId.isBlank()) {
@@ -95,12 +96,17 @@ public class MenuItemService {
         };
     }
 
+    /** Lấy món chưa bị xóa và gắn danh mục để tạo response đầy đủ. */
     public MenuItemResponse getById(String id) {
         MenuItem item = findOrThrow(id);
         item.setCategory(resolveCategory(item.getCategoryId()));
         return MenuItemResponse.from(item);
     }
 
+    /**
+     * Tạo món trong danh mục đang hoạt động; tên được chuẩn hóa và phải duy nhất.
+     * Sau khi lưu, thông báo refresh giúp client tải lại thực đơn.
+     */
     @Transactional
     public MenuItemResponse create(MenuItemRequest request) {
         Category category = validateCategory(request.categoryId());
@@ -129,6 +135,10 @@ public class MenuItemService {
         return MenuItemResponse.from(saved);
     }
 
+    /**
+     * Cập nhật thông tin món, giữ nguyên trạng thái khả dụng nếu request bỏ trống.
+     * Ảnh cũ được dọn khi URL ảnh thay đổi.
+     */
     @Transactional
     public MenuItemResponse update(String id, MenuItemRequest request) {
         MenuItem item = findOrThrow(id);
@@ -183,7 +193,7 @@ public class MenuItemService {
     }
 
     /**
-     * BR-48: Chỉ xóa mền món ăn, không bao giờ xóa cứng.
+     * BR-48: chỉ xóa mềm món ăn để giữ nguyên tham chiếu từ đơn và hóa đơn cũ.
      */
     @Transactional
     public void delete(String id) {
