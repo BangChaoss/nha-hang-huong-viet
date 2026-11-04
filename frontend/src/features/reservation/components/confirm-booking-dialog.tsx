@@ -91,8 +91,8 @@ export function ConfirmBookingDialog({
           id: t.id,
           tableNumber: t.tableNumber,
           capacity: t.capacity,
-          zoneId: t.zoneId,
-          zoneName: t.zoneName,
+          zoneId: t.zoneId ?? null,
+          zoneName: t.zoneName ?? null,
         });
       }
     }
@@ -256,9 +256,9 @@ export function ConfirmBookingDialog({
         id: booking.id,
         payload: {
           status: "CONFIRMED",
-          tableId: selectedTableIds[0],
+          tableId: selectedTableIds[0]!,
           tableIds: selectedTableIds,
-          reason: notes.trim() || undefined,
+          ...(notes.trim() ? { reason: notes.trim() } : {}),
         },
       });
       toast.success(`Đã xác nhận thành công đơn đặt bàn HV-${code}`);

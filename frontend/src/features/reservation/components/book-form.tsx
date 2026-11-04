@@ -1,4 +1,4 @@
-﻿import * as React from "react";
+import * as React from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Utensils, Users, PhoneCall, AlertTriangle, Loader2, Clock } from "lucide-react";
@@ -109,7 +109,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
       <BookingConfirmation
         reservation={createdReservation}
         onReset={handleResetForm}
-        onViewHistory={onDone}
+        {...(onDone != null ? { onViewHistory: onDone } : {})}
       />
     );
   }
@@ -228,7 +228,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
           selectedTime={watchedTime}
           onSelectZone={(zoneId) => setValue("zoneId", zoneId, { shouldValidate: true })}
           onSelectTime={(time) => setValue("reservationTime", time, { shouldValidate: true })}
-          availabilityData={availabilityData}
+          {...(availabilityData != null ? { availabilityData } : {})}
           isLoading={isCheckingAvailability}
           partySize={watchedPartySize}
         />
