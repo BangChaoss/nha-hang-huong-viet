@@ -14,6 +14,7 @@ import com.huongViet.table.TableZone;
 import com.huongViet.table.ZoneRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import com.huongViet.table.TableStatusMessage;
@@ -82,6 +83,7 @@ public class ReservationService {
     private final ReservationEmailService emailService;
     private final SimpMessagingTemplate messagingTemplate;
 
+    @Autowired
     public ReservationService(ReservationRepository reservationRepository,
                               ZoneRepository zoneRepository,
                               TableRepository tableRepository,
@@ -655,3 +657,4 @@ public class ReservationService {
         return ReservationResponse.from(reservation, fallbackZoneId, fallbackZoneName, fallbackZoneIsVip, customTableNumber);
     }
 }
+
