@@ -57,6 +57,8 @@ class OrderServiceTest {
 
     @Mock
     private com.huongViet.voucher.VoucherService voucherService;
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Mock
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
