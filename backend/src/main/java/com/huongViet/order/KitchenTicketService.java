@@ -102,6 +102,7 @@ public class KitchenTicketService {
         publishTicketEvent(new KitchenTicketEvent("UPDATED", KitchenTicketResponse.from(savedTicket)));
 
         if (newStatus == CookingStatus.READY || newStatus == CookingStatus.SERVED) {
+            // Báo cho nhân viên phục vụ khi món sẵn sàng hoặc đã được giao.
             publishCompletedMessage(buildCompletedMessage(savedTicket, newStatus));
         }
 

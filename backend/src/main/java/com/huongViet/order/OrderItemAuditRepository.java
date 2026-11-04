@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
+/** Repository truy vấn lịch sử thay đổi món trong đơn. */
 @Repository
 public interface OrderItemAuditRepository extends JpaRepository<OrderItemAudit, String> {
 
