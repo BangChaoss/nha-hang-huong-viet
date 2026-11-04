@@ -9,6 +9,7 @@ export type AuthSession = {
   username: string;
   email: string;
   role: AppRole;
+  phoneNumber?: string;
 };
 
 const STORAGE_KEY = "hv.session";

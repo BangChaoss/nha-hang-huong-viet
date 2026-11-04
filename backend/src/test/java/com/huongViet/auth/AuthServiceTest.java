@@ -57,6 +57,7 @@ class AuthServiceTest {
         assertEquals("newuser", resp.username());
         assertEquals("new@example.com", resp.email());
         assertEquals("CUSTOMER", resp.role());
+        assertEquals("0912345678", resp.phoneNumber());
         verify(userRepository).save(any(User.class));
     }
 
@@ -86,6 +87,7 @@ class AuthServiceTest {
         assertNotNull(resp);
         assertEquals("jwt-login-token", resp.token());
         assertEquals("testuser", resp.username());
+        assertEquals("0912345678", resp.phoneNumber());
     }
 
     @Test
