@@ -1,8 +1,10 @@
 import * as React from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { Utensils, Users, PhoneCall, AlertTriangle, Loader2, Clock } from "lucide-react";
 import { useSession } from "@/lib/auth-session";
+import { profileApi } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +28,13 @@ interface BookFormProps {
 
 export function BookForm({ onDone, initialValues }: BookFormProps) {
   const { session } = useSession();
+  const profileQuery = useQuery({
+    queryKey: ["account", "profile"],
+    queryFn: profileApi.get,
+    enabled: Boolean(session?.token),
+  });
+  const userPhone = session?.phoneNumber || profileQuery.data?.phoneNumber || "";
+
   const [createdReservation, setCreatedReservation] = React.useState<ReservationResponse | null>(
     null,
   );
@@ -34,7 +43,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     resolver: zodResolver(createReservationSchema),
     defaultValues: {
       guestName: initialValues?.guestName ?? session?.username ?? "",
-      guestPhone: initialValues?.guestPhone ?? "",
+      guestPhone: initialValues?.guestPhone ?? userPhone ?? "",
       guestEmail: initialValues?.guestEmail ?? session?.email ?? "",
       reservationDate: initialValues?.reservationDate ?? "",
       reservationTime: initialValues?.reservationTime ?? "",
@@ -51,9 +60,16 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     control,
     watch,
     setValue,
+    getValues,
     reset,
     formState: { errors },
   } = form;
+
+  React.useEffect(() => {
+    if (userPhone && !getValues("guestPhone")) {
+      setValue("guestPhone", userPhone, { shouldValidate: false });
+    }
+  }, [userPhone, getValues, setValue]);
 
   const watchedDate = watch("reservationDate");
   const watchedPartySize = watch("partySize");
@@ -93,7 +109,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     setCreatedReservation(null);
     reset({
       guestName: session?.username ?? "",
-      guestPhone: "",
+      guestPhone: userPhone || "",
       guestEmail: session?.email ?? "",
       reservationDate: "",
       reservationTime: "",
@@ -269,7 +285,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             </Label>
             <Input
               id="guestPhone"
-              placeholder="0912345678 hoặc +84..."
+              placeholder={userPhone || "0912345678 hoặc +84..."}
               {...register("guestPhone")}
             />
             {errors.guestPhone && (
@@ -294,7 +310,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
           {/* Yêu cầu đặc biệt */}
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="specialRequests">
-              Yêu cầu đặc biệt (Ăn kiêng, dị ứng, ghế trẻ em, sinh nhật...)
+              Yêu cầu đặc biệt (Bàn gần cửa, ghế trẻ em, sinh nhật...)
             </Label>
             <Textarea
               id="specialRequests"
