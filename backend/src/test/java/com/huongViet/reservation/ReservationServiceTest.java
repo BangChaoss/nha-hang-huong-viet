@@ -1,5 +1,6 @@
 package com.huongViet.reservation;
 
+import com.huongViet.reservation.dto.CancelReservationRequest;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
 import com.huongViet.reservation.dto.UpdateReservationStatusRequest;
@@ -490,6 +491,7 @@ class ReservationServiceTest {
         assertEquals(ReservationStatus.CONFIRMED, response.status());
         assertEquals("tbl-1,tbl-2", response.mergedTableIds());
         assertEquals("Bàn 01 + Bàn 02", response.tableNumber());
+        verify(emailService, times(1)).sendBookingApprovedEmail(any(Reservation.class), eq("Bàn 01 + Bàn 02"), any());
     }
 
     @Test
@@ -603,5 +605,63 @@ class ReservationServiceTest {
         );
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
         assertTrue(ex.getReason().contains("dư thừa"));
+    }
+
+    @Test
+    @DisplayName("20. updateStatus_cancelBooking_triggersCancelledEmail - Staff hủy đơn gửi email kèm lý do")
+    void updateStatus_cancelBooking_triggersCancelledEmail() {
+        Reservation reservation = new Reservation(
+            "res-cancel", null, "Khách đặt bàn", "0911223344", "khach@example.com", 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-cancel"))
+            .thenReturn(Optional.of(reservation));
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateReservationStatusRequest cancelReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CANCELLED, null, null, "Hết bàn phục vụ vào khung giờ này"
+        );
+
+        ReservationResponse response = reservationService.updateStatus("res-cancel", cancelReq, "staff-1");
+        assertNotNull(response);
+        assertEquals(ReservationStatus.CANCELLED, response.status());
+        assertEquals("Hết bàn phục vụ vào khung giờ này", response.cancellationReason());
+
+        verify(emailService, times(1)).sendBookingCancelledEmail(
+            any(Reservation.class),
+            eq("Hết bàn phục vụ vào khung giờ này"),
+            any()
+        );
+    }
+
+    @Test
+    @DisplayName("21. cancelByCustomer_triggersCancelledEmail - Khách tự hủy đơn gửi email kèm lý do")
+    void cancelByCustomer_triggersCancelledEmail() {
+        Reservation reservation = new Reservation(
+            "res-self-cancel", "cust-1", "Khách tự hủy", "0909998877", "cust@example.com", 2,
+            LocalDate.now().plusDays(2), LocalTime.of(19, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-self-cancel"))
+            .thenReturn(Optional.of(reservation));
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        CancelReservationRequest req = new CancelReservationRequest("Tôi có việc bận gia đình", "0909998877");
+
+        ReservationResponse response = reservationService.cancelByCustomer("res-self-cancel", "cust-1", req);
+        assertNotNull(response);
+        assertEquals(ReservationStatus.CANCELLED, response.status());
+        assertEquals("Tôi có việc bận gia đình", response.cancellationReason());
+
+        verify(emailService, times(1)).sendBookingCancelledEmail(
+            any(Reservation.class),
+            eq("Tôi có việc bận gia đình"),
+            any()
+        );
     }
 }
