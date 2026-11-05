@@ -65,7 +65,7 @@ public class TableService {
      * Dynamically calculates time-scoped table status based on active reservation window.
      */
     public TableStatus calculateDynamicStatus(RestaurantTable table, List<Reservation> todayReservations, LocalTime nowTime) {
-        if (table.getStatus() == TableStatus.MAINTENANCE || table.getStatus() == TableStatus.CLEANING) {
+        if (table.getStatus() != TableStatus.AVAILABLE) {
             return table.getStatus();
         }
 

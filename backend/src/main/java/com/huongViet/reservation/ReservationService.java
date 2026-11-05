@@ -500,6 +500,23 @@ public class ReservationService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Đã quá thời gian nhận bàn cho phép check-in (tối đa 30 phút sau giờ hẹn).");
             }
+
+            // Chuyển trạng thái bàn sang OCCUPIED khi khách check-in
+            List<String> targetTableIds = new ArrayList<>();
+            if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+                targetTableIds.addAll(Arrays.stream(reservation.getMergedTableIds().split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).toList());
+            } else if (reservation.getTableId() != null) {
+                targetTableIds.add(reservation.getTableId());
+            }
+            for (String tId : targetTableIds) {
+                tableRepository.findByIdAndDeletedAtIsNull(tId).ifPresent(t -> {
+                    TableStatus oldTStatus = t.getStatus();
+                    t.setStatus(TableStatus.OCCUPIED);
+                    tableRepository.save(t);
+                    broadcastTableStatus(t, oldTStatus, TableStatus.OCCUPIED);
+                });
+            }
         }
 
         if (request.reason() != null && !request.reason().isBlank()) {

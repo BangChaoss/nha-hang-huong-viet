@@ -178,7 +178,7 @@ export const tableApi = {
       body: JSON.stringify(payload),
     }),
   updateStatus: (id: string, status: TableStatus) =>
-    request<TableResponse>(`/api/admin/tables/${id}/status`, {
+    request<TableResponse>(`/api/tables/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
