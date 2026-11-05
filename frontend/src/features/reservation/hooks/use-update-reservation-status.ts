@@ -11,6 +11,8 @@ export function useUpdateReservationStatus() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
     },
   });
 }

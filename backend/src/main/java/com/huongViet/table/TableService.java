@@ -1,5 +1,9 @@
 package com.huongViet.table;
 
+import com.huongViet.reservation.Reservation;
+import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationService;
+import com.huongViet.reservation.ReservationStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -8,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,27 +27,75 @@ public class TableService {
     private final TableRepository tableRepository;
     private final ZoneRepository zoneRepository;
     private final FloorPlanLayoutRepository floorPlanLayoutRepository;
+    private final ReservationRepository reservationRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     public TableService(TableRepository tableRepository,
                         ZoneRepository zoneRepository,
                         FloorPlanLayoutRepository floorPlanLayoutRepository,
+                        ReservationRepository reservationRepository,
                         SimpMessagingTemplate messagingTemplate) {
         this.tableRepository = tableRepository;
         this.zoneRepository = zoneRepository;
         this.floorPlanLayoutRepository = floorPlanLayoutRepository;
+        this.reservationRepository = reservationRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
     public List<TableResponse> listAll() {
+        LocalDate today = LocalDate.now();
+        LocalTime nowTime = LocalTime.now();
+        List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
+
         return tableRepository.findAllActiveWithZone()
             .stream()
-            .map(TableResponse::from)
+            .map(table -> TableResponse.from(table, calculateDynamicStatus(table, todayReservations, nowTime)))
             .toList();
     }
 
     public TableResponse getById(String id) {
-        return TableResponse.from(findActiveWithZoneOrThrow(id));
+        RestaurantTable table = findActiveWithZoneOrThrow(id);
+        LocalDate today = LocalDate.now();
+        LocalTime nowTime = LocalTime.now();
+        List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
+        return TableResponse.from(table, calculateDynamicStatus(table, todayReservations, nowTime));
+    }
+
+    /**
+     * Dynamically calculates time-scoped table status based on active reservation window.
+     */
+    public TableStatus calculateDynamicStatus(RestaurantTable table, List<Reservation> todayReservations, LocalTime nowTime) {
+        if (table.getStatus() != TableStatus.AVAILABLE) {
+            return table.getStatus();
+        }
+
+        if (todayReservations == null || todayReservations.isEmpty()) {
+            return TableStatus.AVAILABLE;
+        }
+
+        for (Reservation r : todayReservations) {
+            boolean matchesTable = (table.getId().equals(r.getTableId()))
+                || (r.getMergedTableIds() != null && r.getMergedTableIds().contains(table.getId()));
+
+            if (!matchesTable) {
+                continue;
+            }
+
+            LocalTime bookingTime = r.getReservationTime();
+            LocalTime windowEnd = bookingTime.plus(ReservationService.DINING_WINDOW);
+
+            if (r.getStatus() == ReservationStatus.ARRIVED) {
+                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
+                    return TableStatus.OCCUPIED;
+                }
+            } else if (r.getStatus() == ReservationStatus.CONFIRMED) {
+                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
+                    return TableStatus.RESERVED;
+                }
+            }
+        }
+
+        return TableStatus.AVAILABLE;
     }
 
     /**
@@ -82,7 +136,7 @@ public class TableService {
 
         logger.info("Created table: id={}, tableNumber={}, zone={}", saved.getId(), saved.getTableNumber(), zone.getZoneName());
 
-        TableResponse response = TableResponse.from(saved);
+        TableResponse response = TableResponse.from(saved, TableStatus.AVAILABLE);
         broadcastStatusChange(saved, null, saved.getStatus());
         return response;
     }
@@ -109,8 +163,9 @@ public class TableService {
         table.setTableNumber(trimmedNumber);
         table.setCapacity(request.capacity());
 
-        logger.info("Updated table: id={}, tableNumber={}, capacity={}", table.getId(), table.getTableNumber(), table.getCapacity());
-        return TableResponse.from(table);
+        RestaurantTable saved = tableRepository.save(table);
+        logger.info("Updated table: id={}, tableNumber={}, capacity={}", saved.getId(), saved.getTableNumber(), saved.getCapacity());
+        return TableResponse.from(saved);
     }
 
     /**
@@ -123,6 +178,7 @@ public class TableService {
         checkActiveProtection(table, "xóa");
 
         table.setDeletedAt(LocalDateTime.now());
+        tableRepository.save(table);
         floorPlanLayoutRepository.deleteByTableId(id);
         logger.info("Soft-deleted table: id={}, tableNumber={}", id, table.getTableNumber());
     }
@@ -136,12 +192,16 @@ public class TableService {
         RestaurantTable table = findActiveWithZoneOrThrow(id);
         TableStatus oldStatus = table.getStatus();
         table.setStatus(request.status());
+        RestaurantTable saved = tableRepository.save(table);
+        if (saved == null) {
+            saved = table;
+        }
 
         logger.info("Table status updated: id={}, tableNumber={}, old={}, new={}",
-            table.getId(), table.getTableNumber(), oldStatus, request.status());
+            saved.getId(), saved.getTableNumber(), oldStatus, request.status());
 
-        TableResponse response = TableResponse.from(table);
-        broadcastStatusChange(table, oldStatus, request.status());
+        TableResponse response = TableResponse.from(saved, request.status());
+        broadcastStatusChange(saved, oldStatus, request.status());
         return response;
     }
 
@@ -156,12 +216,23 @@ public class TableService {
     }
 
     private void checkActiveProtection(RestaurantTable table, String action) {
-        if (table.getStatus() == TableStatus.RESERVED || table.getStatus() == TableStatus.OCCUPIED) {
+        LocalDate today = LocalDate.now();
+        LocalTime nowTime = LocalTime.now();
+        List<Reservation> todayReservations = (reservationRepository != null)
+            ? reservationRepository.findActiveReservationsForDate(today)
+            : List.of();
+        TableStatus currentStatus = calculateDynamicStatus(table, todayReservations, nowTime);
+        TableStatus baseStatus = table.getStatus();
+
+        if (baseStatus == TableStatus.RESERVED || baseStatus == TableStatus.OCCUPIED
+            || currentStatus == TableStatus.RESERVED || currentStatus == TableStatus.OCCUPIED) {
+            TableStatus conflictStatus = (currentStatus == TableStatus.RESERVED || currentStatus == TableStatus.OCCUPIED)
+                ? currentStatus : baseStatus;
             logger.warn("BR-56 violation blocked: attempt to {} table {} in status {}",
-                action, table.getTableNumber(), table.getStatus());
+                action, table.getTableNumber(), conflictStatus);
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
-                "Không thể " + action + " bàn đang được sử dụng hoặc đã đặt trước (" + table.getStatus() + ")."
+                "Không thể " + action + " bàn đang được sử dụng hoặc đã đặt trước (" + conflictStatus + ")."
             );
         }
     }

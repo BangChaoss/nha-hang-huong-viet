@@ -265,9 +265,8 @@ export function StaffPOS() {
                 return (
                   <button
                     key={item.id}
-                    disabled={isMaintenance}
                     onClick={() => setActive(item.id)}
-                    className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="surface-card group p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40"
                   >
                     <div className="flex items-start justify-between">
                       <span className="font-display text-2xl font-semibold">{item.name}</span>
@@ -330,6 +329,34 @@ function ReservationDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const tablesQuery = useQuery({
+    queryKey: ["tables"],
+    queryFn: () => tableApi.list(),
+    staleTime: 15_000,
+  });
+  const realTable = tablesQuery.data?.find((t) => {
+    const tNum = t.tableNumber.trim().toLocaleLowerCase("vi-VN");
+    const mNum = table.name.trim().toLocaleLowerCase("vi-VN");
+    if (tNum === mNum) return true;
+    const tDigits = tNum.replace(/\D/g, "");
+    const mDigits = mNum.replace(/\D/g, "");
+    return Boolean(tDigits && mDigits && Number(tDigits) === Number(mDigits));
+  });
+
+  const changeStatusMutation = useMutation({
+    mutationFn: (payload: { id: string; status: TableStatus }) =>
+      tableApi.updateStatus(payload.id, payload.status),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<TableResponse[]>(["tables"], (old) => {
+        if (!old) return old;
+        return old.map((t) => (t.id === updated.id ? { ...t, status: updated.status } : t));
+      });
+      toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      onClose();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const checkInMutation = useMutation({
     mutationFn: async () => {
       if (!reservation) throw new Error("Không tìm thấy thông tin đặt bàn trong cơ sở dữ liệu.");
@@ -379,6 +406,30 @@ function ReservationDialog({
         >
           {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in)"}
         </Button>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+          <span className="text-xs text-muted-foreground">Chuyển trạng thái bàn:</span>
+          {realTable && (
+            <Select
+              value={realTable.status}
+              disabled={changeStatusMutation.isPending}
+              onValueChange={(val) =>
+                changeStatusMutation.mutate({ id: realTable.id, status: val as TableStatus })
+              }
+            >
+              <SelectTrigger className="h-8 w-[11rem] bg-card">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(TABLE_STATUS_LABELS) as TableStatus[]).map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {TABLE_STATUS_LABELS[status]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -435,6 +486,10 @@ function OrderDialog({
     mutationFn: (payload: { id: string; status: TableStatus }) =>
       tableApi.updateStatus(payload.id, payload.status),
     onSuccess: (updated) => {
+      queryClient.setQueryData<TableResponse[]>(["tables"], (old) => {
+        if (!old) return old;
+        return old.map((t) => (t.id === updated.id ? { ...t, status: updated.status } : t));
+      });
       toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
     },
@@ -537,28 +592,62 @@ function OrderDialog({
           <p className="text-sm text-muted-foreground">Đang tải thông tin bàn…</p>
         )}
 
-        {realTable && !isOccupied && (
-          <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+        {realTable && (
+          <div
+            className={cn(
+              "space-y-2 rounded-lg border px-3 py-2 text-sm",
+              isOccupied
+                ? "border-emerald-500/30 bg-emerald-500/5"
+                : "border-amber-500/40 bg-amber-500/10",
+            )}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                <strong>{realTable.tableNumber}</strong> đang ở trạng thái{" "}
-                <strong>{TABLE_STATUS_LABELS[realTable.status]}</strong>. Cần mở bàn (đang phục vụ)
-                trước khi gọi món.
-              </span>
-              <Button
-                size="sm"
-                className="bg-primary hover:bg-primary-hover"
-                disabled={updateTableStatus.isPending}
-                onClick={() => updateTableStatus.mutate({ id: realTable.id, status: "OCCUPIED" })}
-              >
-                Mở bàn
-              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Trạng thái bàn:</span>
+                <span
+                  className={cn(
+                    "inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
+                    REAL_STATUS_CLASSES[realTable.status],
+                  )}
+                >
+                  {TABLE_STATUS_LABELS[realTable.status]}
+                </span>
+                {!isOccupied && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">
+                    (Cần mở bàn trước khi gọi món)
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {!isOccupied && (
+                  <Button
+                    size="sm"
+                    className="bg-primary hover:bg-primary-hover"
+                    disabled={updateTableStatus.isPending}
+                    onClick={() => updateTableStatus.mutate({ id: realTable.id, status: "OCCUPIED" })}
+                  >
+                    Mở bàn
+                  </Button>
+                )}
+                {isOccupied && (!activeOrder.data || activeOrder.data.items.length === 0) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={updateTableStatus.isPending}
+                    onClick={() => updateTableStatus.mutate({ id: realTable.id, status: "AVAILABLE" })}
+                  >
+                    Đóng bàn (Trống)
+                  </Button>
+                )}
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-amber-500/20 pt-2">
-              <span className="text-xs text-muted-foreground">Đổi trạng thái bàn:</span>
+            <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-2">
+              <span className="text-xs text-muted-foreground">Chuyển trạng thái:</span>
               <Select
                 value={realTable.status}
+                disabled={updateTableStatus.isPending}
                 onValueChange={(value) =>
                   updateTableStatus.mutate({
                     id: realTable.id,
@@ -566,7 +655,7 @@ function OrderDialog({
                   })
                 }
               >
-                <SelectTrigger className="h-8 w-[10rem] bg-card">
+                <SelectTrigger className="h-8 w-[11rem] bg-card">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
