@@ -12,7 +12,7 @@ interface ManagerSearchParams {
 
 export const Route = createFileRoute("/manager")({
   validateSearch: (search: Record<string, unknown>): ManagerSearchParams => {
-    const tab = search.tab as string | undefined;
+    const tab = search['tab'] as string | undefined;
     if (
       tab === "permissions" ||
       tab === "vouchers" ||

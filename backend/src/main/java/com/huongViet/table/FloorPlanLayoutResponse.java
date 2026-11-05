@@ -12,10 +12,15 @@ public record FloorPlanLayoutResponse(
     String tableNumber,
     Integer capacity,
     TableStatus status,
+    String zoneId,
     String zoneName,
     Boolean zoneIsVip
 ) {
     public static FloorPlanLayoutResponse from(FloorPlanLayout layout, RestaurantTable table) {
+        return from(layout, table, table.getStatus());
+    }
+
+    public static FloorPlanLayoutResponse from(FloorPlanLayout layout, RestaurantTable table, TableStatus dynamicStatus) {
         TableZone zone = table.getZone();
         return new FloorPlanLayoutResponse(
             layout.getId(),
@@ -28,7 +33,8 @@ public record FloorPlanLayoutResponse(
             layout.getShape(),
             table.getTableNumber(),
             table.getCapacity(),
-            table.getStatus(),
+            dynamicStatus != null ? dynamicStatus : table.getStatus(),
+            table.getZoneId(),
             zone != null ? zone.getZoneName() : null,
             zone != null ? zone.getIsVip() : null
         );

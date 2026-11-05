@@ -325,7 +325,7 @@ function ReservationDialog({
   onClose,
 }: {
   table: Table;
-  reservation?: ReservationResponse;
+  reservation?: ReservationResponse | undefined;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();

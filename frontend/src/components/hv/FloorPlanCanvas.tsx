@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { Stage, Layer, Rect, Circle, Text, Group, Line } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { ZoomIn, ZoomOut, RotateCcw, Save, Sparkles, Users, Grid } from "lucide-react";
@@ -18,6 +18,7 @@ export type FloorPlanCanvasProps = {
   onSelectTable?: (table: FloorPlanLayoutResponse | null) => void;
   onUpdateStatus?: (tableId: string, status: TableStatus) => Promise<void>;
   selectedTableId?: string | null;
+  selectedTableIds?: string[];
   readOnly?: boolean;
   isConnected?: boolean;
   canvasHeight?: number;
@@ -31,6 +32,7 @@ export function FloorPlanCanvas({
   onSelectTable,
   onUpdateStatus,
   selectedTableId,
+  selectedTableIds,
   readOnly = false,
   isConnected = false,
   canvasHeight,
@@ -44,9 +46,7 @@ export function FloorPlanCanvas({
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
   // Tọa độ cục bộ của các bàn khi kéo thả (tableId -> { x, y })
-  const [localPositions, setLocalPositions] = useState<Record<string, { x: number; y: number }>>(
-    {},
-  );
+  const [localPositions, setLocalPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -62,13 +62,13 @@ export function FloorPlanCanvas({
       if (entry) {
         setDimensions({
           width: Math.max(entry.contentRect.width, 400),
-          height: 600,
+          height: canvasHeight ?? 600,
         });
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [canvasHeight]);
 
   // Đồng bộ localPositions khi `layouts` từ backend thay đổi
   useEffect(() => {
@@ -82,6 +82,24 @@ export function FloorPlanCanvas({
     setLocalPositions(initialPos);
     setHasChanges(false);
   }, [layouts]);
+
+  // Bàn tạm ẩn (MAINTENANCE) bị loại bỏ hoàn toàn khỏi 2D canvas render
+  const visibleLayouts = useMemo(() => {
+    return layouts.filter((item) => item.status !== "MAINTENANCE");
+  }, [layouts]);
+
+  // Gom nhóm các bàn hiển thị theo khu vực để vẽ ranh giới (Zone Boundaries)
+  const zoneGroups = useMemo(() => {
+    const groups: Record<string, FloorPlanLayoutResponse[]> = {};
+    for (const item of visibleLayouts) {
+      const zoneName = item.zoneName || "Khu vực chung";
+      if (!groups[zoneName]) {
+        groups[zoneName] = [];
+      }
+      groups[zoneName].push(item);
+    }
+    return groups;
+  }, [visibleLayouts]);
 
   const handleZoom = (direction: "in" | "out") => {
     setStageScale((prev) => {
@@ -105,7 +123,6 @@ export function FloorPlanCanvas({
   };
 
   const handleDragNodeEnd = (tableId: string, e: KonvaEventObject<DragEvent>) => {
-    // Grid snapping 20px
     const rawX = e.target.x();
     const rawY = e.target.y();
     const snappedX = Math.round(rawX / GRID_STEP) * GRID_STEP;
@@ -155,7 +172,7 @@ export function FloorPlanCanvas({
 
   if (!isMounted) {
     return (
-      <div className="flex h-[600px] w-full items-center justify-center rounded-2xl border bg-muted/20">
+      <div className="flex h-[400px] w-full items-center justify-center rounded-2xl border bg-muted/20">
         <p className="text-sm text-muted-foreground">Đang khởi tạo sơ đồ 2D...</p>
       </div>
     );
@@ -202,7 +219,7 @@ export function FloorPlanCanvas({
                 isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500",
               )}
             />
-            <span>{isConnected ? "Live" : "Mất kết nối"}</span>
+            <span>{isConnected ? "Live" : "Sơ đồ 2D"}</span>
           </div>
 
           <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
@@ -269,10 +286,13 @@ export function FloorPlanCanvas({
       </div>
 
       {/* Vùng Canvas chính và bảng chi tiết */}
-      <div className="grid gap-4 lg:grid-cols-4">
+      <div className={cn("grid gap-4", readOnly ? "grid-cols-1" : "lg:grid-cols-4")}>
         <div
           ref={containerRef}
-          className="relative overflow-hidden rounded-2xl border bg-slate-50/50 shadow-inner lg:col-span-3"
+          className={cn(
+            "relative overflow-hidden rounded-2xl border bg-slate-50/50 shadow-inner",
+            !readOnly && "lg:col-span-3",
+          )}
         >
           <Stage
             width={dimensions.width}
@@ -293,13 +313,81 @@ export function FloorPlanCanvas({
               {/* Lưới tọa độ ngầm */}
               {gridLines}
 
-              {/* Render danh sách bàn ăn */}
-              {layouts.map((item) => {
+              {/* Ranh giới & Nhãn khu vực (Zone Boundaries & Labels) */}
+              {Object.entries(zoneGroups).map(([zoneName, zoneTables]) => {
+                if (zoneTables.length === 0) return null;
+
+                let minX = Infinity;
+                let minY = Infinity;
+                let maxX = -Infinity;
+                let maxY = -Infinity;
+
+                for (const t of zoneTables) {
+                  const pos = localPositions[t.tableId] ?? { x: t.positionX, y: t.positionY };
+                  minX = Math.min(minX, pos.x);
+                  minY = Math.min(minY, pos.y);
+                  maxX = Math.max(maxX, pos.x + t.width);
+                  maxY = Math.max(maxY, pos.y + t.height);
+                }
+
+                const padding = 24;
+                const headerHeight = 30;
+                const boxX = minX - padding;
+                const boxY = minY - padding - headerHeight;
+                const boxWidth = maxX - minX + padding * 2;
+                const boxHeight = maxY - minY + padding * 2 + headerHeight;
+                const isVip = Boolean(zoneTables[0]?.zoneIsVip);
+                const badgeWidth = Math.max(zoneName.length * 9 + 48, 120);
+
+                return (
+                  <Group key={`zone-boundary-${zoneName}`}>
+                    {/* Đường biên bao quanh khu vực */}
+                    <Rect
+                      x={boxX}
+                      y={boxY}
+                      width={boxWidth}
+                      height={boxHeight}
+                      cornerRadius={16}
+                      stroke={isVip ? "#f59e0b" : "#94a3b8"}
+                      strokeWidth={1.5}
+                      dash={[6, 4]}
+                      fill={isVip ? "rgba(254, 243, 199, 0.22)" : "rgba(241, 245, 249, 0.45)"}
+                    />
+
+                    {/* Thẻ nhãn tiêu đề khu vực */}
+                    <Group x={boxX + 12} y={boxY + 6}>
+                      <Rect
+                        width={badgeWidth}
+                        height={22}
+                        cornerRadius={6}
+                        fill={isVip ? "#fef3c7" : "#e2e8f0"}
+                        stroke={isVip ? "#f59e0b" : "#cbd5e1"}
+                        strokeWidth={1}
+                      />
+                      <Text
+                        text={`${zoneName}${isVip ? " ★ VIP" : ""} (${zoneTables.length} bàn)`}
+                        x={8}
+                        y={5}
+                        fontSize={11}
+                        fontStyle="bold"
+                        fontFamily="sans-serif"
+                        fill={isVip ? "#b45309" : "#334155"}
+                      />
+                    </Group>
+                  </Group>
+                );
+              })}
+
+              {/* Render danh sách bàn ăn (đã loại bỏ bàn MAINTENANCE) */}
+              {visibleLayouts.map((item) => {
                 const pos = localPositions[item.tableId] ?? {
                   x: item.positionX,
                   y: item.positionY,
                 };
-                const isSelected = item.tableId === selectedTableId;
+                const isSingleSelected = item.tableId === selectedTableId;
+                const isMultiSelected = selectedTableIds ? selectedTableIds.includes(item.tableId) : false;
+                const isSelected = isSingleSelected || isMultiSelected;
+
                 const statusMeta = STATUS_COLORS[item.status] ?? STATUS_COLORS.AVAILABLE;
                 const isCircle = item.shape === "CIRCLE";
                 const nodeWidth = item.width;
@@ -321,11 +409,11 @@ export function FloorPlanCanvas({
                         radius={nodeWidth / 2}
                         x={nodeWidth / 2}
                         y={nodeHeight / 2}
-                        fill={statusMeta.bg}
-                        stroke={isSelected ? "#09090b" : "#475569"}
+                        fill={isSelected ? "#2563eb" : statusMeta.bg}
+                        stroke={isSelected ? "#1d4ed8" : "#475569"}
                         strokeWidth={isSelected ? 3.5 : 1.5}
-                        shadowColor="rgba(0,0,0,0.2)"
-                        shadowBlur={isSelected ? 10 : 4}
+                        shadowColor={isSelected ? "rgba(37,99,235,0.4)" : "rgba(0,0,0,0.2)"}
+                        shadowBlur={isSelected ? 12 : 4}
                         shadowOffset={{ x: 2, y: 3 }}
                         shadowOpacity={0.3}
                       />
@@ -334,11 +422,11 @@ export function FloorPlanCanvas({
                         width={nodeWidth}
                         height={nodeHeight}
                         cornerRadius={10}
-                        fill={statusMeta.bg}
-                        stroke={isSelected ? "#09090b" : "#475569"}
+                        fill={isSelected ? "#2563eb" : statusMeta.bg}
+                        stroke={isSelected ? "#1d4ed8" : "#475569"}
                         strokeWidth={isSelected ? 3.5 : 1.5}
-                        shadowColor="rgba(0,0,0,0.2)"
-                        shadowBlur={isSelected ? 10 : 4}
+                        shadowColor={isSelected ? "rgba(37,99,235,0.4)" : "rgba(0,0,0,0.2)"}
+                        shadowBlur={isSelected ? 12 : 4}
                         shadowOffset={{ x: 2, y: 3 }}
                         shadowOpacity={0.3}
                       />
@@ -354,7 +442,7 @@ export function FloorPlanCanvas({
                       fontSize={15}
                       fontFamily="sans-serif"
                       fontStyle="bold"
-                      fill={statusMeta.text}
+                      fill="#ffffff"
                     />
 
                     {/* Sức chứa và VIP */}
@@ -366,7 +454,7 @@ export function FloorPlanCanvas({
                       align="center"
                       fontSize={11}
                       fontFamily="sans-serif"
-                      fill={statusMeta.text}
+                      fill="#ffffff"
                     />
                   </Group>
                 );
@@ -375,109 +463,99 @@ export function FloorPlanCanvas({
           </Stage>
         </div>
 
-        {/* Cột thông tin chi tiết bàn được chọn & Chú thích */}
-        <div className="space-y-4">
-          <div className="rounded-2xl border bg-card p-4 shadow-xs">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Bàn được chọn
-            </h3>
-            {selectedLayout ? (
-              <div className="mt-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-2xl font-bold font-display">
-                    {selectedLayout.tableNumber}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className={cn("font-semibold", STATUS_COLORS[selectedLayout.status]?.badgeCls)}
-                  >
-                    {STATUS_COLORS[selectedLayout.status]?.label}
-                  </Badge>
-                </div>
+        {/* Cột thông tin chi tiết bàn được chọn & Chú thích (Chỉ hiển thị khi không readOnly) */}
+        {!readOnly && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border bg-card p-4 shadow-xs">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                Bàn được chọn
+              </h3>
+              {selectedLayout ? (
+                <div className="mt-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-2xl font-bold font-display">
+                      {selectedLayout.tableNumber}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={cn("font-semibold", STATUS_COLORS[selectedLayout.status]?.badgeCls)}
+                    >
+                      {STATUS_COLORS[selectedLayout.status]?.label}
+                    </Badge>
+                  </div>
 
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                  <div className="flex items-center justify-between">
-                    <span>Khu vực:</span>
-                    <span className="font-medium text-foreground flex items-center gap-1">
-                      {selectedLayout.zoneName ?? "Chưa phân"}
-                      {selectedLayout.zoneIsVip && (
-                        <Sparkles className="h-3 w-3 text-amber-500 inline" />
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Sức chứa:</span>
-                    <span className="font-medium text-foreground flex items-center gap-1">
-                      <Users className="h-3 w-3" />
-                      {selectedLayout.capacity} khách
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Hình dạng:</span>
-                    <span className="font-medium text-foreground">
-                      {selectedLayout.shape === "CIRCLE" ? "Bàn tròn" : "Bàn chữ nhật"}
-                    </span>
-                  </div>
-                </div>
-
-                {!readOnly && onUpdateStatus && (
-                  <div className="pt-3 border-t space-y-2">
-                    <p className="text-xs font-medium text-foreground">Trạng thái phục vụ:</p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={selectedLayout.status !== "MAINTENANCE" ? "default" : "outline"}
-                        className={cn(
-                          "h-8 text-xs flex-1",
-                          selectedLayout.status !== "MAINTENANCE" && "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span>Khu vực:</span>
+                      <span className="font-medium text-foreground flex items-center gap-1">
+                        {selectedLayout.zoneName ?? "Chưa phân"}
+                        {selectedLayout.zoneIsVip && (
+                          <Sparkles className="h-3 w-3 text-amber-500 inline" />
                         )}
-                        disabled={selectedLayout.status === "AVAILABLE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
-                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "AVAILABLE")}
-                      >
-                        Đang sử dụng
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={selectedLayout.status === "MAINTENANCE" ? "destructive" : "outline"}
-                        className="h-8 text-xs flex-1"
-                        disabled={selectedLayout.status === "MAINTENANCE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
-                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "MAINTENANCE")}
-                      >
-                        Tạm ẩn bàn
-                      </Button>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Sức chứa:</span>
+                      <span className="font-medium text-foreground flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        {selectedLayout.capacity} khách
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Hình dạng:</span>
+                      <span className="font-medium text-foreground">
+                        {selectedLayout.shape === "CIRCLE" ? "Bàn tròn" : "Bàn chữ nhật"}
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
-                Nhấp chuột vào một bàn trên sơ đồ để xem thông tin chi tiết và thao tác.
-              </div>
-            )}
-          </div>
 
-          {/* Bảng chú thích trạng thái */}
-          <div className="rounded-2xl border bg-card p-4 shadow-xs space-y-2.5">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Chú thích trạng thái
-            </h3>
-            <div className="space-y-2 text-xs">
-              {(Object.keys(STATUS_COLORS) as TableStatus[]).map((st) => (
-                <div key={st} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn("h-3 w-3 rounded-full shadow-xs", STATUS_COLORS[st].dotCls)}
-                    />
-                    <span className="font-medium">{STATUS_COLORS[st].label}</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground font-mono">{st}</span>
+                  {onUpdateStatus && (
+                    <div className="pt-3 border-t space-y-2">
+                      <p className="text-xs font-medium text-foreground">Trạng thái phục vụ:</p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          className="h-8 text-xs flex-1"
+                          onClick={() => void onUpdateStatus(selectedLayout.tableId, "MAINTENANCE")}
+                        >
+                          Tạm ẩn bàn khỏi sơ đồ
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
+              ) : (
+                <div className="mt-4 rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
+                  Nhấp chuột vào một bàn trên sơ đồ để xem thông tin chi tiết và thao tác.
+                </div>
+              )}
+            </div>
+
+            {/* Bảng chú thích trạng thái */}
+            <div className="rounded-2xl border bg-card p-4 shadow-xs space-y-2.5">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Chú thích trạng thái
+              </h3>
+              <div className="space-y-2 text-xs">
+                {(Object.keys(STATUS_COLORS) as TableStatus[])
+                  .filter((st) => st !== "MAINTENANCE")
+                  .map((st) => (
+                    <div key={st} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn("h-3 w-3 rounded-full shadow-xs", STATUS_COLORS[st].dotCls)}
+                        />
+                        <span className="font-medium">{STATUS_COLORS[st].label}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">{st}</span>
+                    </div>
+                  ))}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

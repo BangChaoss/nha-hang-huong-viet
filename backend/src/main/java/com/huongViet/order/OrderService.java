@@ -94,6 +94,7 @@ public class OrderService {
                 "Chỉ có thể gọi món cho bàn đang sử dụng. Vui lòng check-in khách trước khi gọi món.");
         }
 
+        // Kiểm tra toàn bộ món trước khi bắt đầu lưu đơn.
         List<MenuItem> menuItems = new ArrayList<>();
         for (OrderItemRequest itemRequest : request.items()) {
             MenuItem menuItem = menuItemRepository.findByIdAndDeletedAtIsNull(itemRequest.menuItemId())
@@ -127,6 +128,7 @@ public class OrderService {
             OrderItemRequest itemRequest = request.items().get(i);
             MenuItem menuItem = menuItems.get(i);
 
+            // Giữ giá tại thời điểm gọi món để lịch sử đơn không đổi theo giá thực đơn.
             OrderItem orderItem = new OrderItem(
                 UUID.randomUUID().toString(),
                 savedOrder.getId(),
@@ -177,6 +179,7 @@ public class OrderService {
     /**
      * Thanh toán tiền mặt cho tất cả đơn đã gửi bếp còn mở của một bàn.
      * Tổng tiền được tính hoàn toàn từ unit_price_snapshot trong DB, không tin tổng frontend.
+     * Món đã hủy không tính tiền; áp dụng voucher trước điểm và chỉ đóng đơn sau khi ghi hóa đơn.
      */
     @Transactional
     public CashCheckoutResponse checkoutCash(String tableId, CashCheckoutRequest request) {
@@ -187,6 +190,7 @@ public class OrderService {
         if (openOrders.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn chưa có món đã gửi bếp để thanh toán.");
         }
+        // Tính tiền từ snapshot trong DB và loại món đã hủy khỏi tổng thanh toán.
         BigDecimal subtotal = BigDecimal.ZERO;
         for (Order order : openOrders) {
             for (OrderItem item : orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId())) {
@@ -262,6 +266,7 @@ public class OrderService {
             order.setClosedAt(java.time.LocalDateTime.now());
             orderRepository.save(order);
         }
+        // Chỉ giải phóng bàn sau khi hóa đơn, voucher và điểm đã được xử lý thành công.
         table.setStatus(TableStatus.AVAILABLE);
         tableRepository.save(table);
         return new CashCheckoutResponse(tableId, subtotal, vat, discount, redeemed, total, awarded, table.getTableNumber());
@@ -277,12 +282,14 @@ public class OrderService {
         String voucherInvoiceId = null;
         boolean first = true;
         for (Order order : orders) {
+            // Hóa đơn chỉ lưu các món được tính tiền; món hủy vẫn được giữ trên đơn để đối soát.
             List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
                 .filter(i -> i.getCookingStatus() != CookingStatus.CANCELLED).toList();
             BigDecimal itemSubtotal = items.stream()
                 .map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
             BigDecimal tax = itemSubtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+            // Chỉ hóa đơn đầu tiên giữ khoản giảm giá và điểm của lần thanh toán gộp.
             BigDecimal invoiceVoucherDiscount = first ? voucherDiscount : BigDecimal.ZERO;
             BigDecimal invoicePoints = first ? pointsRedeemed : BigDecimal.ZERO;
             BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePoints)
@@ -301,6 +308,7 @@ public class OrderService {
                 currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePoints),
                 tax, finalAmount, earned);
             for (OrderItem item : items) {
+                // Lưu tên món dạng snapshot để hóa đơn vẫn đọc được nếu món bị xóa sau này.
                 String dishName = item.getMenuItem() != null ? item.getMenuItem().getItemName() :
                     menuItemRepository.findById(item.getMenuItemId()).map(MenuItem::getItemName).orElse("Món đã xóa");
                 BigDecimal lineTotal = item.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()))
@@ -317,7 +325,7 @@ public class OrderService {
     }
 
     /**
-     * Danh sách đơn hàng, lọc theo bàn và/hoặc trạng thái.
+     * Tra cứu đơn hàng theo bàn và/hoặc trạng thái; thứ tự phụ thuộc bộ lọc được chọn.
      */
     public List<OrderResponse> listAll(String tableId, OrderStatus status) {
         List<Order> orders;
@@ -338,18 +346,14 @@ public class OrderService {
         return orders.stream().map(this::toResponse).toList();
     }
 
-    /**
-     * Chi tiết đơn hàng.
-     */
+    /** Lấy chi tiết đơn hàng cùng các dòng món theo thứ tự tạo. */
     public OrderResponse getById(String id) {
         Order order = orderRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
         return toResponse(order);
     }
 
-    /**
-     * Đơn hàng đang mở (IN_PROGRESS) gần nhất của một bàn.
-     */
+    /** Lấy đơn đang mở mới nhất của bàn để tiếp tục phục vụ. */
     public OrderResponse getActiveByTable(String tableId) {
         Order order = orderRepository
             .findFirstByTableIdAndStatusOrderByCreatedAtDesc(tableId, OrderStatus.IN_PROGRESS)

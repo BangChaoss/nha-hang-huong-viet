@@ -2,6 +2,7 @@ package com.huongViet.reservation;
 
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
+import com.huongViet.reservation.dto.UpdateReservationStatusRequest;
 import com.huongViet.reservation.dto.ZoneAvailabilityResponse;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
@@ -18,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +46,8 @@ class ReservationServiceTest {
 
     @Mock
     private ReservationEmailService emailService;
+    @Mock
+    private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     private ReservationService reservationService;
 
@@ -57,7 +61,8 @@ class ReservationServiceTest {
             zoneRepository,
             tableRepository,
             reservationAuditRepository,
-            emailService
+            emailService,
+            messagingTemplate
         );
 
         sampleZone = new TableZone("zone-1", "Tầng trệt trong nhà", false);
@@ -345,5 +350,258 @@ class ReservationServiceTest {
 
         assertFalse(result.get(0).timeSlots().get(0).available());
         assertEquals(2, result.get(0).timeSlots().get(0).remainingCapacity());
+    }
+
+    @Test
+    @DisplayName("11. continuousSequenceOfSlots_has21SlotsFrom11To21 - Chuỗi khung giờ liên tục từ 11:00 đến 21:00")
+    void continuousSequenceOfSlots_has21SlotsFrom11To21() {
+        assertEquals(21, ReservationService.TIME_SLOTS.size());
+        assertEquals(LocalTime.of(11, 0), ReservationService.TIME_SLOTS.get(0));
+        assertEquals(LocalTime.of(21, 0), ReservationService.TIME_SLOTS.get(20));
+        for (int i = 0; i < ReservationService.TIME_SLOTS.size() - 1; i++) {
+            assertEquals(
+                ReservationService.TIME_SLOTS.get(i).plusMinutes(30),
+                ReservationService.TIME_SLOTS.get(i + 1),
+                "Mỗi slot phải cách nhau đúng 30 phút liên tục"
+            );
+        }
+    }
+
+    @Test
+    @DisplayName("12. turnTimeOverlap_adjacentSlotsDoNotConflict - Thời lượng 1h59m không làm 13:00 xung đột với 11:00")
+    void turnTimeOverlap_adjacentSlotsDoNotConflict() {
+        LocalDate date = LocalDate.now().plusDays(1);
+        LocalTime slot13 = LocalTime.of(13, 0);
+
+        when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
+        when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables);
+        when(reservationRepository.sumConfirmedPartySizeByZoneAndSlot(any(), any(), any(), any()))
+            .thenReturn(0);
+
+        List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(date, 4);
+
+        assertNotNull(result);
+        var slot13Resp = result.get(0).timeSlots().stream()
+            .filter(s -> s.time().equals(slot13))
+            .findFirst();
+        assertTrue(slot13Resp.isPresent());
+        assertTrue(slot13Resp.get().available());
+
+        verify(reservationRepository).sumConfirmedPartySizeByZoneAndSlot(
+            eq("zone-1"), eq(date), eq(LocalTime.of(11, 2)), eq(LocalTime.of(14, 58))
+        );
+    }
+
+    @Test
+    @DisplayName("13. updateStatus_staffCheckIn_outsideWindow_throwsBadRequest - Check-in quá sớm (>30p) hoặc quá trễ (>30p) quăng 400")
+    void updateStatus_staffCheckIn_outsideWindow_throwsBadRequest() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime tooEarly = now.plusMinutes(45);
+        Reservation earlyReservation = new Reservation(
+            "res-early", null, "Khách A", "0900000001", null, 4,
+            tooEarly.toLocalDate(), tooEarly.toLocalTime(), null, "zone-1"
+        );
+        earlyReservation.setStatus(ReservationStatus.CONFIRMED);
+        earlyReservation.setTableId("tbl-1");
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-early"))
+            .thenReturn(Optional.of(earlyReservation));
+
+        UpdateReservationStatusRequest checkInReq = new UpdateReservationStatusRequest(
+            ReservationStatus.ARRIVED, null, null, null
+        );
+
+        ResponseStatusException exEarly = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-early", checkInReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, exEarly.getStatusCode());
+        assertTrue(exEarly.getReason().contains("Chưa đến thời gian nhận bàn"));
+
+        LocalDateTime tooLate = now.minusMinutes(45);
+        Reservation lateReservation = new Reservation(
+            "res-late", null, "Khách B", "0900000002", null, 4,
+            tooLate.toLocalDate(), tooLate.toLocalTime(), null, "zone-1"
+        );
+        lateReservation.setStatus(ReservationStatus.CONFIRMED);
+        lateReservation.setTableId("tbl-1");
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-late"))
+            .thenReturn(Optional.of(lateReservation));
+
+        ResponseStatusException exLate = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-late", checkInReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, exLate.getStatusCode());
+        assertTrue(exLate.getReason().contains("Đã quá thời gian nhận bàn"));
+    }
+
+    @Test
+    @DisplayName("14. updateStatus_staffCheckIn_withinWindow_success - Check-in trong phạm vi [-30m, +30m] thành công")
+    void updateStatus_staffCheckIn_withinWindow_success() {
+        LocalDateTime now = LocalDateTime.now();
+        Reservation validReservation = new Reservation(
+            "res-valid", null, "Khách C", "0900000003", null, 4,
+            now.toLocalDate(), now.toLocalTime(), null, "zone-1"
+        );
+        validReservation.setStatus(ReservationStatus.CONFIRMED);
+        validReservation.setTableId("tbl-1");
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-valid"))
+            .thenReturn(Optional.of(validReservation));
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateReservationStatusRequest checkInReq = new UpdateReservationStatusRequest(
+            ReservationStatus.ARRIVED, null, null, null
+        );
+
+        ReservationResponse response = reservationService.updateStatus("res-valid", checkInReq, "staff-1");
+        assertNotNull(response);
+        assertEquals(ReservationStatus.ARRIVED, response.status());
+    }
+
+    @Test
+    @DisplayName("15. updateStatus_assignMergedTables_sameZoneAndCapacity_success - Gộp bàn cùng khu vực đủ sức chứa thành công")
+    void updateStatus_assignMergedTables_sameZoneAndCapacity_success() {
+        Reservation reservation = new Reservation(
+            "res-merge", null, "Đoàn đông", "0988776655", null, 9,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+        RestaurantTable t2 = new RestaurantTable("tbl-2", "zone-1", "Bàn 02", 6);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-merge"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1", "tbl-2")))
+            .thenReturn(List.of(t1, t2));
+        when(reservationRepository.findOverlappingReservationsForTable(any(), any(), any(), any()))
+            .thenReturn(List.of());
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateReservationStatusRequest mergeReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1", "tbl-2"), null
+        );
+
+        ReservationResponse response = reservationService.updateStatus("res-merge", mergeReq, "staff-1");
+        assertNotNull(response);
+        assertEquals(ReservationStatus.CONFIRMED, response.status());
+        assertEquals("tbl-1,tbl-2", response.mergedTableIds());
+        assertEquals("Bàn 01 + Bàn 02", response.tableNumber());
+    }
+
+    @Test
+    @DisplayName("16. updateStatus_assignMergedTables_differentZones_throwsBadRequest - Gộp bàn khác khu vực quăng 400")
+    void updateStatus_assignMergedTables_differentZones_throwsBadRequest() {
+        Reservation reservation = new Reservation(
+            "res-diff-zones", null, "Đoàn khách", "0988776655", null, 6,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "01", 4);
+        RestaurantTable t2 = new RestaurantTable("tbl-other", "zone-2", "VIP-01", 6);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-diff-zones"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1", "tbl-other")))
+            .thenReturn(List.of(t1, t2));
+
+        UpdateReservationStatusRequest mergeReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1", "tbl-other"), null
+        );
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-diff-zones", mergeReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("cùng một khu vực"));
+    }
+
+    @Test
+    @DisplayName("17. updateStatus_assignMergedTables_insufficientCapacity_throwsBadRequest - Tổng sức chứa bàn gộp không đủ quăng 400")
+    void updateStatus_assignMergedTables_insufficientCapacity_throwsBadRequest() {
+        Reservation reservation = new Reservation(
+            "res-small-tables", null, "Đoàn 12 người", "0988776655", null, 12,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "01", 4);
+        RestaurantTable t2 = new RestaurantTable("tbl-2", "zone-1", "02", 4); // sum = 8 < 12
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-small-tables"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1", "tbl-2")))
+            .thenReturn(List.of(t1, t2));
+
+        UpdateReservationStatusRequest mergeReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1", "tbl-2"), null
+        );
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-small-tables", mergeReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("không đủ cho đoàn"));
+    }
+
+    @Test
+    @DisplayName("18. updateStatus_assignMergedTables_singleTableAlreadySufficient_throwsBadRequest - Đơn 2 người chọn bàn 4 và bàn 6 quăng 400 chặn gộp dư thừa")
+    void updateStatus_assignMergedTables_singleTableAlreadySufficient_throwsBadRequest() {
+        Reservation reservation = new Reservation(
+            "res-party-2", null, "Khách 2 người", "0911223344", null, 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "01", 4); // 4 >= 2
+        RestaurantTable t2 = new RestaurantTable("tbl-2", "zone-1", "02", 6);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-party-2"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1", "tbl-2")))
+            .thenReturn(List.of(t1, t2));
+
+        UpdateReservationStatusRequest mergeReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1", "tbl-2"), null
+        );
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-party-2", mergeReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("đã đủ cho đoàn"));
+    }
+
+    @Test
+    @DisplayName("19. updateStatus_assignMergedTables_redundantTableInSet_throwsBadRequest - Đơn 7 người gộp 3 bàn 4+4+4 quăng 400 vì bàn 3 dư thừa")
+    void updateStatus_assignMergedTables_redundantTableInSet_throwsBadRequest() {
+        Reservation reservation = new Reservation(
+            "res-party-7", null, "Đoàn 7 người", "0911223344", null, 7,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "01", 4);
+        RestaurantTable t2 = new RestaurantTable("tbl-2", "zone-1", "02", 4);
+        RestaurantTable t3 = new RestaurantTable("tbl-3", "zone-1", "03", 4); // 4+4 = 8 >= 7, tbl-3 redundant
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-party-7"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1", "tbl-2", "tbl-3")))
+            .thenReturn(List.of(t1, t2, t3));
+
+        UpdateReservationStatusRequest mergeReq = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1", "tbl-2", "tbl-3"), null
+        );
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-party-7", mergeReq, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("dư thừa"));
     }
 }

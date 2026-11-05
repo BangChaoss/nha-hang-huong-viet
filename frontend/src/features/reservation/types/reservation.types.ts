@@ -32,6 +32,7 @@ export interface ReservationResponse {
   zoneIsVip?: boolean | null;
   tableId?: string | null;
   tableNumber?: string | null;
+  mergedTableIds?: string | null;
   depositAmount: number;
   cancellationReason?: string | null;
   createdAt: string;
@@ -39,11 +40,13 @@ export interface ReservationResponse {
 
 export interface CancelReservationRequest {
   reason?: string;
+  phone?: string;
 }
 
 export interface UpdateReservationStatusRequest {
   status: ReservationStatus;
   tableId?: string;
+  tableIds?: string[];
   reason?: string;
 }
 

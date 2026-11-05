@@ -10,13 +10,14 @@ import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableResponse;
 import com.huongViet.table.TableStatus;
-import com.huongViet.table.TableStatusMessage;
 import com.huongViet.table.TableZone;
 import com.huongViet.table.ZoneRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import com.huongViet.table.TableStatusMessage;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -27,6 +28,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,17 +42,29 @@ public class ReservationService {
 
     private static final Logger logger = LoggerFactory.getLogger(ReservationService.class);
 
-    public static final List<LocalTime> TIME_SLOTS = List.of(
-        LocalTime.of(11, 0), LocalTime.of(11, 30),
-        LocalTime.of(12, 0), LocalTime.of(12, 30),
-        LocalTime.of(13, 0),
-        LocalTime.of(17, 30), LocalTime.of(18, 0),
-        LocalTime.of(18, 30), LocalTime.of(19, 0),
-        LocalTime.of(19, 30), LocalTime.of(20, 0),
-        LocalTime.of(20, 30)
-    );
+    public static final LocalTime OPENING_TIME = LocalTime.of(11, 0);
+    public static final LocalTime CLOSING_TIME = LocalTime.of(21, 0);
+    public static final int SLOT_INTERVAL_MINUTES = 30;
 
-    private static final Duration DINING_WINDOW = Duration.ofHours(2);
+    /**
+     * Continuous time slots from 11:00 to 21:00 without broken intervals between shifts.
+     */
+    public static List<LocalTime> generateContinuousTimeSlots() {
+        List<LocalTime> slots = new ArrayList<>();
+        LocalTime current = OPENING_TIME;
+        while (!current.isAfter(CLOSING_TIME)) {
+            slots.add(current);
+            current = current.plusMinutes(SLOT_INTERVAL_MINUTES);
+        }
+        return Collections.unmodifiableList(slots);
+    }
+
+    public static final List<LocalTime> TIME_SLOTS = generateContinuousTimeSlots();
+
+    /**
+     * Strict 1 hour 59 minute reservation lock duration.
+     */
+    public static final Duration DINING_WINDOW = Duration.ofMinutes(119);
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final Map<ReservationStatus, Set<ReservationStatus>> ALLOWED_TRANSITIONS = Map.of(
@@ -68,6 +83,7 @@ public class ReservationService {
     private final ReservationEmailService emailService;
     private final SimpMessagingTemplate messagingTemplate;
 
+    @Autowired
     public ReservationService(ReservationRepository reservationRepository,
                               ZoneRepository zoneRepository,
                               TableRepository tableRepository,
@@ -80,6 +96,14 @@ public class ReservationService {
         this.reservationAuditRepository = reservationAuditRepository;
         this.emailService = emailService;
         this.messagingTemplate = messagingTemplate;
+    }
+
+    public ReservationService(ReservationRepository reservationRepository,
+                              ZoneRepository zoneRepository,
+                              TableRepository tableRepository,
+                              ReservationAuditRepository reservationAuditRepository,
+                              ReservationEmailService emailService) {
+        this(reservationRepository, zoneRepository, tableRepository, reservationAuditRepository, emailService, null);
     }
 
     /**
@@ -100,9 +124,9 @@ public class ReservationService {
      * UC08: Create a new table reservation.
      * Enforces:
      * - BR-17: Party size > 15 requires event booking protocol
-     * - Time slot validation (within fixed list)
+     * - Continuous slot validation (from 11:00 to 21:00)
      * - Date in the future / today valid time
-     * - Zone capacity check immediately deducting PENDING and CONFIRMED reservations across 2h window
+     * - Zone capacity check deducting active reservations across 1h59m window
      */
     @Transactional
     public ReservationResponse createBooking(CreateReservationRequest request, String customerId) {
@@ -120,10 +144,10 @@ public class ReservationService {
                 "Ngày đặt bàn không được ở quá khứ.");
         }
 
-        // Validate slot against predefined slots
+        // Validate slot against continuous predefined slots
         if (!TIME_SLOTS.contains(request.reservationTime())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Khung giờ đặt bàn không hợp lệ. Vui lòng chọn trong các khung giờ phục vụ của nhà hàng.");
+                "Khung giờ đặt bàn không hợp lệ. Vui lòng chọn trong các khung giờ phục vụ của nhà hàng (11:00 - 21:00).");
         }
 
         // If booking today, slot must be in the future
@@ -179,15 +203,15 @@ public class ReservationService {
         logger.info("Created reservation {} for guest {} on {} at {} (partySize: {})",
             saved.getId(), saved.getGuestName(), saved.getReservationDate(), saved.getReservationTime(), saved.getPartySize());
 
-        // Send email notification (non-blocking, won't break transaction if mail server fails)
+        // Send email notification (non-blocking)
         emailService.sendBookingConfirmation(saved, zone.getZoneName());
 
-        return ReservationResponse.from(saved, zone.getId(), zone.getZoneName(), zone.getIsVip());
+        return toResponse(saved, zone.getId(), zone.getZoneName(), zone.getIsVip());
     }
 
     /**
      * Check availability across all active zones for a given date and party size.
-     * Deducts capacity in real-time for both PENDING and CONFIRMED reservations across 2h window.
+     * Evaluates continuous time slots and deductucts capacity with 1h59m window.
      */
     public List<ZoneAvailabilityResponse> checkAvailability(LocalDate date, Integer partySize) {
         List<TableZone> activeZones = zoneRepository.findAll().stream()
@@ -215,8 +239,9 @@ public class ReservationService {
                     continue;
                 }
 
-                LocalTime windowStart = slot.minus(DINING_WINDOW).plusMinutes(1);
-                LocalTime windowEnd = slot.plus(DINING_WINDOW).minusMinutes(1);
+                // 1h59m turn-time: slot - 118m to slot + 118m
+                LocalTime windowStart = slot.minusMinutes(118);
+                LocalTime windowEnd = slot.plusMinutes(118);
 
                 int confirmedSeats = reservationRepository.sumConfirmedPartySizeByZoneAndSlot(
                     zone.getId(), date, windowStart, windowEnd
@@ -249,7 +274,7 @@ public class ReservationService {
     }
 
     /**
-     * Predefined available time slots.
+     * Predefined continuous available time slots.
      */
     public List<String> getTimeSlots() {
         return TIME_SLOTS.stream()
@@ -263,7 +288,7 @@ public class ReservationService {
     public List<ReservationResponse> getCustomerBookings(String customerId) {
         return reservationRepository.findByCustomerIdWithTableAndZone(customerId)
             .stream()
-            .map(ReservationResponse::from)
+            .map(this::toResponse)
             .toList();
     }
 
@@ -280,7 +305,7 @@ public class ReservationService {
         String cleanCode = code.trim().toUpperCase().replaceFirst("^HV-", "").toLowerCase();
         return reservationRepository.findByPhoneAndBookingCode(phone.trim(), cleanCode)
             .stream()
-            .map(ReservationResponse::from)
+            .map(this::toResponse)
             .toList();
     }
 
@@ -293,7 +318,7 @@ public class ReservationService {
         }
         return reservationRepository.findByGuestPhoneWithTableAndZone(phone.trim())
             .stream()
-            .map(ReservationResponse::from)
+            .map(this::toResponse)
             .toList();
     }
 
@@ -303,7 +328,7 @@ public class ReservationService {
     public ReservationResponse getById(String id) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
-        return ReservationResponse.from(reservation);
+        return toResponse(reservation);
     }
 
     /**
@@ -312,44 +337,43 @@ public class ReservationService {
     public List<ReservationResponse> listByDate(LocalDate date, ReservationStatus status) {
         return reservationRepository.findByDateAndStatusWithTableAndZone(date, status)
             .stream()
-            .map(ReservationResponse::from)
+            .map(this::toResponse)
             .toList();
     }
 
-    /**
-     * UC09 backward compatible overload: List reservations by date.
-     */
     public List<ReservationResponse> listByDate(LocalDate date) {
         return listByDate(date, null);
     }
 
     /**
      * UC10: Get available tables suited for assigning to a given reservation.
+     * Evaluates time-scoped table availability without permanently locking the table.
      */
     public List<TableResponse> getAvailableTablesForReservation(String id) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
 
-        int partySize = reservation.getPartySize();
-        List<RestaurantTable> tables;
-        String targetZoneId = reservation.getZoneId();
-        if (targetZoneId == null && reservation.getTable() != null) {
-            targetZoneId = reservation.getTable().getZoneId();
-        }
+        List<RestaurantTable> allTables = tableRepository.findAllActiveWithZone();
 
-        if (targetZoneId != null) {
-            tables = tableRepository.findAvailableByZoneAndCapacity(targetZoneId, partySize);
-        } else {
-            tables = tableRepository.findAvailableByCapacity(partySize);
-        }
+        LocalTime slotStart = reservation.getReservationTime().minusMinutes(118);
+        LocalTime slotEnd = reservation.getReservationTime().plusMinutes(118);
 
-        return tables.stream()
+        return allTables.stream()
+            .filter(t -> t.getStatus() != TableStatus.MAINTENANCE)
+            .filter(t -> {
+                List<Reservation> overlaps = reservationRepository.findOverlappingReservationsForTable(
+                    t.getId(), reservation.getReservationDate(), slotStart, slotEnd
+                );
+                return overlaps.stream().allMatch(r -> r.getId().equals(reservation.getId()));
+            })
             .map(TableResponse::from)
             .toList();
     }
 
     /**
-     * UC10, UC13, UC10-A1: Update reservation status, assign table, or check in.
+     * UC10, UC13, UC10-A1: Update reservation status, assign / merge tables, or check in.
+     * Supports multi-table merging (Gộp bàn) within the same zone.
+     * Restricts staff check-in to [-30m, +30m] window near reservation time.
      */
     @Transactional
     public ReservationResponse updateStatus(String id, UpdateReservationStatusRequest request, String changedBy) {
@@ -363,82 +387,118 @@ public class ReservationService {
 
         String oldTableId = reservation.getTableId();
 
-        // Phase 3.3 / UC10: Transition to CONFIRMED
+        // Phase 3.3 / UC10: Transition to CONFIRMED (Table Assignment & Merging)
         if (newStatus == ReservationStatus.CONFIRMED) {
-            String targetTableId = (request.tableId() != null && !request.tableId().isBlank())
-                ? request.tableId()
-                : oldTableId;
-
-            if (targetTableId == null || targetTableId.isBlank()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Vui lòng chọn bàn trước khi xác nhận đặt bàn.");
+            List<String> targetTableIds = new ArrayList<>();
+            if (request.tableIds() != null && !request.tableIds().isEmpty()) {
+                targetTableIds.addAll(request.tableIds().stream()
+                    .filter(tId -> tId != null && !tId.isBlank())
+                    .distinct()
+                    .toList());
+            } else if (request.tableId() != null && !request.tableId().isBlank()) {
+                targetTableIds.add(request.tableId().trim());
+            } else if (oldTableId != null && !oldTableId.isBlank()) {
+                targetTableIds.add(oldTableId);
             }
 
-            RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(targetTableId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bàn không tồn tại hoặc đã bị vô hiệu hóa"));
-
-            if (table.getCapacity() < reservation.getPartySize()) {
+            if (targetTableIds.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    String.format("Bàn %s chỉ chứa %d khách, không đủ cho %d khách.",
-                        table.getTableNumber(), table.getCapacity(), reservation.getPartySize()));
+                    "Vui lòng chọn ít nhất một bàn khả dụng trước khi xác nhận đặt bàn.");
             }
 
-            // Verify table availability if newly assigned or newly confirmed
-            if (!targetTableId.equals(oldTableId) || oldStatus != ReservationStatus.CONFIRMED) {
-                if (table.getStatus() != TableStatus.AVAILABLE) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        String.format("Bàn %s đang ở trạng thái %s, không thể gán.",
-                            table.getTableNumber(), table.getStatus()));
+            List<RestaurantTable> assignedTables = tableRepository.findAllById(targetTableIds);
+            if (assignedTables.size() != targetTableIds.size()) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "Một hoặc nhiều bàn được chọn không tồn tại hoặc đã bị xóa.");
+            }
+
+            // Verify all tables belong to the SAME zone
+            String primaryZoneId = assignedTables.get(0).getZoneId();
+            boolean sameZone = assignedTables.stream().allMatch(t -> primaryZoneId.equals(t.getZoneId()));
+            if (!sameZone) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Chỉ có thể gộp các bàn trong cùng một khu vực (zone).");
+            }
+
+            // Verify total capacity meets party size
+            int totalCapacity = assignedTables.stream().mapToInt(RestaurantTable::getCapacity).sum();
+            if (totalCapacity < reservation.getPartySize()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Tổng sức chứa các bàn đã chọn là %d chỗ, không đủ cho đoàn %d khách.",
+                        totalCapacity, reservation.getPartySize()));
+            }
+
+            // Strict Non-redundancy: When merging multiple tables, no single table should already be sufficient,
+            // small parties (<= 4) cannot merge multiple tables, and 3+ tables cannot contain redundant tables.
+            if (assignedTables.size() > 1) {
+                for (RestaurantTable t : assignedTables) {
+                    if (t.getCapacity() >= reservation.getPartySize()) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            String.format("Bàn %s (sức chứa %d chỗ) đã đủ cho đoàn %d khách, không được gộp thêm bàn khác.",
+                                t.getTableNumber(), t.getCapacity(), reservation.getPartySize()));
+                    }
+                }
+                if (reservation.getPartySize() <= 4) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Đoàn nhỏ (<= 4 khách) vui lòng chỉ gán 1 bàn, không gộp nhiều bàn.");
+                }
+                if (assignedTables.size() > 2) {
+                    for (RestaurantTable t : assignedTables) {
+                        if (totalCapacity - t.getCapacity() >= reservation.getPartySize()) {
+                            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                String.format("Gộp bàn dư thừa: danh sách bàn đã chọn có Bàn %s không cần thiết vì các bàn còn lại đã đủ cho đoàn %d khách.",
+                                    t.getTableNumber(), reservation.getPartySize()));
+                        }
+                    }
                 }
             }
 
-            // Chỉ ghi nhận bàn khi xác nhận. Bàn vẫn AVAILABLE cho tới đúng giờ đặt;
-            // ReservationTableStatusScheduler sẽ chuyển sang RESERVED khi đến giờ.
-            if (oldTableId != null && !oldTableId.equals(targetTableId)) {
-                tableRepository.findByIdAndDeletedAtIsNull(oldTableId)
-                    .ifPresent(prevTable -> {
-                        if (prevTable.getStatus() == TableStatus.RESERVED) {
-                            prevTable.setStatus(TableStatus.AVAILABLE);
-                            tableRepository.save(prevTable);
-                            broadcastTableStatus(prevTable, TableStatus.RESERVED, TableStatus.AVAILABLE);
-                        }
-                    });
+            // Verify time-scoped availability for each table across 1h59m window
+            LocalTime slotStart = reservation.getReservationTime().minusMinutes(118);
+            LocalTime slotEnd = reservation.getReservationTime().plusMinutes(118);
+
+            for (RestaurantTable table : assignedTables) {
+                if (table.getStatus() == TableStatus.MAINTENANCE) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        String.format("Bàn %s đang ở trạng thái bảo trì/tạm ẩn, không thể gán.", table.getTableNumber()));
+                }
+
+                List<Reservation> overlapping = reservationRepository.findOverlappingReservationsForTable(
+                    table.getId(), reservation.getReservationDate(), slotStart, slotEnd
+                );
+
+                boolean hasOtherBooking = overlapping.stream().anyMatch(r -> !r.getId().equals(reservation.getId()));
+                if (hasOtherBooking) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        String.format("Bàn %s đã có đơn đặt trong khung giờ này (%s - %s).",
+                            table.getTableNumber(),
+                            reservation.getReservationTime().format(TIME_FORMATTER),
+                            reservation.getReservationTime().plus(DINING_WINDOW).format(TIME_FORMATTER)));
+                }
             }
 
-            reservation.setTableId(table.getId());
-            reservation.setTable(table);
+            // Assign primary table and merged tables
+            RestaurantTable primaryTable = assignedTables.get(0);
+            reservation.setTableId(primaryTable.getId());
+            reservation.setTable(primaryTable);
+            reservation.setZoneId(primaryZoneId);
+            reservation.setMergedTableIds(String.join(",", targetTableIds));
         }
 
-        // Phase 3.6 / UC13: Transition to ARRIVED (Staff Check-in)
+        // Phase 3.6 / UC13: Transition to ARRIVED (Staff Check-in Time Guard)
         if (newStatus == ReservationStatus.ARRIVED) {
-            if (reservation.getTableId() != null) {
-                RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(reservation.getTableId())
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bàn gán không tồn tại"));
+            LocalDateTime bookingDateTime = LocalDateTime.of(
+                reservation.getReservationDate(), reservation.getReservationTime());
+            LocalDateTime now = LocalDateTime.now();
 
-                // BR-24 / D6: RESERVED -> OCCUPIED
-                if (table.getStatus() != TableStatus.RESERVED && table.getStatus() != TableStatus.AVAILABLE) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        String.format("Bàn %s đang ở trạng thái %s, không thể check-in.",
-                            table.getTableNumber(), table.getStatus()));
-                }
-                TableStatus previous = table.getStatus();
-                table.setStatus(TableStatus.OCCUPIED);
-                tableRepository.save(table);
-                broadcastTableStatus(table, previous, TableStatus.OCCUPIED);
+            // Staff Check-in Time Guard: [-30m, +30m]
+            if (now.isBefore(bookingDateTime.minusMinutes(30))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Chưa đến thời gian nhận bàn. Check-in chỉ được phép thực hiện trước tối đa 30 phút so với giờ hẹn.");
             }
-        }
-
-        // Phase 3.8: Transition to CANCELLED (Staff Cancel)
-        if (newStatus == ReservationStatus.CANCELLED) {
-            if (reservation.getTableId() != null) {
-                tableRepository.findByIdAndDeletedAtIsNull(reservation.getTableId())
-                    .ifPresent(table -> {
-                        if (table.getStatus() == TableStatus.RESERVED) {
-                            table.setStatus(TableStatus.AVAILABLE);
-                            tableRepository.save(table);
-                            broadcastTableStatus(table, TableStatus.RESERVED, TableStatus.AVAILABLE);
-                        }
-                    });
+            if (now.isAfter(bookingDateTime.plusMinutes(30))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Đã quá thời gian nhận bàn cho phép check-in (tối đa 30 phút sau giờ hẹn).");
             }
 
             // Chuyển trạng thái bàn sang OCCUPIED khi khách check-in
@@ -481,29 +541,17 @@ public class ReservationService {
 
         logger.info("Updated reservation {} status from {} to {} by {}", saved.getId(), oldStatus, newStatus, changedBy);
 
-        return ReservationResponse.from(saved);
-    }
-
-    private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus) {
-        try {
-            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
-            messagingTemplate.convertAndSend("/topic/table-status",
-                new TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, newStatus, zoneName));
-        } catch (Exception ex) {
-            logger.warn("Không thể phát sự kiện trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
-        }
+        return toResponse(saved);
     }
 
     /**
      * Phase 3.5 / UC12: Self-Cancel Booking with 60-min rule.
-     * Accessible to authenticated members or guests who provide matching phone number.
      */
     @Transactional
     public ReservationResponse cancelByCustomer(String reservationId, String customerId, CancelReservationRequest request) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(reservationId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
 
-        // Verify ownership: customerId matches OR guestPhone matches
         boolean isAuthorized = false;
         String actor = "CUSTOMER";
         if (customerId != null && reservation.getCustomerId() != null && reservation.getCustomerId().equals(customerId)) {
@@ -520,10 +568,8 @@ public class ReservationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền hủy đặt bàn này");
         }
 
-        // Only PENDING_HOLD, PENDING_DEPOSIT and CONFIRMED can be cancelled
         validateTransition(reservation.getStatus(), ReservationStatus.CANCELLED);
 
-        // Requirement 6: 60-min rule for ALL self-cancellations
         LocalDateTime reservationDateTime = LocalDateTime.of(
             reservation.getReservationDate(), reservation.getReservationTime());
         if (Duration.between(LocalDateTime.now(), reservationDateTime).toMinutes() < 60) {
@@ -537,17 +583,6 @@ public class ReservationService {
             ? request.reason()
             : "Khách hàng tự hủy trên hệ thống";
         reservation.setCancellationReason(reason);
-
-        // Release table if assigned
-        if (reservation.getTableId() != null) {
-            tableRepository.findByIdAndDeletedAtIsNull(reservation.getTableId())
-                .ifPresent(table -> {
-                    if (table.getStatus() == TableStatus.RESERVED) {
-                        table.setStatus(TableStatus.AVAILABLE);
-                        tableRepository.save(table);
-                    }
-                });
-        }
 
         Reservation saved = reservationRepository.save(reservation);
 
@@ -566,7 +601,7 @@ public class ReservationService {
 
         logger.info("Reservation {} cancelled by {}", saved.getId(), actor);
 
-        return ReservationResponse.from(saved);
+        return toResponse(saved);
     }
 
     /**
@@ -580,8 +615,8 @@ public class ReservationService {
     }
 
     private boolean isTimeSlotAvailable(String zoneId, LocalDate date, LocalTime slot, int partySize, int totalCapacity) {
-        LocalTime windowStart = slot.minus(DINING_WINDOW).plusMinutes(1);
-        LocalTime windowEnd = slot.plus(DINING_WINDOW).minusMinutes(1);
+        LocalTime windowStart = slot.minusMinutes(118);
+        LocalTime windowEnd = slot.plusMinutes(118);
         int confirmed = reservationRepository.sumConfirmedPartySizeByZoneAndSlot(zoneId, date, windowStart, windowEnd);
         return (totalCapacity - confirmed) >= partySize;
     }
@@ -601,4 +636,42 @@ public class ReservationService {
         }
         return alternatives;
     }
+
+    /**
+     * Helper to construct ReservationResponse, formatting merged table numbers (e.g. "Bàn 01 + Bàn 02").
+     */
+
+    private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus) {
+        if (messagingTemplate == null) return;
+        try {
+            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+            messagingTemplate.convertAndSend("/topic/table-status",
+                new TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, newStatus, zoneName));
+        } catch (Exception ex) {
+            logger.warn("Không thể phát sự kiện trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
+        }
+    }
+    public ReservationResponse toResponse(Reservation reservation) {
+        return toResponse(reservation, null, null, null);
+    }
+
+    public ReservationResponse toResponse(Reservation reservation, String fallbackZoneId, String fallbackZoneName, Boolean fallbackZoneIsVip) {
+        String customTableNumber = null;
+        if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+            List<String> ids = Arrays.stream(reservation.getMergedTableIds().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+
+            if (ids.size() > 1) {
+                List<RestaurantTable> tables = tableRepository.findAllById(ids);
+                customTableNumber = tables.stream()
+                    .map(RestaurantTable::getTableNumber)
+                    .collect(Collectors.joining(" + "));
+            }
+        }
+
+        return ReservationResponse.from(reservation, fallbackZoneId, fallbackZoneName, fallbackZoneIsVip, customTableNumber);
+    }
 }
+
