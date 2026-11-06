@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const tickets = [
@@ -63,6 +63,7 @@ function renderKds(readOnly?: boolean) {
 describe("KitchenKDS", () => {
   beforeEach(() => {
     auth.role = "MANAGER";
+    mutate.mockClear();
   });
 
   it("màn hình của đầu bếp chỉ để xem — không có nút cập nhật trạng thái", () => {
@@ -87,5 +88,45 @@ describe("KitchenKDS", () => {
     expect(screen.getAllByRole("button", { name: /bắt đầu nấu/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /báo món hoàn tất/i }).length).toBeGreaterThan(0);
     expect(screen.queryByText(/chỉ xem/i)).not.toBeInTheDocument();
+  });
+
+  it("nhân viên phục vụ cũng được cập nhật trạng thái phiếu", () => {
+    auth.role = "STAFF";
+    renderKds();
+
+    expect(screen.queryByText(/chỉ xem/i)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /bắt đầu nấu/i }).length).toBeGreaterThan(0);
+  });
+
+  it("bấm 'Bắt đầu nấu' gửi trạng thái PREPARING cho đúng phiếu", () => {
+    renderKds();
+
+    fireEvent.click(screen.getByRole("button", { name: /bắt đầu nấu/i }));
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith(
+      { id: "ticket-1", status: "PREPARING" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    );
+  });
+
+  it("bấm 'Báo món hoàn tất' gửi trạng thái READY cho đúng phiếu", () => {
+    renderKds();
+
+    fireEvent.click(screen.getByRole("button", { name: /báo món hoàn tất/i }));
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith(
+      { id: "ticket-2", status: "READY" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    );
+  });
+
+  it("không hiển thị nút cập nhật với vai trò không có quyền", () => {
+    auth.role = "CUSTOMER";
+    renderKds();
+
+    expect(screen.getByText(/chỉ xem/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /bắt đầu nấu/i })).not.toBeInTheDocument();
   });
 });

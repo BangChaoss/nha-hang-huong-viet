@@ -400,7 +400,7 @@ class OrderServiceTest {
             () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("Khách đổi món"), "staff-1"));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("đang nấu"));
+        assertTrue(ex.getReason().contains("chờ chế biến"));
         verify(orderItemRepository, never()).save(any(OrderItem.class));
         verify(kitchenTicketRepository, never()).save(any(KitchenTicket.class));
     }
