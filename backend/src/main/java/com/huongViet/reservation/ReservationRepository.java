@@ -124,6 +124,42 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
     );
 
     /**
+     * List upcoming reservations from startDate onwards with table and zone eager-fetched.
+     * Orders PENDING_HOLD first, then by reservationDate ascending, then by reservationTime ascending.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.reservationDate >= :startDate
+          AND r.deletedAt IS NULL
+          AND (:status IS NULL OR r.status = :status)
+        ORDER BY
+          CASE WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD THEN 0 ELSE 1 END ASC,
+          r.reservationDate ASC,
+          r.reservationTime ASC
+        """)
+    List<Reservation> findUpcomingWithTableAndZone(
+        @Param("startDate") LocalDate startDate,
+        @Param("status") ReservationStatus status
+    );
+
+    /**
+     * List all pending hold reservations regardless of date, ordered by nearest date and time.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD
+          AND r.deletedAt IS NULL
+        ORDER BY r.reservationDate ASC, r.reservationTime ASC
+        """)
+    List<Reservation> findAllPendingHoldWithTableAndZone();
+
+    /**
      * UC13-E1: Find overdue confirmed reservations that exceeded grace period.
      */
     @Query("""

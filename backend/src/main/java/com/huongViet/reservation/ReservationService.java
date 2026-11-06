@@ -346,6 +346,27 @@ public class ReservationService {
     }
 
     /**
+     * List upcoming reservations from a start date onwards.
+     */
+    public List<ReservationResponse> listUpcoming(LocalDate startDate, ReservationStatus status) {
+        LocalDate queryDate = (startDate != null) ? startDate : LocalDate.now();
+        return reservationRepository.findUpcomingWithTableAndZone(queryDate, status)
+            .stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
+    /**
+     * List all pending hold reservations regardless of date.
+     */
+    public List<ReservationResponse> listAllPending() {
+        return reservationRepository.findAllPendingHoldWithTableAndZone()
+            .stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
+    /**
      * UC10: Get available tables suited for assigning to a given reservation.
      * Evaluates time-scoped table availability without permanently locking the table.
      */
