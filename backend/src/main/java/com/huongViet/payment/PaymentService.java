@@ -62,7 +62,10 @@ public class PaymentService {
         orders.save(new PaymentOrder(orderId, phone, subtotal, discount, amount, code.isBlank()?null:code));
 
         Map<String,String> params=new TreeMap<>();
-        params.put("vnp_Version", version); params.put("vnp_Command", command); params.put("vnp_TmnCode", tmnCode);
+        // VNPAY 2.1.0 contract: these protocol values must not drift with configuration.
+        params.put("vnp_Version", "2.1.0");
+        params.put("vnp_Command", "pay");
+        params.put("vnp_TmnCode", tmnCode);
         params.put("vnp_Amount", amount.multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP).toPlainString());
         params.put("vnp_CurrCode", "VND"); params.put("vnp_TxnRef", orderId);
         params.put("vnp_OrderInfo", "Thanh toan don hang " + orderId);
@@ -70,14 +73,13 @@ public class PaymentService {
         params.put("vnp_ReturnUrl", returnUrl); params.put("vnp_IpAddr", normalizeIp(clientIp));
         params.put("vnp_CreateDate", LocalDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
         params.put("vnp_ExpireDate", LocalDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh")).plusMinutes(15).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
-        if (!ipnUrl.isBlank()) params.put("vnp_IpnUrl", ipnUrl);
         String query=toQuery(params);
         return Map.of("orderId",orderId,"paymentUrl",payUrl+"?"+query+"&vnp_SecureHash="+hmacSha512(hashSecret,query));
     }
 
     public boolean verify(Map<String,String> input) {
         String received=input.get("vnp_SecureHash");
-        if (received==null || hashSecret.isBlank()) return false;
+        if (received==null || !received.matches("(?i)^[0-9a-f]{128}$") || hashSecret.isBlank()) return false;
         Map<String,String> params=new TreeMap<>(input);
         params.remove("vnp_SecureHash"); params.remove("vnp_SecureHashType");
         return constantTimeEquals(hmacSha512(hashSecret, toQuery(params)), received);
@@ -92,10 +94,11 @@ public class PaymentService {
         if (order==null) return "ORDER_NOT_FOUND";
         String response=params.getOrDefault("vnp_ResponseCode", "");
         String transaction=params.getOrDefault("vnp_TransactionNo", "");
-        String txnStatus=params.getOrDefault("vnp_TransactionStatus", response);
+        String txnStatus=params.getOrDefault("vnp_TransactionStatus", "");
         String amount=params.get("vnp_Amount");
         String expected=order.getAmount().multiply(BigDecimal.valueOf(100)).setScale(0,RoundingMode.HALF_UP).toPlainString();
         if (!expected.equals(amount)) return "INVALID_AMOUNT";
+        // IPN and browser return may race; a paid order must never earn points twice.
         if ("PAID".equals(order.getStatus())) return "00";
         if ("00".equals(response) && "00".equals(txnStatus)) {
             if (order.getVoucherCode()!=null) {
@@ -118,7 +121,8 @@ public class PaymentService {
             }
             order.markPaid(transaction,response,points);
         } else {
-            order.markFailed(transaction,response);
+            order.markFailed(transaction, response);
+            return "PAYMENT_FAILED";
         }
         return "00";
     }

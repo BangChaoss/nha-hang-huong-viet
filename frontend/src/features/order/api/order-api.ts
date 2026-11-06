@@ -83,6 +83,29 @@ export const orderApi = {
       method: "DELETE",
       body: JSON.stringify({ reason }),
     }),
+
+  /** UC-18: thu ngân thanh toán tiền mặt cho đơn đang mở của bàn. */
+  checkoutCash: (
+    tableId: string,
+    payload: {
+      phoneNumber?: string | undefined;
+      voucherCode?: string | undefined;
+      usePoints: boolean;
+    },
+  ) =>
+    request<{
+      tableId: string;
+      subtotal: number;
+      vat: number;
+      discountAmount: number;
+      pointsRedeemed: number;
+      total: number;
+      pointsAwarded: number;
+      tableNumber: string;
+    }>(`/api/orders/table/${encodeURIComponent(tableId)}/checkout-cash`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 /** API của màn hình bếp (UC-16). */

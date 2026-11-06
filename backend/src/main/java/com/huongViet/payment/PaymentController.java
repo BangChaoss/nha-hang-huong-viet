@@ -31,6 +31,9 @@ public class PaymentController {
             case "INVALID_SIGNATURE" -> Map.of("RspCode","97","Message","Invalid Signature");
             case "INVALID_AMOUNT" -> Map.of("RspCode","04","Message","Invalid Amount");
             case "ORDER_NOT_FOUND" -> Map.of("RspCode","01","Message","Order Not Found");
+            // A validly signed unsuccessful payment was processed; acknowledge the IPN,
+            // while the persisted order remains FAILED (RspCode is not the payment result).
+            case "PAYMENT_FAILED" -> Map.of("RspCode","00","Message","Confirm Success");
             default -> Map.of("RspCode","99","Message","Unknown Error");
         };
     }
@@ -39,7 +42,9 @@ public class PaymentController {
     public RedirectView returned(@RequestParam Map<String,String> params) {
         String orderId=params.getOrDefault("vnp_TxnRef","");
         String result=service.processCallback(params);
-        String status="00".equals(result) && "00".equals(params.get("vnp_ResponseCode")) ? "success" : "failed";
+        String status="00".equals(result)
+            && "00".equals(params.get("vnp_ResponseCode"))
+            && "00".equals(params.get("vnp_TransactionStatus")) ? "success" : "failed";
         return new RedirectView(frontendUrl.replaceAll("/$","")+"/?paymentOrderId="+
             java.net.URLEncoder.encode(orderId,java.nio.charset.StandardCharsets.UTF_8)+"&paymentStatus="+status);
     }
