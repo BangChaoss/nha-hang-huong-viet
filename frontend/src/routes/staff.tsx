@@ -1,14 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CalendarCheck, ShieldCheck, Store, UtensilsCrossed, X } from "lucide-react";
+import { CalendarCheck, ChefHat, ShieldCheck, Store, UtensilsCrossed, X, Receipt } from "lucide-react";
 import { paymentApi, type PaymentOrderStatus } from "@/lib/payment-api";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 import { StaffPOS } from "@/components/hv/StaffPOS";
 import { StaffBookingDashboard } from "@/features/reservation/components/staff-booking-dashboard";
+import { KitchenKDS } from "@/components/hv/KitchenKDS";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 import { RoleGuard } from "@/components/hv/RoleGuard";
 import { useSession } from "@/lib/auth-session";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { StaffInvoices } from "@/components/hv/StaffInvoices";
 
 export const Route = createFileRoute("/staff")({
   head: () => ({ meta: [{ title: "Nhân viên & Thu ngân — Hương Việt" }] }),
@@ -157,7 +159,7 @@ function Page() {
 
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
             <Tabs defaultValue="pos" className="space-y-6">
-              <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsList className="grid w-full max-w-2xl grid-cols-4">
                 <TabsTrigger value="pos" className="flex items-center gap-2">
                   <Store className="h-4 w-4" />
                   <span>Thu Ngân / POS</span>
@@ -165,6 +167,14 @@ function Page() {
                 <TabsTrigger value="bookings" className="flex items-center gap-2">
                   <CalendarCheck className="h-4 w-4" />
                   <span>Đặt Bàn</span>
+                </TabsTrigger>
+                <TabsTrigger value="kitchen" className="flex items-center gap-2">
+                  <ChefHat className="h-4 w-4" />
+                  <span>Điều phối bếp</span>
+                </TabsTrigger>
+                <TabsTrigger value="invoices" className="flex items-center gap-2">
+                  <Receipt className="h-4 w-4" />
+                  <span>Hóa đơn</span>
                 </TabsTrigger>
               </TabsList>
 
@@ -175,6 +185,15 @@ function Page() {
               <TabsContent value="bookings" className="space-y-4 focus-visible:outline-none">
                 <StaffBookingDashboard />
               </TabsContent>
+
+              <TabsContent value="kitchen" className="space-y-4 focus-visible:outline-none">
+                <KitchenKDS />
+              </TabsContent>
+
+              <TabsContent value="invoices" className="space-y-4 focus-visible:outline-none">
+                <StaffInvoices />
+              </TabsContent>
+
             </Tabs>
           </main>
         </div>
