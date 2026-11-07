@@ -51,6 +51,7 @@ import {
 import { COOKING_STATUS_LABELS, type OrderItemResponse } from "@/features/order/types/order.types";
 import { splitBillItems } from "@/features/order/utils/bill";
 
+/** Món được chọn tạm thời trước khi tạo đơn mới cho bàn. */
 type CartLine = { menuItemId: string; quantity: number; note: string };
 
 const TABLE_STATUS_LABELS: Record<TableStatus, string> = {
@@ -74,6 +75,9 @@ function localDateString(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Màn hình phục vụ: chọn bàn để xem thực đơn, gọi món và chuyển sang thanh toán.
+ */
 export function StaffPOS() {
   const queryClient = useQueryClient();
   const [selectedTable, setSelectedTable] = useState<TableResponse | null>(null);
@@ -366,6 +370,10 @@ function ReservationDialog({
   );
 }
 
+/**
+ * Gọi món cho bàn đã chọn: món mới được giữ trong giỏ đến khi gửi bếp;
+ * nếu bàn đã có đơn mở, món được thêm trực tiếp vào đơn đó.
+ */
 function OrderDialog({
   table,
   onClose,
@@ -414,6 +422,7 @@ function OrderDialog({
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
   });
 
+  /** Điều chỉnh số lượng món trong giỏ nháp; bỏ món khi số lượng về 0. */
   const change = (menuItemId: string, delta: number) =>
     setCart((cur) => {
       const existing = cur.find((l) => l.menuItemId === menuItemId);
@@ -439,6 +448,7 @@ function OrderDialog({
       .filter((i) => i.menuItemId === menuItemId && i.cookingStatus !== "CANCELLED")
       .reduce((sum, i) => sum + i.quantity, 0) ?? 0;
 
+  /** Chọn món: thêm vào đơn đang mở hoặc tăng số lượng trong giỏ nháp. */
   const selectDish = (menuItemId: string) => {
     if (orderId) {
       addItem.mutate({ orderId, payload: { menuItemId, quantity: 1 } });

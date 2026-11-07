@@ -22,6 +22,7 @@ import type {
 
 const ALL_CATEGORIES = "all";
 
+/** Cổng khách hàng với các tab thực đơn, đặt bàn, lịch sử và đánh giá. */
 export function CustomerPortal() {
   const [tab, setTab] = useState("menu");
   const [targetInvoiceId, setTargetInvoiceId] = useState<string | undefined>(undefined);
@@ -63,6 +64,9 @@ export function CustomerPortal() {
   );
 }
 
+/**
+ * Hiển thị thực đơn theo danh mục; cập nhật trạng thái còn món theo thông báo WebSocket.
+ */
 function Menu() {
   const { categories, items, isLoading, isError, error, refetch } = useMenu();
   const [cat, setCat] = useState<string>(ALL_CATEGORIES);
@@ -196,6 +200,9 @@ function Menu() {
   );
 }
 
+/**
+ * Theo dõi tình trạng món qua WebSocket và cập nhật trạng thái trong cache `["menu"]`.
+ */
 function useMenuAvailabilitySubscription() {
   const queryClient = useQueryClient();
   const clientRef = useRef<Client | null>(null);

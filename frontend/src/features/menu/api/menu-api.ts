@@ -122,8 +122,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** API công khai cho khách hàng. */
 export const menuApi = {
+  /** Lấy thực đơn theo danh mục, gồm thông tin còn/hết món để hiển thị cho khách. */
   getOverview: (): Promise<MenuOverviewResponse> => request<MenuOverviewResponse>("/api/menu"),
+
+  /** Lấy thông tin chi tiết của một món theo mã món. */
   getItem: (id: string): Promise<MenuItemResponse> => request<MenuItemResponse>(`/api/menu/${id}`),
+
+  /** Lấy danh sách danh mục món ăn. */
   getCategories: (): Promise<CategoryResponse[]> =>
     request<CategoryResponse[]>("/api/menu/categories"),
 };
