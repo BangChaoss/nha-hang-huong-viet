@@ -1,7 +1,7 @@
-
 package com.huongViet.voucher;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -18,13 +18,16 @@ public class VoucherService {
 
     private final VoucherRepository repository;
     private final VoucherUsageRepository usageRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public VoucherService(
             VoucherRepository repository,
-            VoucherUsageRepository usageRepository
+            VoucherUsageRepository usageRepository,
+            JdbcTemplate jdbcTemplate
     ) {
         this.repository = repository;
         this.usageRepository = usageRepository;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -34,6 +37,38 @@ public class VoucherService {
                 .stream()
                 .map(VoucherResponse::from)
                 .toList();
+    }
+
+    /**
+     * Tra cứu toàn bộ các lượt đã sử dụng voucher này kèm mã hoá đơn và thời gian sử dụng.
+     */
+    @Transactional(readOnly = true)
+    public List<VoucherUsageResponse> getUsages(String voucherId) {
+        repository.findByIdAndDeletedAtIsNull(voucherId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Không tìm thấy voucher."
+                ));
+
+        String sql = """
+            SELECT u.id, u.voucher_id, u.customer_phone, u.invoice_id,
+                   COALESCE(i.invoice_code, u.invoice_id) AS invoice_code,
+                   u.discount_applied, u.used_at
+            FROM voucher_usages u
+            LEFT JOIN invoices i ON u.invoice_id = i.id
+            WHERE u.voucher_id = ?
+            ORDER BY u.used_at DESC
+        """;
+
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new VoucherUsageResponse(
+            rs.getString("id"),
+            rs.getString("voucher_id"),
+            rs.getString("customer_phone"),
+            rs.getString("invoice_id"),
+            rs.getString("invoice_code"),
+            rs.getBigDecimal("discount_applied"),
+            rs.getTimestamp("used_at") != null ? rs.getTimestamp("used_at").toLocalDateTime() : null
+        ), voucherId);
     }
 
     @Transactional
@@ -118,8 +153,6 @@ public class VoucherService {
 
     /**
      * Lấy ID số lớn nhất hiện có rồi tăng thêm 1.
-     * Không thay đổi cấu trúc database.
-     * Các ID UUID của voucher cũ vẫn được giữ nguyên.
      */
     private String nextNumericVoucherId() {
         long maxId = 0L;
@@ -175,7 +208,6 @@ public class VoucherService {
 
     /**
      * Ghi nhận sử dụng voucher khi đã có hóa đơn thật trong bảng invoices.
-     * invoiceId phải tham chiếu tới invoices.id hiện có.
      */
     @Transactional
     public VoucherValidationResponse redeemForInvoice(
@@ -214,7 +246,6 @@ public class VoucherService {
             return check;
         }
 
-        // Lưu invoiceId thật, không tự tạo UUID thay cho hóa đơn.
         usageRepository.save(new VoucherUsage(
                 UUID.randomUUID().toString(),
                 v.getId(),
@@ -237,10 +268,6 @@ public class VoucherService {
         );
     }
 
-    /**
-     * Endpoint cũ không nhận invoiceId nên không thể ghi lịch sử sử dụng.
-     * Checkout phải tạo hóa đơn trước rồi gọi redeemForInvoice().
-     */
     @Transactional(readOnly = true)
     public VoucherValidationResponse redeem(
             VoucherValidationRequest request

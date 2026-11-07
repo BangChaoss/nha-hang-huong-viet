@@ -10,21 +10,29 @@ import {
   Plus,
   LayoutGrid,
   Trash2,
-  ChefHat,
+  Eye,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
   voucherApi,
   type Voucher,
   type VoucherPayload,
   type DiscountType,
+  type VoucherUsageRecord,
 } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
-import { KitchenKDS } from "@/components/hv/KitchenKDS";
 import { MenuManagement } from "@/features/menu/components/menu-management";
 import { BackButton } from "@/components/hv/BackButton";
 import { StaffManagement } from "@/components/hv/StaffManagement";
@@ -44,8 +52,7 @@ export type ManagerTab =
   | "permissions"
   | "vouchers"
   | "loyalty"
-  | "tables"
-  | "kitchen";
+  | "tables";
 
 export interface ManagerDashboardProps {
   activeTab?: ManagerTab;
@@ -105,6 +112,12 @@ export function ManagerDashboard({
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [loyaltyRate, setLoyaltyRate] = useState("5");
   const [loyaltySaving, setLoyaltySaving] = useState(false);
+
+  // Xem chi tiết lịch sử dùng voucher
+  const [selectedVoucherForUsages, setSelectedVoucherForUsages] = useState<Voucher | null>(null);
+  const [usagesList, setUsagesList] = useState<VoucherUsageRecord[]>([]);
+  const [usagesLoading, setUsagesLoading] = useState(false);
+
   const updateVoucher = (key: keyof ReturnType<typeof emptyVoucher>, value: string) =>
     setVoucherForm((v) => ({ ...v, [key]: value }));
 
@@ -116,6 +129,20 @@ export function ManagerDashboard({
       toast.error(error instanceof Error ? error.message : "Không tải được danh sách voucher.");
     } finally {
       setVoucherLoading(false);
+    }
+  };
+
+  const handleOpenUsages = async (v: Voucher) => {
+    setSelectedVoucherForUsages(v);
+    setUsagesLoading(true);
+    try {
+      const data = await voucherApi.getUsages(v.id);
+      setUsagesList(data);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không tải được danh sách lượt dùng.");
+      setUsagesList([]);
+    } finally {
+      setUsagesLoading(false);
     }
   };
 
@@ -195,19 +222,8 @@ export function ManagerDashboard({
           <LayoutGrid className="mr-2 h-4 w-4" />
           Sơ đồ & Bàn ăn
         </Button>
-        <Button
-          variant={activeTab === "kitchen" ? "default" : "outline"}
-          onClick={() => handleTabChange("kitchen")}
-        >
-          <ChefHat className="mr-2 h-4 w-4" />
-          Điều phối bếp
-        </Button>
       </div>
       {activeTab === "tables" && <TableManagement />}
-      {activeTab === "kitchen" && (
-        // Đầu bếp chỉ xem phiếu; quản lý/quản trị cập nhật trạng thái nấu tại đây.
-        <KitchenKDS />
-      )}
       {activeTab === "permissions" && (
         <section className="space-y-4">
           {session ? (
@@ -451,7 +467,7 @@ export function ManagerDashboard({
                     <th>Đã dùng / phát hành</th>
                     <th>Giới hạn/khách</th>
                     <th>Trạng thái</th>
-                    <th>Thao tác</th>
+                    <th className="text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -479,7 +495,14 @@ export function ManagerDashboard({
                         {formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}
                       </td>
                       <td>
-                        {v.usedQuantity} / {v.totalQuantity}
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenUsages(v)}
+                          className="font-medium text-primary hover:underline"
+                          title="Xem chi tiết các lượt đã dùng"
+                        >
+                          {v.usedQuantity} / {v.totalQuantity}
+                        </button>
                       </td>
                       <td>{v.maxUsesPerCustomer} lượt / SĐT</td>
                       <td>
@@ -487,8 +510,18 @@ export function ManagerDashboard({
                           {v.active ? "Đang bật" : "Đã tắt"}
                         </span>
                       </td>
-                      <td>
-                        <div className="flex gap-1">
+                      <td className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void handleOpenUsages(v)}
+                            title="Xem chi tiết các lượt đã sử dụng voucher này"
+                          >
+                            <Eye className="mr-1 h-3.5 w-3.5" />
+                            Lượt dùng
+                          </Button>
                           <Button
                             type="button"
                             size="sm"
@@ -641,6 +674,76 @@ export function ManagerDashboard({
           <MenuManagement />
         </>
       )}
+
+      {/* DIALOG XEM CHI TIẾT CÁC LƯỢT DÙNG CỦA VOUCHER */}
+      <Dialog
+        open={Boolean(selectedVoucherForUsages)}
+        onOpenChange={(open) => !open && setSelectedVoucherForUsages(null)}
+      >
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold font-display">
+              Chi tiết lượt sử dụng voucher: {selectedVoucherForUsages?.voucherCode}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedVoucherForUsages?.title} · Đã sử dụng {selectedVoucherForUsages?.usedQuantity} /{" "}
+              {selectedVoucherForUsages?.totalQuantity} lượt
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2">
+            {usagesLoading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Đang tải dữ liệu lượt dùng...
+              </div>
+            ) : usagesList.length === 0 ? (
+              <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
+                Voucher này chưa được khách hàng nào sử dụng.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50 text-left">
+                      <th className="py-2.5 px-3 font-semibold">STT</th>
+                      <th className="py-2.5 px-3 font-semibold">Khách hàng (SĐT)</th>
+                      <th className="py-2.5 px-3 font-semibold">Mã hóa đơn</th>
+                      <th className="py-2.5 px-3 font-semibold">Số tiền giảm</th>
+                      <th className="py-2.5 px-3 font-semibold">Thời gian sử dụng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usagesList.map((item, idx) => (
+                      <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="py-2.5 px-3 tabular-nums">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-mono font-medium">{item.customerPhone}</td>
+                        <td className="py-2.5 px-3 font-mono text-xs">{item.invoiceCode}</td>
+                        <td className="py-2.5 px-3 font-semibold text-primary tabular-nums">
+                          {formatVND(item.discountApplied)}
+                        </td>
+                        <td className="py-2.5 px-3 text-muted-foreground text-xs">
+                          {item.usedAt ? new Date(item.usedAt).toLocaleString("vi-VN") : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSelectedVoucherForUsages(null)}
+            >
+              Đóng
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
