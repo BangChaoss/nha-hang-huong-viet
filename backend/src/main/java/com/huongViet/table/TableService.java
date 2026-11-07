@@ -15,8 +15,13 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -121,20 +126,12 @@ public class TableService {
 
         RestaurantTable saved = tableRepository.save(table);
 
-        // Create default floor plan layout coordinates for new table
-        FloorPlanLayout defaultLayout = new FloorPlanLayout(
-            UUID.randomUUID().toString(),
-            saved.getId(),
-            50.0,
-            50.0,
-            80.0,
-            80.0,
-            0.0,
-            FloorPlanShape.RECTANGLE
-        );
-        floorPlanLayoutRepository.save(defaultLayout);
+        // Calculate smart optimal floor plan layout coordinates for new table
+        FloorPlanLayout layout = calculateOptimalLayoutPosition(saved);
+        floorPlanLayoutRepository.save(layout);
 
-        logger.info("Created table: id={}, tableNumber={}, zone={}", saved.getId(), saved.getTableNumber(), zone.getZoneName());
+        logger.info("Created table: id={}, tableNumber={}, zone={}, position=({}, {})",
+            saved.getId(), saved.getTableNumber(), zone.getZoneName(), layout.getPositionX(), layout.getPositionY());
 
         TableResponse response = TableResponse.from(saved, TableStatus.AVAILABLE);
         broadcastStatusChange(saved, null, saved.getStatus());
@@ -252,5 +249,178 @@ public class TableService {
         } catch (Exception ex) {
             logger.error("Failed to broadcast table status change via WebSocket: ", ex);
         }
+    }
+
+    /**
+     * Calculates optimal non-overlapping coordinates for a newly created table.
+     * - If the zone already has tables: places the new table adjacent to existing tables in a tidy grid.
+     * - If the zone is brand new (or has no active layouts): finds an empty spot in the visible canvas
+     *   without overlapping any other zone's boundaries or tables.
+     */
+    public FloorPlanLayout calculateOptimalLayoutPosition(RestaurantTable savedTable) {
+        double width = savedTable.getCapacity() <= 2 ? 70.0 : (savedTable.getCapacity() <= 4 ? 90.0 : 140.0);
+        double height = savedTable.getCapacity() <= 2 ? 70.0 : 90.0;
+        FloorPlanShape shape = FloorPlanShape.RECTANGLE;
+
+        List<RestaurantTable> allActiveTables = tableRepository.findAllActiveWithZone();
+        List<FloorPlanLayout> allLayouts = floorPlanLayoutRepository.findAll();
+
+        Map<String, FloorPlanLayout> layoutMap = allLayouts.stream()
+            .collect(Collectors.toMap(FloorPlanLayout::getTableId, l -> l, (a, b) -> a));
+
+        Map<String, List<FloorPlanLayout>> zoneLayoutsMap = new HashMap<>();
+        for (RestaurantTable t : allActiveTables) {
+            if (t.getId().equals(savedTable.getId())) continue;
+            FloorPlanLayout l = layoutMap.get(t.getId());
+            if (l != null && l.getPositionX() != null && l.getPositionY() != null) {
+                zoneLayoutsMap.computeIfAbsent(t.getZoneId(), k -> new ArrayList<>()).add(l);
+            }
+        }
+
+        List<FloorPlanLayout> thisZoneLayouts = zoneLayoutsMap.getOrDefault(savedTable.getZoneId(), Collections.emptyList());
+
+        double candX;
+        double candY;
+
+        if (!thisZoneLayouts.isEmpty()) {
+            // Case 1: Zone already has tables - place adjacent in grid
+            double gapX = 40.0;
+            double gapY = 40.0;
+
+            List<double[]> candidates = new ArrayList<>();
+            for (FloorPlanLayout ex : thisZoneLayouts) {
+                candidates.add(new double[]{ex.getPositionX() + ex.getWidth() + gapX, ex.getPositionY()});
+                candidates.add(new double[]{ex.getPositionX(), ex.getPositionY() + ex.getHeight() + gapY});
+            }
+
+            double minX = thisZoneLayouts.stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(50.0);
+            double maxX = thisZoneLayouts.stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(150.0);
+            double maxY = thisZoneLayouts.stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(150.0);
+
+            candidates.add(new double[]{maxX + gapX, thisZoneLayouts.get(0).getPositionY()});
+            candidates.add(new double[]{minX, maxY + gapY});
+
+            double[] best = null;
+            for (double[] cand : candidates) {
+                double cx = cand[0];
+                double cy = cand[1];
+                if (cx < 20 || cy < 20) continue;
+
+                // Check collision with any existing table
+                boolean collidesWithTable = false;
+                for (FloorPlanLayout other : layoutMap.values()) {
+                    if (other.getTableId().equals(savedTable.getId())) continue;
+                    if (isAabbOverlap(cx, cy, width, height, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
+                        collidesWithTable = true;
+                        break;
+                    }
+                }
+                if (collidesWithTable) continue;
+
+                // Check if new projected zone boundary would collide with other zones
+                boolean collidesWithOtherZones = false;
+                double newZoneMinX = Math.min(minX, cx);
+                double newZoneMinY = Math.min(thisZoneLayouts.stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(50.0), cy);
+                double newZoneMaxX = Math.max(maxX, cx + width);
+                double newZoneMaxY = Math.max(maxY, cy + height);
+                double newBoxX = newZoneMinX - 24.0;
+                double newBoxY = newZoneMinY - 54.0;
+                double newBoxW = newZoneMaxX - newZoneMinX + 48.0;
+                double newBoxH = newZoneMaxY - newZoneMinY + 78.0;
+
+                for (Map.Entry<String, List<FloorPlanLayout>> entry : zoneLayoutsMap.entrySet()) {
+                    if (entry.getKey().equals(savedTable.getZoneId()) || entry.getValue().isEmpty()) continue;
+                    double otherMinX = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(0);
+                    double otherMinY = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(0);
+                    double otherMaxX = entry.getValue().stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(0);
+                    double otherMaxY = entry.getValue().stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(0);
+                    double otherBoxX = otherMinX - 24.0;
+                    double otherBoxY = otherMinY - 54.0;
+                    double otherBoxW = otherMaxX - otherMinX + 48.0;
+                    double otherBoxH = otherMaxY - otherMinY + 78.0;
+
+                    if (isAabbOverlap(newBoxX, newBoxY, newBoxW, newBoxH, otherBoxX, otherBoxY, otherBoxW, otherBoxH)) {
+                        collidesWithOtherZones = true;
+                        break;
+                    }
+                }
+
+                if (!collidesWithOtherZones) {
+                    best = cand;
+                    break;
+                }
+            }
+
+            if (best != null) {
+                candX = best[0];
+                candY = best[1];
+            } else {
+                candX = minX;
+                candY = maxY + gapY;
+            }
+        } else {
+            // Case 2: Brand new zone (no existing layouts in this zone)
+            candX = 50.0;
+            candY = 70.0;
+            boolean found = false;
+
+            for (double y = 70.0; y <= 800.0 && !found; y += 180.0) {
+                for (double x = 50.0; x <= 900.0 && !found; x += 180.0) {
+                    double boxX = x - 24.0;
+                    double boxY = y - 54.0;
+                    double boxW = width + 48.0;
+                    double boxH = height + 78.0;
+
+                    boolean overlapsAny = false;
+                    for (FloorPlanLayout other : layoutMap.values()) {
+                        if (isAabbOverlap(x, y, width, height, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
+                            overlapsAny = true;
+                            break;
+                        }
+                    }
+                    if (overlapsAny) continue;
+
+                    for (Map.Entry<String, List<FloorPlanLayout>> entry : zoneLayoutsMap.entrySet()) {
+                        if (entry.getValue().isEmpty()) continue;
+                        double otherMinX = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(0);
+                        double otherMinY = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(0);
+                        double otherMaxX = entry.getValue().stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(0);
+                        double otherMaxY = entry.getValue().stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(0);
+                        double otherBoxX = otherMinX - 24.0;
+                        double otherBoxY = otherMinY - 54.0;
+                        double otherBoxW = otherMaxX - otherMinX + 48.0;
+                        double otherBoxH = otherMaxY - otherMinY + 78.0;
+
+                        if (isAabbOverlap(boxX, boxY, boxW, boxH, otherBoxX, otherBoxY, otherBoxW, otherBoxH)) {
+                            overlapsAny = true;
+                            break;
+                        }
+                    }
+
+                    if (!overlapsAny) {
+                        candX = x;
+                        candY = y;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return new FloorPlanLayout(
+            UUID.randomUUID().toString(),
+            savedTable.getId(),
+            (double) Math.round(candX),
+            (double) Math.round(candY),
+            width,
+            height,
+            0.0,
+            shape
+        );
+    }
+
+    private static boolean isAabbOverlap(double x1, double y1, double w1, double h1,
+                                         double x2, double y2, double w2, double h2) {
+        return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
     }
 }
