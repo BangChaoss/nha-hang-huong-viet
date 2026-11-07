@@ -67,9 +67,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/orders/**").hasAnyAuthority(
                     "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
-                // UC-16: màn hình bếp chỉ để xem — đầu bếp không được đổi trạng thái phiếu.
+                // UC-16: Nhân viên điều phối, Quản lý và Quản trị viên được cập nhật trạng thái phiếu bếp
                 .requestMatchers(HttpMethod.PATCH, "/api/kitchen/tickets/*/status").hasAnyAuthority(
-                    "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 // UC-16: hàng đợi phiếu bếp cho bếp, phục vụ và quản lý cùng theo dõi
                 .requestMatchers("/api/kitchen/**").hasAnyAuthority(
@@ -86,6 +86,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
                     "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
+                // Hóa đơn thanh toán cho Nhân viên, Quản lý và Admin
+                .requestMatchers("/api/invoices/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)

@@ -27,8 +27,9 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
   const { session } = useSession();
   const [now, setNow] = useState(Date.now());
 
-  // Đầu bếp chỉ theo dõi phiếu: chỉ quản lý / quản trị viên mới được đổi trạng thái.
-  const canUpdateStatus = !readOnly && isUserManager(session?.role);
+  // Đầu bếp chỉ theo dõi phiếu: nhân viên điều phối (STAFF), quản lý và quản trị viên được đổi trạng thái.
+  const canUpdateStatus =
+    !readOnly && (session?.role === "STAFF" || isUserManager(session?.role));
 
   useEffect(() => {
     const i = setInterval(() => setNow(Date.now()), 30000);
@@ -63,8 +64,8 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
           <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
           {!canUpdateStatus && (
             <p className="mt-3 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-              Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do quản lý
-              hoặc quản trị viên thực hiện.
+              Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do nhân viên phục vụ
+              hoặc quản lý thực hiện.
             </p>
           )}
         </div>
