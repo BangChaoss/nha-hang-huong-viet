@@ -60,8 +60,6 @@ class OrderServiceTest {
     @Mock
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    @Mock
-    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private OrderService orderService;
 
