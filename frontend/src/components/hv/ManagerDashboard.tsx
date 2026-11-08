@@ -13,6 +13,7 @@ import {
   Eye,
   Loader2,
   BarChart3,
+  MessagesSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
@@ -36,6 +37,7 @@ import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
 import { MenuManagement } from "@/features/menu/components/menu-management";
 import { RevenueReport } from "@/features/report/components/revenue-report";
+import { FeedbackManagement } from "@/features/feedback/components/feedback-management";
 import { BackButton } from "@/components/hv/BackButton";
 import { StaffManagement } from "@/components/hv/StaffManagement";
 import { useSession } from "@/lib/auth-session";
@@ -49,7 +51,8 @@ const week = [
   { d: "T7", v: 38.9 },
 ];
 
-export type ManagerTab = "overview" | "reports" | "permissions" | "vouchers" | "loyalty" | "tables";
+export type ManagerTab =
+  "overview" | "reports" | "feedback" | "permissions" | "vouchers" | "loyalty" | "tables";
 
 export interface ManagerDashboardProps {
   activeTab?: ManagerTab;
@@ -199,6 +202,13 @@ export function ManagerDashboard({
           Báo cáo thống kê
         </Button>
         <Button
+          variant={activeTab === "feedback" ? "default" : "outline"}
+          onClick={() => handleTabChange("feedback")}
+        >
+          <MessagesSquare className="mr-2 h-4 w-4" />
+          Đánh giá khách hàng
+        </Button>
+        <Button
           variant={activeTab === "permissions" ? "default" : "outline"}
           onClick={() => handleTabChange("permissions")}
         >
@@ -228,6 +238,7 @@ export function ManagerDashboard({
         </Button>
       </div>
       {activeTab === "reports" && <RevenueReport />}
+      {activeTab === "feedback" && <FeedbackManagement />}
       {activeTab === "tables" && <TableManagement />}
       {activeTab === "permissions" && (
         <section className="space-y-4">
