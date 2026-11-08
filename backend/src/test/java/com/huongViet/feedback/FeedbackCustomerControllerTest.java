@@ -94,3 +94,4 @@ class FeedbackCustomerControllerTest {
             .andExpect(jsonPath("$.content[0].id").value("fb-1"));
     }
 }
+
