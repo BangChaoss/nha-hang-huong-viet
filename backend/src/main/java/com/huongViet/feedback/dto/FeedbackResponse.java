@@ -30,5 +30,22 @@ public record FeedbackResponse(
             feedback.getCreatedAt()
         );
     }
-}
 
+    /**
+     * Bản rút gọn cho trang công khai: không lộ SĐT, mã khách hàng và hóa đơn của người đánh giá.
+     */
+    public static FeedbackResponse forPublic(Feedback feedback) {
+        return new FeedbackResponse(
+            feedback.getId(),
+            null,
+            feedback.getGuestName(),
+            null,
+            null,
+            feedback.getRating(),
+            feedback.getComment(),
+            feedback.getStaffResponse(),
+            feedback.getIsPublic(),
+            feedback.getCreatedAt()
+        );
+    }
+}

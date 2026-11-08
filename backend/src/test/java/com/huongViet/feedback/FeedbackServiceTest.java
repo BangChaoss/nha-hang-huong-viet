@@ -57,7 +57,7 @@ class FeedbackServiceTest {
             "customer_id", "user-1",
             "status", "PAID"
         );
-        when(jdbcTemplate.queryForList(anyString(), eq("inv-100")))
+        when(jdbcTemplate.queryForList(anyString(), eq("inv-100"), eq("inv-100")))
             .thenReturn(List.of(invoiceRow));
 
         Feedback savedFeedback = new Feedback("user-1", "nguyenvana", "0912345678", "inv-100", 5, "Món ăn rất ngon, phục vụ chu đáo!");
@@ -99,6 +99,8 @@ class FeedbackServiceTest {
 
         when(feedbackRepository.findTopByCustomerIdAndDeletedAtIsNullOrderByCreatedAtDesc("user-1"))
             .thenReturn(Optional.empty());
+        when(jdbcTemplate.queryForList(anyString(), eq("inv-100"), eq("inv-100")))
+            .thenReturn(List.of(Map.of("id", "inv-100", "customer_id", "user-1", "status", "PAID")));
         when(feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull("inv-100"))
             .thenReturn(true); // Đã tồn tại review cho invoice này
 
@@ -125,7 +127,7 @@ class FeedbackServiceTest {
             "customer_id", "user-1",
             "status", "UNPAID"
         );
-        when(jdbcTemplate.queryForList(anyString(), eq("inv-100")))
+        when(jdbcTemplate.queryForList(anyString(), eq("inv-100"), eq("inv-100")))
             .thenReturn(List.of(unpaidRow));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
@@ -151,7 +153,7 @@ class FeedbackServiceTest {
             "customer_id", "user-other",
             "status", "PAID"
         );
-        when(jdbcTemplate.queryForList(anyString(), eq("inv-100")))
+        when(jdbcTemplate.queryForList(anyString(), eq("inv-100"), eq("inv-100")))
             .thenReturn(List.of(otherCustomerRow));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
@@ -197,7 +199,7 @@ class FeedbackServiceTest {
     @Test
     @DisplayName("Thống kê feedback tính đúng điểm trung bình và phân bổ sao")
     void testGetFeedbackStats() {
-        when(feedbackRepository.count()).thenReturn(3L);
+        when(feedbackRepository.countByDeletedAtIsNull()).thenReturn(3L);
         when(feedbackRepository.countByRatingAndDeletedAtIsNull(5)).thenReturn(2L);
         when(feedbackRepository.countByRatingAndDeletedAtIsNull(4)).thenReturn(1L);
         when(feedbackRepository.countByRatingAndDeletedAtIsNull(3)).thenReturn(0L);
@@ -214,5 +216,44 @@ class FeedbackServiceTest {
         assertEquals(2L, stats.ratingCounts().get(5));
         assertEquals(1L, stats.ratingCounts().get(4));
         assertEquals(1L, stats.unrepliedCount());
+    }
+
+    @Test
+    @DisplayName("submitFeedback: chấp nhận mã in trên hóa đơn (HV-...) và lưu theo id thật của hóa đơn")
+    void testSubmitFeedbackByInvoiceCode() {
+        String code = "HV-20261108120000-ABCD1234";
+        CreateFeedbackRequest request = new CreateFeedbackRequest(code, 4, "Ổn");
+
+        when(feedbackRepository.findTopByCustomerIdAndDeletedAtIsNullOrderByCreatedAtDesc("user-1"))
+            .thenReturn(Optional.empty());
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", "inv-uuid-1");
+        row.put("customer_id", null); // hóa đơn khách vãng lai
+        row.put("status", "PAID");
+        when(jdbcTemplate.queryForList(anyString(), eq(code), eq(code))).thenReturn(List.of(row));
+        when(feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull("inv-uuid-1")).thenReturn(false);
+        when(feedbackRepository.save(any(Feedback.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        FeedbackResponse response = feedbackService.submitFeedback(customer, request);
+
+        assertEquals("inv-uuid-1", response.invoiceId());
+        verify(feedbackRepository).existsByInvoiceIdAndDeletedAtIsNull("inv-uuid-1");
+    }
+
+    @Test
+    @DisplayName("BR-47 & bảo mật: danh sách công khai không trả về SĐT, mã khách hàng và hóa đơn")
+    void testPublicFeedbacksHidePersonalData() {
+        Feedback fb = new Feedback("user-1", "nguyenvana", "0912345678", "inv-100", 5, "Ngon");
+        fb.setId("fb-1");
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 10);
+        when(feedbackRepository.findByIsPublicTrueAndDeletedAtIsNullOrderByCreatedAtDesc(pageable))
+            .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(fb), pageable, 1));
+
+        FeedbackResponse res = feedbackService.getPublicFeedbacks(pageable).getContent().get(0);
+
+        assertEquals("nguyenvana", res.guestName());
+        assertNull(res.guestPhone());
+        assertNull(res.customerId());
+        assertNull(res.invoiceId());
     }
 }

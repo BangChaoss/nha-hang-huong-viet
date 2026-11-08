@@ -71,12 +71,23 @@ public class FeedbackService {
                 }
             });
 
-        String invoiceId = request.invoiceId() != null && !request.invoiceId().trim().isEmpty() 
-            ? request.invoiceId().trim() 
+        String invoiceRef = request.invoiceId() != null && !request.invoiceId().trim().isEmpty()
+            ? request.invoiceId().trim()
             : null;
+        String invoiceId = null;
 
-        if (invoiceId != null) {
-            // 2. Chặn spam trùng lặp: Mỗi hóa đơn chỉ được đánh giá duy nhất 1 lần (BR-45, E2)
+        if (invoiceRef != null) {
+            // 2. Tìm hóa đơn theo id (UUID) hoặc mã in trên hóa đơn (HV-...): phải tồn tại (E1)
+            String sql = "SELECT id, customer_id, status FROM invoices WHERE id = ? OR invoice_code = ? LIMIT 1";
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, invoiceRef, invoiceRef);
+            if (rows.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hóa đơn cần đánh giá.");
+            }
+
+            Map<String, Object> invoiceRow = rows.get(0);
+            invoiceId = (String) invoiceRow.get("id");
+
+            // 3. Chặn spam trùng lặp: Mỗi hóa đơn chỉ được đánh giá duy nhất 1 lần (BR-45, E2)
             if (feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull(invoiceId)) {
                 throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -84,14 +95,7 @@ public class FeedbackService {
                 );
             }
 
-            // 3. Kiểm tra hóa đơn trong DB: Phải tồn tại và đã thanh toán hoàn thành (PAID) (E1)
-            String sql = "SELECT id, customer_id, status FROM invoices WHERE id = ?";
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, invoiceId);
-            if (rows.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hóa đơn cần đánh giá.");
-            }
-
-            Map<String, Object> invoiceRow = rows.get(0);
+            // 4. Hóa đơn phải đã thanh toán hoàn thành (PAID) (E1)
             String status = (String) invoiceRow.get("status");
             if (!"PAID".equalsIgnoreCase(status)) {
                 throw new ResponseStatusException(
@@ -100,7 +104,7 @@ public class FeedbackService {
                 );
             }
 
-            // 4. Kiểm tra quyền sở hữu hóa đơn
+            // 5. Kiểm tra quyền sở hữu hóa đơn (hóa đơn khách vãng lai không gắn tài khoản thì bỏ qua)
             String invoiceCustomerId = (String) invoiceRow.get("customer_id");
             if (invoiceCustomerId != null && !invoiceCustomerId.equals(currentCustomer.getId())) {
                 throw new ResponseStatusException(
@@ -162,7 +166,7 @@ public class FeedbackService {
     @Transactional(readOnly = true)
     public Page<FeedbackResponse> getPublicFeedbacks(Pageable pageable) {
         return feedbackRepository.findByIsPublicTrueAndDeletedAtIsNullOrderByCreatedAtDesc(pageable)
-            .map(FeedbackResponse::from);
+            .map(FeedbackResponse::forPublic);
     }
 
     /**
@@ -216,7 +220,7 @@ public class FeedbackService {
      */
     @Transactional(readOnly = true)
     public FeedbackStatsResponse getFeedbackStats() {
-        long total = feedbackRepository.count();
+        long total = feedbackRepository.countByDeletedAtIsNull();
         if (total == 0L) {
             return new FeedbackStatsResponse(0L, 0.0, Map.of(1, 0L, 2, 0L, 3, 0L, 4, 0L, 5, 0L), 0L);
         }

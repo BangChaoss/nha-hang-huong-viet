@@ -59,6 +59,11 @@ public interface FeedbackRepository extends JpaRepository<Feedback, String> {
     );
 
     /**
+     * Đếm tổng số feedback chưa bị xóa mềm.
+     */
+    long countByDeletedAtIsNull();
+
+    /**
      * Đếm số lượng feedback theo số sao.
      */
     long countByRatingAndDeletedAtIsNull(Integer rating);

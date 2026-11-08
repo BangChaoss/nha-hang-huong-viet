@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record CreateFeedbackRequest(
+    @Size(max = 50, message = "Mã hóa đơn không hợp lệ")
     String invoiceId,
 
     @NotNull(message = "Số sao đánh giá không được để trống")
