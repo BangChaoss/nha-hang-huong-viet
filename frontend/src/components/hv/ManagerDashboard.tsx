@@ -12,6 +12,7 @@ import {
   Trash2,
   Eye,
   Loader2,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
@@ -34,6 +35,7 @@ import {
 import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
 import { MenuManagement } from "@/features/menu/components/menu-management";
+import { RevenueReport } from "@/features/report/components/revenue-report";
 import { BackButton } from "@/components/hv/BackButton";
 import { StaffManagement } from "@/components/hv/StaffManagement";
 import { useSession } from "@/lib/auth-session";
@@ -47,12 +49,7 @@ const week = [
   { d: "T7", v: 38.9 },
 ];
 
-export type ManagerTab =
-  | "overview"
-  | "permissions"
-  | "vouchers"
-  | "loyalty"
-  | "tables";
+export type ManagerTab = "overview" | "reports" | "permissions" | "vouchers" | "loyalty" | "tables";
 
 export interface ManagerDashboardProps {
   activeTab?: ManagerTab;
@@ -195,6 +192,13 @@ export function ManagerDashboard({
           Tổng quan
         </Button>
         <Button
+          variant={activeTab === "reports" ? "default" : "outline"}
+          onClick={() => handleTabChange("reports")}
+        >
+          <BarChart3 className="mr-2 h-4 w-4" />
+          Báo cáo thống kê
+        </Button>
+        <Button
           variant={activeTab === "permissions" ? "default" : "outline"}
           onClick={() => handleTabChange("permissions")}
         >
@@ -223,6 +227,7 @@ export function ManagerDashboard({
           Sơ đồ & Bàn ăn
         </Button>
       </div>
+      {activeTab === "reports" && <RevenueReport />}
       {activeTab === "tables" && <TableManagement />}
       {activeTab === "permissions" && (
         <section className="space-y-4">
