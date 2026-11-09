@@ -63,9 +63,9 @@ public class ReportRepository {
         String vnpaySql = """
             SELECT COALESCE(SUM(amount), 0) AS vnpay_total
             FROM payment_orders
-            WHERE status = 'SUCCESS'
-              AND COALESCE(updated_at, created_at) >= ?
-              AND COALESCE(updated_at, created_at) <= ?
+            WHERE status IN ('PAID', 'SUCCESS')
+              AND COALESCE(paid_at, created_at) >= ?
+              AND COALESCE(paid_at, created_at) <= ?
             """;
 
         BigDecimal vnpayRevenue = jdbcTemplate.query(vnpaySql, rs -> {
