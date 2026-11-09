@@ -25,7 +25,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export type LoyaltyRate = { earnRatePercent: number; updatedAt: string | null };
+export type LoyaltyRate = {
+  earnRatePercent: number;
+  pointValueVnd: number;
+  updatedAt: string | null;
+};
+
 export type PaymentOrderStatus = {
   orderId: string;
   status: "PENDING" | "PAID" | "FAILED";
@@ -39,8 +44,17 @@ export type PaymentOrderStatus = {
 
 export const paymentApi = {
   getLoyaltyBalance: (phoneNumber: string) =>
-    request<{ phoneNumber: string; pointsBalance: number }>(`/api/payments/loyalty/${encodeURIComponent(phoneNumber)}`),
-  createVnpay: (payload: { tableId: string; subtotal: number; phoneNumber: string; voucherCode?: string; pointsToUse?: number; usePoints?: boolean }) =>
+    request<{ phoneNumber: string; pointsBalance: number; pointValueVnd: number }>(
+      `/api/payments/loyalty/${encodeURIComponent(phoneNumber)}`,
+    ),
+  createVnpay: (payload: {
+    tableId: string;
+    subtotal: number;
+    phoneNumber: string;
+    voucherCode?: string;
+    pointsToUse?: number;
+    usePoints?: boolean;
+  }) =>
     request<{ orderId: string; paymentUrl: string }>("/api/payments/vnpay/create", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -48,9 +62,9 @@ export const paymentApi = {
   order: (id: string) =>
     request<PaymentOrderStatus>(`/api/payments/vnpay/orders/${encodeURIComponent(id)}`),
   getLoyaltyRate: () => request<LoyaltyRate>("/api/admin/loyalty/settings"),
-  updateLoyaltyRate: (earnRatePercent: number) =>
+  updateLoyaltyRate: (payload: { earnRatePercent: number; pointValueVnd?: number }) =>
     request<LoyaltyRate>("/api/admin/loyalty/settings", {
       method: "PUT",
-      body: JSON.stringify({ earnRatePercent }),
+      body: JSON.stringify(payload),
     }),
 };
