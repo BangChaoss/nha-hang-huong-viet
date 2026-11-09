@@ -11,10 +11,13 @@ import {
   Phone,
   RefreshCw,
   ShieldCheck,
+  UserCheck,
+  Award,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FormField } from "@/components/hv/AccountLayout";
 import { initials } from "@/components/hv/AccountMenu";
 import {
@@ -38,6 +41,7 @@ const PROFILE_KEY = ["account", "profile"] as const;
 
 export function ProfilePage() {
   const profile = useQuery({ queryKey: PROFILE_KEY, queryFn: profileApi.get });
+  const [activeTab, setActiveTab] = useState<string>("info");
 
   return (
     <div className="space-y-6">
@@ -50,11 +54,13 @@ export function ProfilePage() {
           <h1 className="text-3xl font-semibold sm:text-4xl">Hồ sơ cá nhân</h1>
         </div>
       </div>
+
       {profile.isPending && (
         <div className="flex justify-center py-20 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       )}
+
       {profile.isError && (
         <div className="surface-card p-8 text-center">
           <p className="text-sm text-muted-foreground">{profile.error.message}</p>
@@ -64,13 +70,33 @@ export function ProfilePage() {
           </Button>
         </div>
       )}
+
       {profile.data && (
         <div className="grid gap-6 lg:grid-cols-[300px_1fr] xl:grid-cols-[340px_1fr] 2xl:grid-cols-[380px_1fr]">
           <ProfileSummary user={profile.data} />
+          
           <div className="space-y-6">
-            <ProfileForm user={profile.data} />
-            <LoyaltyWallet />
-            <PasswordForm />
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="info" className="flex items-center gap-2">
+                  <UserCheck className="h-4 w-4" />
+                  <span>Thông tin & Mật khẩu</span>
+                </TabsTrigger>
+                <TabsTrigger value="wallet" className="flex items-center gap-2">
+                  <Award className="h-4 w-4" />
+                  <span>Ví điểm & Voucher</span>
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="info" className="space-y-6 pt-4">
+                <ProfileForm user={profile.data} />
+                <PasswordForm />
+              </TabsContent>
+
+              <TabsContent value="wallet" className="pt-4">
+                <LoyaltyWallet />
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
       )}
@@ -104,7 +130,7 @@ function ProfileSummary({ user }: { user: UserAccount }) {
               <Icon className="h-4 w-4" />
               {label}
             </dt>
-            <dd className="min-w-0 truncate text-right" title={value}>
+            <dd className="min-w-0 truncate text-right font-medium" title={value}>
               {value}
             </dd>
           </div>
@@ -162,9 +188,7 @@ function ProfileForm({ user }: { user: UserAccount }) {
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-medium sm:text-2xl">Thông tin cá nhân</h2>
-          <p className="text-sm text-muted-foreground">
-            Tên đăng nhập, email và số điện thoại liên hệ.
-          </p>
+          <p className="text-sm text-muted-foreground">Tên đăng nhập, email và số điện thoại liên hệ.</p>
         </div>
         {!editing && (
           <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
@@ -290,7 +314,7 @@ function PasswordForm() {
         <button
           type="button"
           onClick={() => setShow((s) => !s)}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground cursor-pointer"
         >
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           {show ? "Ẩn" : "Hiện"}

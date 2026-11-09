@@ -28,9 +28,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * UC-15: Gọi món và quản lý đơn hàng.
- */
 @Service
 @Transactional(readOnly = true)
 public class OrderService {
@@ -75,32 +72,23 @@ public class OrderService {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /**
-     * UC-15: Tạo đơn hàng cho bàn đang sử dụng.
-     * - BR-27/BR-31: chỉ gọi món được cho bàn có trạng thái OCCUPIED.
-     * - BR-33: món không còn sẵn sàng không được thêm vào đơn.
-     * - BR-32: chỉ tạo phiếu bếp khi đơn được gửi đi (submit != false).
-     */
     @Transactional
     public OrderResponse create(CreateOrderRequest request, String staffId) {
         RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(request.tableId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
 
-        // BR-27 / BR-31
         if (table.getStatus() != TableStatus.OCCUPIED) {
             logger.warn("BR-27/BR-31 violation blocked: cannot order for table {} in status {}",
                 table.getTableNumber(), table.getStatus());
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Chỉ có thể gọi món cho bàn đang sử dụng. Vui lòng check-in khách trước khi gọi món.");
+                "Chỉ có thể gọi món cho bàn đang sử dụng. Vui lòng mở bàn trước khi gọi món.");
         }
 
-        // Kiểm tra toàn bộ món trước khi bắt đầu lưu đơn.
         List<MenuItem> menuItems = new ArrayList<>();
         for (OrderItemRequest itemRequest : request.items()) {
             MenuItem menuItem = menuItemRepository.findByIdAndDeletedAtIsNull(itemRequest.menuItemId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy món ăn."));
 
-            // BR-33 — báo món lỗi đầu tiên
             if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
                 logger.warn("BR-33 violation blocked: dish {} is not available", menuItem.getItemName());
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -111,24 +99,16 @@ public class OrderService {
         }
 
         OrderType orderType = request.orderType() != null ? request.orderType() : OrderType.DINE_IN;
-        Order order = new Order(
-            UUID.randomUUID().toString(),
-            table.getId(),
-            staffId,
-            orderType
-        );
+        Order order = new Order(UUID.randomUUID().toString(), table.getId(), staffId, orderType);
         order.setTable(table);
         Order savedOrder = orderRepository.save(order);
-        if (savedOrder == null) {
-            savedOrder = order;
-        }
+        if (savedOrder == null) savedOrder = order;
 
         List<OrderItem> savedItems = new ArrayList<>();
         for (int i = 0; i < request.items().size(); i++) {
             OrderItemRequest itemRequest = request.items().get(i);
             MenuItem menuItem = menuItems.get(i);
 
-            // Giữ giá tại thời điểm gọi món để lịch sử đơn không đổi theo giá thực đơn.
             OrderItem orderItem = new OrderItem(
                 UUID.randomUUID().toString(),
                 savedOrder.getId(),
@@ -142,7 +122,6 @@ public class OrderService {
             savedItems.add(savedItem != null ? savedItem : orderItem);
         }
 
-        // BR-32: chỉ tạo phiếu bếp khi đơn được gửi đi
         boolean submit = request.submit() == null || request.submit();
         if (submit) {
             for (int i = 0; i < savedItems.size(); i++) {
@@ -161,28 +140,22 @@ public class OrderService {
                 ticket.setPriority(1);
                 ticket.setStatus(CookingStatus.QUEUED);
                 KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
-                if (savedTicket == null) {
-                    savedTicket = ticket;
-                }
+                if (savedTicket == null) savedTicket = ticket;
 
                 publishTicketEvent(new KitchenTicketEvent("CREATED", KitchenTicketResponse.from(savedTicket)));
             }
         }
 
-        logger.info("Created order {} for table {} with {} item(s), submit={}",
-            savedOrder.getId(), table.getTableNumber(), savedItems.size(), submit);
-
         return OrderResponse.from(savedOrder, savedItems);
     }
 
-
-    /**
-     * Thanh toán tiền mặt cho tất cả đơn đã gửi bếp còn mở của một bàn.
-     * Tổng tiền được tính hoàn toàn từ unit_price_snapshot trong DB, không tin tổng frontend.
-     * Món đã hủy không tính tiền; áp dụng voucher trước điểm và chỉ đóng đơn sau khi ghi hóa đơn.
-     */
     @Transactional
     public CashCheckoutResponse checkoutCash(String tableId, CashCheckoutRequest request) {
+        return checkoutWithPaymentMethod(tableId, request, "TIEN_MAT");
+    }
+
+    @Transactional
+    public CashCheckoutResponse checkoutWithPaymentMethod(String tableId, CashCheckoutRequest request, String paymentMethod) {
         RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(tableId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
         List<Order> openOrders = orderRepository.findByTableIdOrderByCreatedAtDesc(tableId).stream()
@@ -190,7 +163,7 @@ public class OrderService {
         if (openOrders.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn chưa có món đã gửi bếp để thanh toán.");
         }
-        // Tính tiền từ snapshot trong DB và loại món đã hủy khỏi tổng thanh toán.
+
         BigDecimal subtotal = BigDecimal.ZERO;
         for (Order order : openOrders) {
             for (OrderItem item : orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId())) {
@@ -202,46 +175,62 @@ public class OrderService {
         subtotal = subtotal.setScale(2, RoundingMode.HALF_UP);
         BigDecimal vat = subtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
         BigDecimal beforeDiscount = subtotal.add(vat);
+
         String phone = request.phoneNumber() == null ? "" : request.phoneNumber().replaceAll("[\\s()-]", "").trim();
         String voucherCode = request.voucherCode() == null ? "" : request.voucherCode().trim().toUpperCase(java.util.Locale.ROOT);
         BigDecimal discount = BigDecimal.ZERO;
+
         if (!voucherCode.isBlank()) {
             if (phone.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhập số điện thoại để sử dụng voucher.");
             VoucherValidationResponse check = voucherService.validate(new VoucherValidationRequest(voucherCode, phone, beforeDiscount));
             if (!check.valid()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, check.message());
             discount = check.discountAmount().min(beforeDiscount);
         }
+
         BigDecimal afterDiscount = beforeDiscount.subtract(discount).max(BigDecimal.ZERO);
-        BigDecimal redeemed = BigDecimal.ZERO;
+
+        LoyaltySettings currentSettings = loyaltySettings.findById("default")
+            .orElseGet(() -> loyaltySettings.save(new LoyaltySettings("default", new BigDecimal("5.000"), BigDecimal.ONE)));
+        BigDecimal pointValueVnd = currentSettings.getPointValueVnd();
+
+        BigDecimal pointsRedeemed = BigDecimal.ZERO;
+        BigDecimal pointsDiscountAmount = BigDecimal.ZERO;
         LoyaltyAccount account = null;
+
         if (!phone.isBlank()) {
             if (!phone.matches("^[0-9+]{8,20}$")) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Số điện thoại không hợp lệ.");
-            account = loyaltyAccounts.findByCustomerPhone(phone).orElse(null);
+            // SỬA TẠI ĐÂY: Dùng Pessimistic Lock lockByCustomerPhone để tránh Race Condition
+            account = loyaltyAccounts.lockByCustomerPhone(phone).orElse(null);
             if (Boolean.TRUE.equals(request.usePoints()) && account != null) {
-                // Điểm chỉ được quy đổi theo bội số 100; không vượt số dư hoặc hóa đơn sau voucher.
-                BigDecimal redeemable = account.getPointsBalance().min(afterDiscount);
-                redeemed = redeemable.divide(new BigDecimal("100"), 0, RoundingMode.DOWN)
-                    .multiply(new BigDecimal("100")).setScale(0, RoundingMode.UNNECESSARY);
-                if (redeemed.signum() > 0) account.redeemPoints(redeemed);
+                BigDecimal balance = account.getPointsBalance();
+                if (balance != null && balance.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal maxPointsPossible = afterDiscount.divide(pointValueVnd, 0, RoundingMode.DOWN);
+                    BigDecimal availablePoints = balance.min(maxPointsPossible).setScale(0, RoundingMode.DOWN);
+                    // SỬA TẠI ĐÂY: Nếu có pointsToUse thì dùng đúng số điểm đó, nếu không mới dùng toàn bộ điểm khả dụng
+                    if (request.pointsToUse() != null && request.pointsToUse().compareTo(BigDecimal.ZERO) > 0) {
+                        pointsRedeemed = request.pointsToUse().setScale(0, RoundingMode.DOWN).min(availablePoints);
+                    } else {
+                        pointsRedeemed = availablePoints;
+                    }
+                    if (pointsRedeemed.compareTo(BigDecimal.ZERO) > 0) {
+                        account.redeemPoints(pointsRedeemed);
+                        pointsDiscountAmount = pointsRedeemed.multiply(pointValueVnd).setScale(2, RoundingMode.HALF_UP);
+                    }
+                }
             }
         } else if (Boolean.TRUE.equals(request.usePoints())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhập số điện thoại để sử dụng điểm.");
         }
-        BigDecimal total = afterDiscount.subtract(redeemed).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
-        if (total.signum() < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tổng thanh toán không hợp lệ.");
 
-        BigDecimal awarded = BigDecimal.ZERO;
+        BigDecimal total = afterDiscount.subtract(pointsDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal pointsAwarded = BigDecimal.ZERO;
         if (!phone.isBlank()) {
-            BigDecimal rate = loyaltySettings.findById("default")
-                .orElseGet(() -> loyaltySettings.save(new LoyaltySettings("default", new BigDecimal("5.000"))))
-                .getEarnRatePercent();
-            // Làm tròn điểm thưởng đến hàng trăm gần nhất (100, 200, 300, ...).
-            BigDecimal rawPoints = total.multiply(rate).divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP);
-            awarded = rawPoints.divide(new BigDecimal("100"), 0, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100")).setScale(0, RoundingMode.UNNECESSARY);
+            BigDecimal earnRate = currentSettings.getEarnRatePercent();
+            BigDecimal rawEarnAmount = total.multiply(earnRate).divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
+            pointsAwarded = rawEarnAmount.divide(pointValueVnd, 0, RoundingMode.HALF_UP);
         }
 
-        // Tạo hóa đơn thật trước khi ghi voucher_usages để invoice_id luôn tham chiếu invoices.id.
         String voucherId = null;
         if (!voucherCode.isBlank()) {
             List<String> ids = jdbcTemplate.query(
@@ -249,33 +238,47 @@ public class OrderService {
                 (rs, rowNum) -> rs.getString(1), voucherCode);
             if (!ids.isEmpty()) voucherId = ids.get(0);
         }
-        String voucherInvoiceId = createCheckoutInvoices(openOrders, phone, voucherId, voucherCode,
-            discount, redeemed, awarded);
+
+        String voucherInvoiceId = createCheckoutInvoices(
+            openOrders, phone, voucherId, voucherCode, discount, pointsDiscountAmount, pointsAwarded
+        );
+
         if (!voucherCode.isBlank()) {
             VoucherValidationResponse used = voucherService.redeemForInvoice(
                 new VoucherValidationRequest(voucherCode, phone, beforeDiscount), voucherInvoiceId);
             if (!used.valid()) throw new ResponseStatusException(HttpStatus.CONFLICT, used.message());
         }
+
         if (!phone.isBlank()) {
             if (account == null) account = new LoyaltyAccount(java.util.UUID.randomUUID().toString(), phone);
-            account.addPoints(awarded);
+            account.addPoints(pointsAwarded);
             loyaltyAccounts.save(account);
         }
+
         for (Order order : openOrders) {
             order.setStatus(OrderStatus.COMPLETED);
             order.setClosedAt(java.time.LocalDateTime.now());
             orderRepository.save(order);
         }
-        // Chỉ giải phóng bàn sau khi hóa đơn, voucher và điểm đã được xử lý thành công.
+
+        TableStatus oldStatus = table.getStatus();
         table.setStatus(TableStatus.AVAILABLE);
         tableRepository.save(table);
-        return new CashCheckoutResponse(tableId, subtotal, vat, discount, redeemed, total, awarded, table.getTableNumber());
+
+        // BỔ SUNG: Phát WebSocket thông báo bàn đã chuyển sang AVAILABLE cho POS & Sơ đồ mặt bằng
+        try {
+            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+            messagingTemplate.convertAndSend("/topic/table-status",
+                new com.huongViet.table.TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, TableStatus.AVAILABLE, zoneName));
+        } catch (Exception ex) {
+            logger.warn("Không thể broadcast trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
+        }
+
+        return new CashCheckoutResponse(
+            tableId, subtotal, vat, discount, pointsRedeemed, total, pointsAwarded, table.getTableNumber()
+        );
     }
 
-    /**
-     * Tìm tài khoản khách hàng (đang hoạt động) theo SĐT nhập lúc thanh toán để gắn vào hóa đơn,
-     * nhờ đó khách có thể đánh giá đúng hóa đơn của mình (UC19). Khách vãng lai trả về null.
-     */
     private String findCustomerIdByPhone(String phone) {
         if (phone == null || phone.isBlank()) return null;
         List<String> ids = jdbcTemplate.queryForList(
@@ -284,28 +287,22 @@ public class OrderService {
         return ids.isEmpty() ? null : ids.get(0);
     }
 
-    /**
-     * Lưu hóa đơn và snapshot món ăn trong cùng transaction với checkout.
-     * Voucher được gắn vào hóa đơn đầu tiên vì một checkout có thể gom nhiều order của cùng bàn.
-     */
     private String createCheckoutInvoices(List<Order> orders, String phone, String voucherId,
                                           String voucherCode, BigDecimal voucherDiscount,
-                                          BigDecimal pointsRedeemed, BigDecimal pointsAwarded) {
+                                          BigDecimal pointsDiscountAmount, BigDecimal pointsAwarded) {
         String voucherInvoiceId = null;
         boolean first = true;
         String customerId = findCustomerIdByPhone(phone);
         for (Order order : orders) {
-            // Hóa đơn chỉ lưu các món được tính tiền; món hủy vẫn được giữ trên đơn để đối soát.
             List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
                 .filter(i -> i.getCookingStatus() != CookingStatus.CANCELLED).toList();
             BigDecimal itemSubtotal = items.stream()
                 .map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
             BigDecimal tax = itemSubtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
-            // Chỉ hóa đơn đầu tiên giữ khoản giảm giá và điểm của lần thanh toán gộp.
             BigDecimal invoiceVoucherDiscount = first ? voucherDiscount : BigDecimal.ZERO;
-            BigDecimal invoicePoints = first ? pointsRedeemed : BigDecimal.ZERO;
-            BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePoints)
+            BigDecimal invoicePointsDiscount = first ? pointsDiscountAmount : BigDecimal.ZERO;
+            BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePointsDiscount)
                 .max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
             String invoiceId = UUID.randomUUID().toString();
             String invoiceCode = "HV-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
@@ -318,10 +315,9 @@ public class OrderService {
                     "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
                 invoiceId, invoiceCode, order.getId(), customerId, SystemUserInitializer.SYSTEM_USER_ID, currentVoucherId,
-                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePoints),
+                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
                 tax, finalAmount, earned);
             for (OrderItem item : items) {
-                // Lưu tên món dạng snapshot để hóa đơn vẫn đọc được nếu món bị xóa sau này.
                 String dishName = item.getMenuItem() != null ? item.getMenuItem().getItemName() :
                     menuItemRepository.findById(item.getMenuItemId()).map(MenuItem::getItemName).orElse("Món đã xóa");
                 BigDecimal lineTotal = item.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()))
@@ -337,41 +333,31 @@ public class OrderService {
         return voucherInvoiceId;
     }
 
-    /**
-     * Tra cứu đơn hàng theo bàn và/hoặc trạng thái; thứ tự phụ thuộc bộ lọc được chọn.
-     */
     public List<OrderResponse> listAll(String tableId, OrderStatus status) {
         List<Order> orders;
-
         if (tableId != null && !tableId.isBlank()) {
             orders = orderRepository.findByTableIdOrderByCreatedAtDesc(tableId);
             if (status != null) {
-                orders = orders.stream()
-                    .filter(order -> order.getStatus() == status)
-                    .toList();
+                orders = orders.stream().filter(order -> order.getStatus() == status).toList();
             }
         } else if (status != null) {
             orders = orderRepository.findByStatusOrderByCreatedAtAsc(status);
         } else {
             orders = orderRepository.findAllByOrderByCreatedAtDesc();
         }
-
         return orders.stream().map(this::toResponse).toList();
     }
 
-    /** Lấy chi tiết đơn hàng cùng các dòng món theo thứ tự tạo. */
     public OrderResponse getById(String id) {
         Order order = orderRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
         return toResponse(order);
     }
 
-    /** Lấy đơn đang mở mới nhất của bàn để tiếp tục phục vụ. */
     public OrderResponse getActiveByTable(String tableId) {
         Order order = orderRepository
             .findFirstByTableIdAndStatusOrderByCreatedAtDesc(tableId, OrderStatus.IN_PROGRESS)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                "Bàn này chưa có đơn hàng đang mở."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bàn này chưa có đơn hàng đang mở."));
         return toResponse(order);
     }
 
@@ -380,11 +366,6 @@ public class OrderService {
         return OrderResponse.from(order, items);
     }
 
-    /**
-     * UC-17 / STT 84: Thêm một món vào đơn đang mở.
-     *
-     * <p>BR-40: món đã hết hàng thì không được thêm vào đơn.</p>
-     */
     @Transactional
     public OrderResponse addItem(String orderId, AddOrderItemRequest request, String staffId) {
         Order order = findOpenOrderOrThrow(orderId);
@@ -393,7 +374,6 @@ public class OrderService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy món ăn."));
 
         if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
-            logger.warn("BR-40 violation blocked: dish {} is not available", menuItem.getItemName());
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Món " + menuItem.getItemName() + " hiện không còn sẵn. Vui lòng chọn món khác.");
         }
@@ -412,18 +392,10 @@ public class OrderService {
         writeAudit(savedItem.getId(), staffId, "ADD_ITEM", 0, savedItem.getQuantity(),
             CookingStatus.QUEUED, savedItem.getCookingStatus(), "Thêm món vào đơn");
 
-        // Đẩy phiếu bếp mới để bếp thấy ngay (BR-34, BR-38).
         createKitchenTicket(order, savedItem, menuItem);
-
-        logger.info("Added dish {} to order {}", savedItem.getId(), order.getId());
         return toResponse(order);
     }
 
-    /**
-     * UC-17 / STT 84: Đổi số lượng hoặc ghi chú của một món trong đơn.
-     *
-     * <p>BR-39: món bếp đã nấu xong (READY / SERVED) thì không được điều chỉnh.</p>
-     */
     @Transactional
     public OrderResponse updateItem(String orderId, String itemId, UpdateOrderItemRequest request, String staffId) {
         Order order = findOpenOrderOrThrow(orderId);
@@ -445,21 +417,10 @@ public class OrderService {
         writeAudit(savedItem.getId(), staffId, "UPDATE_ITEM", oldQuantity, savedItem.getQuantity(),
             oldStatus, savedItem.getCookingStatus(), describeChange(oldQuantity, savedItem.getQuantity(), oldNote, savedItem.getNote()));
 
-        // BR-38: bếp phải thấy ngay thay đổi số lượng / ghi chú.
         syncKitchenTicket(savedItem);
-
-        logger.info("Updated order item {}: quantity {} -> {}", itemId, oldQuantity, savedItem.getQuantity());
         return toResponse(order);
     }
 
-    /**
-     * UC-17 / STT 85: Huỷ một món trong đơn.
-     *
-     * <p>BR-41: chỉ huỷ được món còn nằm ở mục chờ chế biến. Khi bếp đã xác nhận
-     * món đang nấu (PREPARING) trở đi thì không huỷ được nữa. Dòng món không bị xoá
-     * hẳn mà được đánh dấu CANCELLED — món đã huỷ không được tính vào hoá đơn
-     * (xem {@link OrderResponse#subtotal()}) nhưng vẫn còn trong lịch sử đối soát.</p>
-     */
     @Transactional
     public OrderResponse cancelItem(String orderId, String itemId, CancelOrderItemRequest request, String staffId) {
         Order order = findOpenOrderOrThrow(orderId);
@@ -480,24 +441,15 @@ public class OrderService {
         writeAudit(savedItem.getId(), staffId, "CANCEL_ITEM", oldQuantity, oldQuantity,
             oldStatus, CookingStatus.CANCELLED, reason);
 
-        // Huỷ luôn phiếu bếp tương ứng để bếp không nấu món đó nữa.
         if (ticket != null) {
             ticket.setStatus(CookingStatus.CANCELLED);
             KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
             publishTicketEvent(new KitchenTicketEvent("UPDATED", KitchenTicketResponse.from(savedTicket)));
         }
 
-        logger.info("Cancelled order item {} with reason: {}", itemId, reason);
         return toResponse(order);
     }
 
-    /**
-     * BR-41: chỉ món còn ở hàng đợi (QUEUED) mới được huỷ.
-     *
-     * <p>Khi bếp đã xác nhận món đang nấu — trạng thái món hoặc phiếu bếp đã sang
-     * PREPARING — thì món đã tiêu tốn nguyên liệu nên không huỷ được nữa, phải xử
-     * lý khi thanh toán.</p>
-     */
     private void assertCancellable(OrderItem item, KitchenTicket ticket) {
         CookingStatus itemStatus = item.getCookingStatus();
         if (itemStatus == CookingStatus.CANCELLED) {
@@ -510,27 +462,14 @@ public class OrderService {
             && ticketStatus != CookingStatus.CANCELLED;
 
         if (itemStatus != CookingStatus.QUEUED || ticketStarted) {
-            CookingStatus effective = (ticketStatus != null && ticketStatus != CookingStatus.CANCELLED)
-                ? ticketStatus
-                : itemStatus;
-            logger.warn("BR-41 violation blocked: cannot cancel item {} in status {}", item.getId(), effective);
-            throw new ResponseStatusException(HttpStatus.CONFLICT, effective == CookingStatus.PREPARING
-                ? "Món đang nấu nên không thể huỷ. Chỉ huỷ được món còn ở mục chờ chế biến."
-                : "Món đã qua khâu chờ chế biến nên không thể huỷ. Vui lòng xử lý khi thanh toán.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Chỉ huỷ được món còn ở mục chờ chế biến.");
         }
     }
 
-    /**
-     * BR-39: chỉ những món bếp chưa nấu xong mới được sửa số lượng / ghi chú.
-     */
     private void assertEditable(OrderItem item) {
         CookingStatus status = item.getCookingStatus();
         if (status == CookingStatus.READY || status == CookingStatus.SERVED || status == CookingStatus.CANCELLED) {
-            logger.warn("BR-39 violation blocked: item {} is already {}", item.getId(), status);
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                status == CookingStatus.CANCELLED
-                    ? "Món này đã được huỷ, không thể điều chỉnh."
-                    : "Món này đã được bếp nấu xong, không thể thay đổi. Vui lòng xử lý khi thanh toán.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Món đã hoàn tất hoặc đã hủy, không thể thay đổi.");
         }
     }
 
@@ -539,8 +478,7 @@ public class OrderService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
 
         if (order.getStatus() != OrderStatus.IN_PROGRESS) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Đơn hàng đã đóng, không thể điều chỉnh.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn hàng đã đóng, không thể điều chỉnh.");
         }
         return order;
     }
@@ -572,9 +510,6 @@ public class OrderService {
         publishTicketEvent(new KitchenTicketEvent("CREATED", KitchenTicketResponse.from(savedTicket)));
     }
 
-    /**
-     * BR-38: đồng bộ thay đổi của món xuống phiếu bếp và phát WebSocket.
-     */
     private void syncKitchenTicket(OrderItem item) {
         kitchenTicketRepository.findByOrderItemId(item.getId()).ifPresent(ticket -> {
             ticket.setQuantity(item.getQuantity());
@@ -611,9 +546,7 @@ public class OrderService {
             description.append("Số lượng ").append(oldQuantity).append(" → ").append(newQuantity);
         }
         if (!java.util.Objects.equals(oldNote, newNote)) {
-            if (description.length() > 0) {
-                description.append("; ");
-            }
+            if (description.length() > 0) description.append("; ");
             description.append("Cập nhật ghi chú");
         }
         return description.length() == 0 ? "Cập nhật món" : description.toString();
@@ -622,9 +555,8 @@ public class OrderService {
     private void publishTicketEvent(KitchenTicketEvent event) {
         try {
             messagingTemplate.convertAndSend(KITCHEN_TICKETS_TOPIC, event);
-            logger.debug("Broadcasted kitchen ticket event: {}", event);
         } catch (Exception ex) {
-            logger.error("Failed to broadcast kitchen ticket event via WebSocket: ", ex);
+            logger.error("Failed to broadcast kitchen ticket event: ", ex);
         }
     }
 }

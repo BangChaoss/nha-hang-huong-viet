@@ -63,7 +63,7 @@ public class ReportRepository {
         String vnpaySql = """
             SELECT COALESCE(SUM(amount), 0) AS vnpay_total
             FROM payment_orders
-            WHERE status = 'SUCCESS'
+            WHERE status IN ('PAID', 'SUCCESS')
               AND COALESCE(paid_at, created_at) >= ?
               AND COALESCE(paid_at, created_at) <= ?
             """;

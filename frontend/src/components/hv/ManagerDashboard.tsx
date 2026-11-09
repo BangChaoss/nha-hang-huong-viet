@@ -1,20 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import {
-  Banknote,
-  Users,
-  CheckCircle2,
-  Award,
-  ShieldCheck,
-  TicketPercent,
-  Plus,
-  LayoutGrid,
-  Trash2,
-  Eye,
-  Loader2,
-  BarChart3,
-  MessagesSquare,
-} from "lucide-react";
+import {Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, LayoutGrid, Trash2, Eye, Loader2, BarChart3, MessagesSquare,} from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
 import { Input } from "@/components/ui/input";
@@ -72,6 +58,7 @@ type VoucherForm = {
   totalQuantity: string;
   maxUsesPerCustomer: string;
 };
+
 const emptyVoucher = (): VoucherForm => ({
   voucherCode: "",
   title: "",
@@ -85,6 +72,7 @@ const emptyVoucher = (): VoucherForm => ({
   totalQuantity: "500",
   maxUsesPerCustomer: "1",
 });
+
 const formatVoucherDate = (value: string) => {
   if (!value) return "—";
   const [year = 0, month = 1, day = 1] = value.slice(0, 10).split("-").map(Number);
@@ -98,11 +86,8 @@ export function ManagerDashboard({
   const [internalTab, setInternalTab] = useState<ManagerTab>("overview");
   const activeTab = controlledTab ?? internalTab;
   const handleTabChange = (tab: ManagerTab) => {
-    if (onTabChange) {
-      onTabChange(tab);
-    } else {
-      setInternalTab(tab);
-    }
+    if (onTabChange) onTabChange(tab);
+    else setInternalTab(tab);
   };
   const { session } = useSession();
 
@@ -110,10 +95,12 @@ export function ManagerDashboard({
   const [vouchersList, setVouchersList] = useState<Voucher[]>([]);
   const [voucherSaving, setVoucherSaving] = useState(false);
   const [voucherLoading, setVoucherLoading] = useState(false);
+
+  // Loyalty Settings
   const [loyaltyRate, setLoyaltyRate] = useState("5");
+  const [pointValueVnd, setPointValueVnd] = useState("1");
   const [loyaltySaving, setLoyaltySaving] = useState(false);
 
-  // Xem chi tiết lịch sử dùng voucher
   const [selectedVoucherForUsages, setSelectedVoucherForUsages] = useState<Voucher | null>(null);
   const [usagesList, setUsagesList] = useState<VoucherUsageRecord[]>([]);
   const [usagesLoading, setUsagesLoading] = useState(false);
@@ -150,7 +137,10 @@ export function ManagerDashboard({
     void loadVouchers();
     void paymentApi
       .getLoyaltyRate()
-      .then((value) => setLoyaltyRate(String(value.earnRatePercent)))
+      .then((value) => {
+        setLoyaltyRate(String(value.earnRatePercent));
+        setPointValueVnd(String(value.pointValueVnd || 1));
+      })
       .catch((error) =>
         toast.error(error instanceof Error ? error.message : "Không tải được cấu hình tích điểm."),
       );
@@ -187,6 +177,7 @@ export function ManagerDashboard({
           </div>
         </div>
       </div>
+
       <div className="flex flex-wrap gap-2 border-b pb-3">
         <Button
           variant={activeTab === "overview" ? "default" : "outline"}
@@ -227,7 +218,7 @@ export function ManagerDashboard({
           onClick={() => handleTabChange("loyalty")}
         >
           <Award className="mr-2 h-4 w-4" />
-          Cấu hình tích điểm
+          Cấu hình tích & đổi điểm
         </Button>
         <Button
           variant={activeTab === "tables" ? "default" : "outline"}
@@ -237,6 +228,7 @@ export function ManagerDashboard({
           Sơ đồ & Bàn ăn
         </Button>
       </div>
+
       {activeTab === "reports" && <RevenueReport />}
       {activeTab === "feedback" && <FeedbackManagement />}
       {activeTab === "tables" && <TableManagement />}
@@ -251,31 +243,25 @@ export function ManagerDashboard({
           )}
         </section>
       )}
+
       {activeTab === "vouchers" && (
         <section className="space-y-6">
           <div className="surface-card space-y-4 p-5">
             <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
             <p className="text-sm text-muted-foreground">
-              Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính
-              theo số điện thoại.
+              Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính theo số điện thoại.
             </p>
             <form
               className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
               onSubmit={async (e) => {
                 e.preventDefault();
                 const value = Number(voucherForm.discountValue);
-                const maxDiscount = voucherForm.maxDiscountAmount.trim()
-                  ? Number(voucherForm.maxDiscountAmount)
-                  : null;
+                const maxDiscount = voucherForm.maxDiscountAmount.trim() ? Number(voucherForm.maxDiscountAmount) : null;
                 const minOrder = Number(voucherForm.minOrderAmount);
                 const totalQuantity = Number(voucherForm.totalQuantity);
                 const perCustomer = Number(voucherForm.maxUsesPerCustomer);
-                if (
-                  !voucherForm.voucherCode.trim() ||
-                  !voucherForm.title.trim() ||
-                  !voucherForm.startDate ||
-                  !voucherForm.endDate
-                ) {
+
+                if (!voucherForm.voucherCode.trim() || !voucherForm.title.trim() || !voucherForm.startDate || !voucherForm.endDate) {
                   toast.error("Vui lòng nhập mã, tên chương trình và thời gian áp dụng.");
                   return;
                 }
@@ -283,29 +269,11 @@ export function ManagerDashboard({
                   toast.error("Ngày kết thúc không được trước ngày bắt đầu.");
                   return;
                 }
-                if (
-                  !Number.isFinite(value) ||
-                  value <= 0 ||
-                  (voucherForm.discountType === "PERCENTAGE" && value > 100)
-                ) {
+                if (!Number.isFinite(value) || value <= 0 || (voucherForm.discountType === "PERCENTAGE" && value > 100)) {
                   toast.error("Giá trị giảm không hợp lệ.");
                   return;
                 }
-                if (
-                  minOrder < 0 ||
-                  totalQuantity < 1 ||
-                  perCustomer < 1 ||
-                  (maxDiscount !== null && maxDiscount < 0)
-                ) {
-                  toast.error(
-                    "Kiểm tra giá trị đơn tối thiểu, số lượng phát hành, giới hạn dùng và mức giảm tối đa.",
-                  );
-                  return;
-                }
-                if (voucherForm.discountType === "FIXED_AMOUNT" && maxDiscount !== null) {
-                  toast.error("Mức giảm tối đa chỉ áp dụng cho voucher giảm theo %.");
-                  return;
-                }
+
                 const payload: VoucherPayload = {
                   voucherCode: voucherForm.voucherCode.trim().toUpperCase(),
                   title: voucherForm.title.trim(),
@@ -314,18 +282,18 @@ export function ManagerDashboard({
                   discountValue: value,
                   maxDiscountAmount: maxDiscount,
                   minOrderAmount: minOrder,
-                  // Chỉ chọn ngày: backend chuẩn hoá thành 00:00:00 và 23:59:59.
                   startDate: `${voucherForm.startDate}T00:00:00`,
                   endDate: `${voucherForm.endDate}T23:59:59`,
                   totalQuantity,
                   maxUsesPerCustomer: perCustomer,
                 };
+
                 setVoucherSaving(true);
                 try {
                   await voucherApi.create(payload);
                   await loadVouchers();
                   setVoucherForm(emptyVoucher());
-                  toast.success("Đã tạo voucher và lưu vào database.");
+                  toast.success("Đã tạo voucher thành công.");
                 } catch (error) {
                   toast.error(error instanceof Error ? error.message : "Không tạo được voucher.");
                 } finally {
@@ -333,7 +301,7 @@ export function ManagerDashboard({
                 }
               }}
             >
-              <Field label="Voucher Code">
+              <Field label="Mã Voucher">
                 <Input
                   required
                   maxLength={50}
@@ -358,9 +326,9 @@ export function ManagerDashboard({
                   placeholder="Điều kiện và nội dung ưu đãi"
                 />
               </Field>
-              <Field label="Discount Type">
+              <Field label="Loại giảm giá">
                 <select
-                  className="w-full rounded-md border bg-background p-2.5"
+                  className="w-full rounded-md border bg-background p-2.5 text-sm"
                   value={voucherForm.discountType}
                   onChange={(e) => {
                     const type = e.target.value as DiscountType;
@@ -370,16 +338,10 @@ export function ManagerDashboard({
                   }}
                 >
                   <option value="PERCENTAGE">Giảm theo phần trăm (%)</option>
-                  <option value="FIXED_AMOUNT">Giảm theo giá tiền (đ)</option>
+                  <option value="FIXED_AMOUNT">Giảm theo giá tiền (VNĐ)</option>
                 </select>
               </Field>
-              <Field
-                label={
-                  voucherForm.discountType === "PERCENTAGE"
-                    ? "Discount Value (%)"
-                    : "Discount Value (đ)"
-                }
-              >
+              <Field label={voucherForm.discountType === "PERCENTAGE" ? "Giá trị giảm (%)" : "Giá trị giảm (VNĐ)"}>
                 <Input
                   required
                   type="number"
@@ -391,7 +353,7 @@ export function ManagerDashboard({
                 />
               </Field>
               {voucherForm.discountType === "PERCENTAGE" && (
-                <Field label="Mức giảm tối đa (đ)">
+                <Field label="Mức giảm tối đa (VNĐ)">
                   <Input
                     type="number"
                     min="0"
@@ -402,7 +364,7 @@ export function ManagerDashboard({
                   />
                 </Field>
               )}
-              <Field label="Giá trị đơn tối thiểu (đ)">
+              <Field label="Đơn tối thiểu (VNĐ)">
                 <Input
                   required
                   type="number"
@@ -412,7 +374,7 @@ export function ManagerDashboard({
                   onChange={(e) => updateVoucher("minOrderAmount", e.target.value)}
                 />
               </Field>
-              <Field label="Ngày bắt đầu áp dụng">
+              <Field label="Ngày bắt đầu">
                 <Input
                   required
                   type="date"
@@ -420,7 +382,7 @@ export function ManagerDashboard({
                   onChange={(e) => updateVoucher("startDate", e.target.value)}
                 />
               </Field>
-              <Field label="Ngày kết thúc áp dụng">
+              <Field label="Ngày kết thúc">
                 <Input
                   required
                   type="date"
@@ -439,7 +401,7 @@ export function ManagerDashboard({
                   onChange={(e) => updateVoucher("totalQuantity", e.target.value)}
                 />
               </Field>
-              <Field label="Giới hạn dùng mỗi khách (theo SĐT)">
+              <Field label="Giới hạn dùng/khách (theo SĐT)">
                 <Input
                   required
                   type="number"
@@ -457,30 +419,24 @@ export function ManagerDashboard({
               </div>
             </form>
           </div>
+
           <div className="surface-card overflow-x-auto p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-2xl font-medium">Danh sách voucher</h2>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void loadVouchers()}
-                disabled={voucherLoading}
-              >
+              <Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>
                 {voucherLoading ? "Đang tải..." : "Làm mới"}
               </Button>
             </div>
-            {voucherLoading && vouchersList.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Đang tải dữ liệu...</p>
-            ) : vouchersList.length === 0 ? (
+            {vouchersList.length === 0 ? (
               <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="py-2">Mã / Chương trình</th>
+                    <th className="py-2">Mã / Tên</th>
                     <th>Ưu đãi</th>
                     <th>Hiệu lực</th>
-                    <th>Đã dùng / phát hành</th>
+                    <th>Lượt dùng / Phát hành</th>
                     <th>Giới hạn/khách</th>
                     <th>Trạng thái</th>
                     <th className="text-right">Thao tác</th>
@@ -490,39 +446,26 @@ export function ManagerDashboard({
                   {vouchersList.map((v) => (
                     <tr key={v.id} className="border-b last:border-0">
                       <td className="py-3">
-                        <b>{v.voucherCode}</b>
-                        <p>{v.title}</p>
-                        <p className="max-w-xs text-xs text-muted-foreground">{v.description}</p>
+                        <b className="font-mono text-primary">{v.voucherCode}</b>
+                        <p className="font-medium">{v.title}</p>
                       </td>
                       <td>
-                        {v.discountType === "PERCENTAGE"
-                          ? `${v.discountValue}%`
-                          : `${formatVND(v.discountValue)}`}
-                        <p className="text-xs text-muted-foreground">
-                          Đơn tối thiểu {formatVND(v.minOrderAmount)}
-                        </p>
-                        {v.maxDiscountAmount != null && (
-                          <p className="text-xs text-muted-foreground">
-                            Tối đa {formatVND(v.maxDiscountAmount)}
-                          </p>
-                        )}
+                        {v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : formatVND(v.discountValue)}
+                        <p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>
                       </td>
-                      <td>
-                        {formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}
-                      </td>
+                      <td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td>
                       <td>
                         <button
                           type="button"
                           onClick={() => void handleOpenUsages(v)}
-                          className="font-medium text-primary hover:underline"
-                          title="Xem chi tiết các lượt đã dùng"
+                          className="font-medium text-primary hover:underline cursor-pointer"
                         >
                           {v.usedQuantity} / {v.totalQuantity}
                         </button>
                       </td>
                       <td>{v.maxUsesPerCustomer} lượt / SĐT</td>
                       <td>
-                        <span className={v.active ? "text-green-600" : "text-muted-foreground"}>
+                        <span className={v.active ? "text-emerald-600 font-medium" : "text-muted-foreground"}>
                           {v.active ? "Đang bật" : "Đã tắt"}
                         </span>
                       </td>
@@ -533,7 +476,6 @@ export function ManagerDashboard({
                             size="sm"
                             variant="outline"
                             onClick={() => void handleOpenUsages(v)}
-                            title="Xem chi tiết các lượt đã sử dụng voucher này"
                           >
                             <Eye className="mr-1 h-3.5 w-3.5" />
                             Lượt dùng
@@ -547,11 +489,7 @@ export function ManagerDashboard({
                                 await voucherApi.setActive(v.id, !v.active);
                                 await loadVouchers();
                               } catch (error) {
-                                toast.error(
-                                  error instanceof Error
-                                    ? error.message
-                                    : "Không cập nhật được trạng thái.",
-                                );
+                                toast.error(error instanceof Error ? error.message : "Lỗi cập nhật.");
                               }
                             }}
                           >
@@ -561,7 +499,6 @@ export function ManagerDashboard({
                             type="button"
                             size="icon"
                             variant="ghost"
-                            aria-label="Xóa voucher"
                             onClick={async () => {
                               if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return;
                               try {
@@ -569,15 +506,11 @@ export function ManagerDashboard({
                                 await loadVouchers();
                                 toast.success("Đã xóa voucher.");
                               } catch (error) {
-                                toast.error(
-                                  error instanceof Error
-                                    ? error.message
-                                    : "Không xóa được voucher.",
-                                );
+                                toast.error(error instanceof Error ? error.message : "Không xóa được voucher.");
                               }
                             }}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4 text-alert" />
                           </Button>
                         </div>
                       </td>
@@ -589,13 +522,13 @@ export function ManagerDashboard({
           </div>
         </section>
       )}
+
       {activeTab === "loyalty" && (
         <section className="surface-card max-w-2xl space-y-5 p-5">
           <div>
-            <h2 className="text-2xl font-medium">Cấu hình tỷ lệ tích điểm</h2>
+            <h2 className="text-2xl font-medium">Cấu hình tích điểm & Quy đổi điểm</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Tỷ lệ được lưu trong database và áp dụng cho giao dịch VNPAY thành công. Điểm = số
-              tiền thanh toán × tỷ lệ / 100.
+              Thiết lập tỷ lệ tích luỹ điểm thưởng khi thanh toán thành công và giá trị tiền tệ của 1 điểm khi khách tiêu dùng.
             </p>
           </div>
           <form
@@ -603,25 +536,34 @@ export function ManagerDashboard({
             onSubmit={async (e) => {
               e.preventDefault();
               const rate = Number(loyaltyRate);
+              const pointVal = Number(pointValueVnd);
+
               if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
-                toast.error("Tỷ lệ tích điểm phải từ 0 đến 100%.");
+                toast.error("Tỷ lệ tích điểm phải từ 0% đến 100%.");
                 return;
               }
+              if (!Number.isFinite(pointVal) || pointVal <= 0) {
+                toast.error("Giá trị quy đổi 1 điểm phải lớn hơn 0 VNĐ.");
+                return;
+              }
+
               setLoyaltySaving(true);
               try {
-                const saved = await paymentApi.updateLoyaltyRate(rate);
+                const saved = await paymentApi.updateLoyaltyRate({
+                  earnRatePercent: rate,
+                  pointValueVnd: pointVal,
+                });
                 setLoyaltyRate(String(saved.earnRatePercent));
-                toast.success("Đã cập nhật tỷ lệ tích điểm.");
+                setPointValueVnd(String(saved.pointValueVnd));
+                toast.success("Đã cập nhật cấu hình tích & đổi điểm thành công.");
               } catch (error) {
-                toast.error(
-                  error instanceof Error ? error.message : "Không lưu được cấu hình tích điểm.",
-                );
+                toast.error(error instanceof Error ? error.message : "Không lưu được cấu hình.");
               } finally {
                 setLoyaltySaving(false);
               }
             }}
           >
-            <Field label="Tỷ lệ tích điểm (%)">
+            <Field label="Tỷ lệ tích điểm thưởng (%)">
               <Input
                 type="number"
                 min="0"
@@ -631,16 +573,32 @@ export function ManagerDashboard({
                 onChange={(e) => setLoyaltyRate(e.target.value)}
                 required
               />
+              <p className="text-xs text-muted-foreground">
+                Ví dụ: hóa đơn thanh toán 200.000 VNĐ với tỷ lệ 5% sẽ được tích: 200.000 × 5% = 10.000 VNĐ quy đổi ra điểm.
+              </p>
             </Field>
-            <p className="text-sm text-muted-foreground">
-              Ví dụ: thanh toán 200.000đ với tỷ lệ 5% sẽ được cộng 10.000 điểm.
-            </p>
+
+            <Field label="Giá trị quy đổi điểm (VNĐ / 1 điểm)">
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                value={pointValueVnd}
+                onChange={(e) => setPointValueVnd(e.target.value)}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Quy ước giá trị: 1 điểm = {formatVND(Number(pointValueVnd) || 1)}. Khách tích lũy và tiêu dùng theo số nguyên chia hết cho 1.
+              </p>
+            </Field>
+
             <Button type="submit" disabled={loyaltySaving}>
               {loyaltySaving ? "Đang lưu..." : "Lưu cấu hình"}
             </Button>
           </form>
         </section>
       )}
+
       {activeTab === "overview" && (
         <>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
