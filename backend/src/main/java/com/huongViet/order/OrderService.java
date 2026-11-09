@@ -273,6 +273,18 @@ public class OrderService {
     }
 
     /**
+     * Tìm tài khoản khách hàng (đang hoạt động) theo SĐT nhập lúc thanh toán để gắn vào hóa đơn,
+     * nhờ đó khách có thể đánh giá đúng hóa đơn của mình (UC19). Khách vãng lai trả về null.
+     */
+    private String findCustomerIdByPhone(String phone) {
+        if (phone == null || phone.isBlank()) return null;
+        List<String> ids = jdbcTemplate.queryForList(
+            "SELECT id FROM users WHERE phone_number = ? AND role = 'CUSTOMER' AND deleted_at IS NULL LIMIT 1",
+            String.class, phone);
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
+    /**
      * Lưu hóa đơn và snapshot món ăn trong cùng transaction với checkout.
      * Voucher được gắn vào hóa đơn đầu tiên vì một checkout có thể gom nhiều order của cùng bàn.
      */
@@ -281,6 +293,7 @@ public class OrderService {
                                           BigDecimal pointsRedeemed, BigDecimal pointsAwarded) {
         String voucherInvoiceId = null;
         boolean first = true;
+        String customerId = findCustomerIdByPhone(phone);
         for (Order order : orders) {
             // Hóa đơn chỉ lưu các món được tính tiền; món hủy vẫn được giữ trên đơn để đối soát.
             List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
@@ -303,8 +316,8 @@ public class OrderService {
             jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, voucher_id, " +
                     "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
                     "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                    "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                invoiceId, invoiceCode, order.getId(), SystemUserInitializer.SYSTEM_USER_ID, currentVoucherId,
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                invoiceId, invoiceCode, order.getId(), customerId, SystemUserInitializer.SYSTEM_USER_ID, currentVoucherId,
                 currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePoints),
                 tax, finalAmount, earned);
             for (OrderItem item : items) {

@@ -12,6 +12,8 @@ import {
   Trash2,
   Eye,
   Loader2,
+  BarChart3,
+  MessagesSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
@@ -34,6 +36,8 @@ import {
 import { paymentApi } from "@/lib/payment-api";
 import { TableManagement } from "@/components/hv/TableManagement";
 import { MenuManagement } from "@/features/menu/components/menu-management";
+import { RevenueReport } from "@/features/report/components/revenue-report";
+import { FeedbackManagement } from "@/features/feedback/components/feedback-management";
 import { BackButton } from "@/components/hv/BackButton";
 import { StaffManagement } from "@/components/hv/StaffManagement";
 import { useSession } from "@/lib/auth-session";
@@ -48,11 +52,7 @@ const week = [
 ];
 
 export type ManagerTab =
-  | "overview"
-  | "permissions"
-  | "vouchers"
-  | "loyalty"
-  | "tables";
+  "overview" | "reports" | "feedback" | "permissions" | "vouchers" | "loyalty" | "tables";
 
 export interface ManagerDashboardProps {
   activeTab?: ManagerTab;
@@ -195,6 +195,20 @@ export function ManagerDashboard({
           Tổng quan
         </Button>
         <Button
+          variant={activeTab === "reports" ? "default" : "outline"}
+          onClick={() => handleTabChange("reports")}
+        >
+          <BarChart3 className="mr-2 h-4 w-4" />
+          Báo cáo thống kê
+        </Button>
+        <Button
+          variant={activeTab === "feedback" ? "default" : "outline"}
+          onClick={() => handleTabChange("feedback")}
+        >
+          <MessagesSquare className="mr-2 h-4 w-4" />
+          Đánh giá khách hàng
+        </Button>
+        <Button
           variant={activeTab === "permissions" ? "default" : "outline"}
           onClick={() => handleTabChange("permissions")}
         >
@@ -223,6 +237,8 @@ export function ManagerDashboard({
           Sơ đồ & Bàn ăn
         </Button>
       </div>
+      {activeTab === "reports" && <RevenueReport />}
+      {activeTab === "feedback" && <FeedbackManagement />}
       {activeTab === "tables" && <TableManagement />}
       {activeTab === "permissions" && (
         <section className="space-y-4">
