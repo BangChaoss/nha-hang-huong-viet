@@ -14,11 +14,12 @@ export const Route = createFileRoute("/manager")({
   validateSearch: (search: Record<string, unknown>): ManagerSearchParams => {
     const tab = search['tab'] as string | undefined;
     if (
+      tab === "reports" ||
+      tab === "feedback" ||
       tab === "permissions" ||
       tab === "vouchers" ||
       tab === "loyalty" ||
       tab === "tables" ||
-      tab === "kitchen" ||
       tab === "overview"
     ) {
       return { tab };

@@ -63,6 +63,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
                 // UC-14: thực đơn là công khai, khách chưa đăng nhập vẫn xem được
                 .requestMatchers("/api/menu/**").permitAll()
+                // UC19/UC20: Đánh giá
+                .requestMatchers(HttpMethod.GET, "/api/feedbacks/public").permitAll()
+                .requestMatchers("/api/feedbacks/**").authenticated()
                 // UC-15, UC-17: gọi món và xem chi tiết order — nhân viên phục vụ
                 .requestMatchers("/api/orders/**").hasAnyAuthority(
                     "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"

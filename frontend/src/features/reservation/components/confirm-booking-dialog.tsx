@@ -414,7 +414,7 @@ export function ConfirmBookingDialog({
                 ) : floorPlanLayouts && floorPlanLayouts.length > 0 ? (
                   <div className="space-y-2">
                     <p className="text-[11px] text-muted-foreground">
-                      * Nhấp chuột vào một hoặc nhiều bàn trên sơ đồ để gộp bàn cho đoàn khách.
+                      * Nhấp chọn một hoặc nhiều bàn trên sơ đồ để gộp bàn. Bấm biểu tượng "Căn vừa" để nhìn trọn toàn bộ sơ đồ.
                     </p>
                     <div className="border rounded-xl overflow-hidden bg-slate-50/50">
                       <FloorPlanCanvas
@@ -422,7 +422,7 @@ export function ConfirmBookingDialog({
                         selectedTableIds={selectedTableIds}
                         onSelectTable={handleSelectFromCanvas}
                         readOnly={true}
-                        canvasHeight={360}
+                        canvasHeight={420}
                       />
                     </div>
                   </div>

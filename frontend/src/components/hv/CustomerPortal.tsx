@@ -11,6 +11,7 @@ import { API_BASE } from "@/lib/table-api";
 import { resolveImageUrl } from "@/lib/image-url";
 import { BookForm } from "@/features/reservation/components/book-form";
 import { BookingHistoryList } from "@/features/reservation/components/booking-history-list";
+import { CustomerFeedback } from "@/features/feedback/components/customer-feedback";
 import { useMenu } from "@/features/menu/hooks/use-menu";
 import { MenuDetailDialog } from "@/features/menu/components/menu-detail-dialog";
 import type {
@@ -36,6 +37,7 @@ export function CustomerPortal() {
           <TabsTrigger value="menu">Thực Đơn</TabsTrigger>
           <TabsTrigger value="book">Đặt Bàn Trước</TabsTrigger>
           <TabsTrigger value="history">Lịch Sử Đặt Bàn</TabsTrigger>
+          <TabsTrigger value="reviews">Đánh Giá</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="menu">
@@ -46,6 +48,9 @@ export function CustomerPortal() {
       </TabsContent>
       <TabsContent value="history">
         <BookingHistoryList />
+      </TabsContent>
+      <TabsContent value="reviews">
+        <CustomerFeedback />
       </TabsContent>
     </Tabs>
   );
