@@ -574,7 +574,7 @@ export function ManagerDashboard({
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Ví dụ: hóa đơn thanh toán 200.000 VNĐ với tỷ lệ 5% sẽ được tích: 200.000 × 5% = 10.000 VNĐ quy đổi ra điểm.
+                Ví dụ: hóa đơn 200.000 VNĐ với tỷ lệ 10% sẽ nhận được: 200.000 × 10% = 20.000 điểm.
               </p>
             </Field>
 
@@ -588,7 +588,7 @@ export function ManagerDashboard({
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Quy ước giá trị: 1 điểm = {formatVND(Number(pointValueVnd) || 1)}. Khách tích lũy và tiêu dùng theo số nguyên chia hết cho 1.
+                Quy ước giá trị: 1 điểm = {formatVND(Number(pointValueVnd) || 1)}. Ví dụ khách dùng 20.000 điểm với giá trị 2đ sẽ được trừ: 20.000 × 2 = 40.000 VNĐ.
               </p>
             </Field>
 
