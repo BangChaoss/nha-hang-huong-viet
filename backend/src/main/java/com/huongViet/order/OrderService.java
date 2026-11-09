@@ -227,8 +227,9 @@ public class OrderService {
         BigDecimal pointsAwarded = BigDecimal.ZERO;
         if (!phone.isBlank()) {
             BigDecimal earnRate = currentSettings.getEarnRatePercent();
-            BigDecimal rawEarnAmount = total.multiply(earnRate).divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
-            pointsAwarded = rawEarnAmount.divide(pointValueVnd, 0, RoundingMode.HALF_UP);
+            // Điểm thưởng tích thẳng theo % hóa đơn: 200.000 * 10% = 20.000 Điểm
+            pointsAwarded = total.multiply(earnRate)
+                    .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
         }
 
         String voucherId = null;
