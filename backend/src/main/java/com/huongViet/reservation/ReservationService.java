@@ -346,6 +346,27 @@ public class ReservationService {
     }
 
     /**
+     * List upcoming reservations from a start date onwards.
+     */
+    public List<ReservationResponse> listUpcoming(LocalDate startDate, ReservationStatus status) {
+        LocalDate queryDate = (startDate != null) ? startDate : LocalDate.now();
+        return reservationRepository.findUpcomingWithTableAndZone(queryDate, status)
+            .stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
+    /**
+     * List all pending hold reservations regardless of date.
+     */
+    public List<ReservationResponse> listAllPending() {
+        return reservationRepository.findAllPendingHoldWithTableAndZone()
+            .stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
+    /**
      * UC10: Get available tables suited for assigning to a given reservation.
      * Evaluates time-scoped table availability without permanently locking the table.
      */
@@ -541,7 +562,19 @@ public class ReservationService {
 
         logger.info("Updated reservation {} status from {} to {} by {}", saved.getId(), oldStatus, newStatus, changedBy);
 
-        return toResponse(saved);
+        ReservationResponse response = toResponse(saved);
+
+        // Dispatch email notification based on status transition
+        if (oldStatus != ReservationStatus.CONFIRMED && newStatus == ReservationStatus.CONFIRMED) {
+            emailService.sendBookingApprovedEmail(saved, response.tableNumber(), response.zoneName());
+        } else if (oldStatus != ReservationStatus.CANCELLED && newStatus == ReservationStatus.CANCELLED) {
+            String cancelReason = (saved.getCancellationReason() != null && !saved.getCancellationReason().isBlank())
+                ? saved.getCancellationReason()
+                : "Nhà hàng không thể tiếp nhận hoặc sắp xếp bàn vào thời điểm này";
+            emailService.sendBookingCancelledEmail(saved, cancelReason, response.zoneName());
+        }
+
+        return response;
     }
 
     /**
@@ -601,7 +634,10 @@ public class ReservationService {
 
         logger.info("Reservation {} cancelled by {}", saved.getId(), actor);
 
-        return toResponse(saved);
+        ReservationResponse response = toResponse(saved);
+        emailService.sendBookingCancelledEmail(saved, reason, response.zoneName());
+
+        return response;
     }
 
     /**

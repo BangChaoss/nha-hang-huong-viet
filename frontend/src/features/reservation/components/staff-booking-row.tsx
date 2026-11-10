@@ -11,6 +11,7 @@ interface StaffBookingRowProps {
   onCheckIn: (booking: ReservationResponse) => void;
   onCancel: (booking: ReservationResponse) => void;
   isActionPending?: boolean;
+  showDate?: boolean;
 }
 
 export function StaffBookingRow({
@@ -19,6 +20,7 @@ export function StaffBookingRow({
   onCheckIn,
   onCancel,
   isActionPending = false,
+  showDate = false,
 }: StaffBookingRowProps) {
   const statusCfg =
     RESERVATION_STATUS_CONFIG[booking.status] || RESERVATION_STATUS_CONFIG.PENDING_HOLD;
@@ -108,9 +110,11 @@ export function StaffBookingRow({
           ) : (
             <span className="text-muted-foreground italic">Chưa gán bàn</span>
           )}
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
             {booking.zoneName || "Khu vực đang cập nhật"}
-            {booking.zoneIsVip ? " ⭐" : ""}
+            {booking.zoneIsVip && (
+              <span className="text-[10px] text-amber-600 font-semibold">(VIP)</span>
+            )}
           </span>
         </div>
       </TableCell>

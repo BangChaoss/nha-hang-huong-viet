@@ -1,6 +1,7 @@
 import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
 import type {
+  AdminReservationQueryParams,
   AvailableTable,
   CreateReservationRequest,
   ReservationResponse,
@@ -81,6 +82,17 @@ export const reservationApi = {
     }),
 
   // === UC09, UC10, UC13: Staff/Admin APIs ===
+  listAdminBookings: (params: AdminReservationQueryParams = {}): Promise<ReservationResponse[]> => {
+    const q = new URLSearchParams();
+    if (params.date) q.append("date", params.date);
+    if (params.scope) q.append("scope", params.scope);
+    if (params.status) q.append("status", params.status);
+    const queryString = q.toString();
+    return request<ReservationResponse[]>(
+      `/api/admin/reservations${queryString ? `?${queryString}` : ""}`,
+    );
+  },
+
   listByDate: (date: string, status?: ReservationStatus): Promise<ReservationResponse[]> => {
     const params = new URLSearchParams({ date });
     if (status) {

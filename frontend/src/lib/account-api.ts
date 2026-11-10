@@ -152,7 +152,7 @@ export const profileApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     });
-    updateSession({ username: updated.username, email: updated.email });
+    updateSession({ username: updated.username, email: updated.email, phoneNumber: updated.phoneNumber });
     return updated;
   },
   // Sau khi đổi mật khẩu, backend thu hồi toàn bộ refresh token của user (kể cả thiết bị này).

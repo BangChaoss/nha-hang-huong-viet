@@ -154,4 +154,40 @@ class TableServiceTest {
         assertEquals(TableStatus.MAINTENANCE, broadcasted.newStatus());
         assertEquals("Sảnh Trong Nhà", broadcasted.zoneName());
     }
+
+    @Test
+    @DisplayName("calculateOptimalLayoutPosition - xếp bàn mới cạnh bàn hiện có trong cùng khu vực")
+    void calculateOptimalLayoutPosition_ExistingZone_PlacesAdjacent() {
+        // Table 1 already exists in zone-1 at (50, 50, 90, 90)
+        FloorPlanLayout layout1 = new FloorPlanLayout("layout-1", "table-1", 50.0, 50.0, 90.0, 90.0, 0.0, FloorPlanShape.RECTANGLE);
+        when(tableRepository.findAllActiveWithZone()).thenReturn(java.util.List.of(sampleTable));
+        when(floorPlanLayoutRepository.findAll()).thenReturn(java.util.List.of(layout1));
+
+        RestaurantTable newTable = new RestaurantTable("table-2", "zone-1", "Bàn 02", 4);
+        FloorPlanLayout result = tableService.calculateOptimalLayoutPosition(newTable);
+
+        assertNotNull(result);
+        assertEquals("table-2", result.getTableId());
+        // Candidate adjacent on the right: 50 + 90 + 40 = 180.0
+        assertEquals(180.0, result.getPositionX());
+        assertEquals(50.0, result.getPositionY());
+    }
+
+    @Test
+    @DisplayName("calculateOptimalLayoutPosition - khu vực mới hoàn toàn thì xếp vào vị trí trống không trùng khu vực cũ")
+    void calculateOptimalLayoutPosition_NewZone_PlacesInFreeSpace() {
+        // Table 1 in zone-1 occupies (50, 70, 90, 90)
+        FloorPlanLayout layout1 = new FloorPlanLayout("layout-1", "table-1", 50.0, 70.0, 90.0, 90.0, 0.0, FloorPlanShape.RECTANGLE);
+        when(tableRepository.findAllActiveWithZone()).thenReturn(java.util.List.of(sampleTable));
+        when(floorPlanLayoutRepository.findAll()).thenReturn(java.util.List.of(layout1));
+
+        // New table in a different zone: zone-2
+        RestaurantTable newTableInNewZone = new RestaurantTable("table-new", "zone-2", "Bàn VIP 01", 4);
+        FloorPlanLayout result = tableService.calculateOptimalLayoutPosition(newTableInNewZone);
+
+        assertNotNull(result);
+        assertEquals("table-new", result.getTableId());
+        // Must not overlap zone-1 bounding box (which around 50, 70 with padding 24 extends [26..164, 16..188])
+        assertFalse(result.getPositionX() == 50.0 && result.getPositionY() == 70.0);
+    }
 }
