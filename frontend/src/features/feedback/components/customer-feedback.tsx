@@ -1,35 +1,43 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
+  CheckCircle2,
   EyeOff,
   Loader2,
   LogIn,
   MessageSquareQuote,
   MessageSquareReply,
+  Receipt,
   RefreshCw,
   Send,
   Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PaginationControls } from "@/components/hv/PaginationControls";
+import { formatVND } from "@/lib/restaurant-store";
 import { useSession } from "@/lib/auth-session";
 import {
   COMMENT_MAX_LENGTH,
   formatFeedbackDate,
   hasReply,
   reviewerName,
+  type EligibleInvoice,
   type Feedback,
 } from "../api/feedback-api";
-import { useMyReviews, usePublicReviews, useSubmitFeedback } from "../hooks/use-feedback";
+import {
+  useEligibleInvoices,
+  useMyReviews,
+  usePublicReviews,
+  useSubmitFeedback,
+} from "../hooks/use-feedback";
 import { StarRating, StarRatingInput } from "./star-rating";
 
 /** UC19: khách gửi đánh giá & số sao, xem lịch sử và đánh giá công khai. */
-export function CustomerFeedback() {
+export function CustomerFeedback({ initialInvoiceId }: { initialInvoiceId?: string | undefined }) {
   const { session, ready } = useSession();
   const isAuthenticated = Boolean(session?.token);
 
@@ -42,7 +50,7 @@ export function CustomerFeedback() {
           </div>
         ) : isAuthenticated ? (
           <>
-            <SubmitFeedbackForm />
+            <SubmitFeedbackForm initialInvoiceId={initialInvoiceId} />
             <MyReviews />
           </>
         ) : (
@@ -74,12 +82,28 @@ function LoginPrompt() {
   );
 }
 
-function SubmitFeedbackForm() {
+function SubmitFeedbackForm({ initialInvoiceId }: { initialInvoiceId?: string | undefined }) {
   const submit = useSubmitFeedback();
+  const eligibleQuery = useEligibleInvoices();
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
-  const [invoiceId, setInvoiceId] = useState("");
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>(initialInvoiceId || "");
   const [error, setError] = useState<string | null>(null);
+
+  const eligibleList = eligibleQuery.data || [];
+
+  // Tự động gán mã hoá đơn hợp lệ đầu tiên nếu chưa có
+  useEffect(() => {
+    if (initialInvoiceId) {
+      setSelectedInvoiceId(initialInvoiceId);
+    } else if (!selectedInvoiceId && eligibleList.length > 0 && eligibleList[0]?.id) {
+      setSelectedInvoiceId(eligibleList[0].id);
+    }
+  }, [initialInvoiceId, eligibleList, selectedInvoiceId]);
+
+  const activeInvoice = eligibleList.find(
+    (inv) => inv.id === selectedInvoiceId || inv.invoiceCode === selectedInvoiceId
+  );
 
   const remaining = COMMENT_MAX_LENGTH - comment.length;
 
@@ -93,18 +117,24 @@ function SubmitFeedbackForm() {
       setError(`Nhận xét không được vượt quá ${COMMENT_MAX_LENGTH} ký tự.`);
       return;
     }
+    if (!selectedInvoiceId) {
+      setError("Không tìm thấy hoá đơn đã thanh toán để gửi đánh giá.");
+      return;
+    }
     setError(null);
     try {
-      await submit.mutateAsync({ rating, comment, invoiceId });
+      await submit.mutateAsync({ rating, comment, invoiceId: selectedInvoiceId });
       toast.success("Cảm ơn bạn đã gửi đánh giá cho Hương Việt!");
       setRating(0);
       setComment("");
-      setInvoiceId("");
+      void eligibleQuery.refetch();
     } catch (err) {
       // 409: hoá đơn đã đánh giá, 429: gửi quá nhanh, 400/404: hoá đơn không hợp lệ...
       setError(err instanceof Error ? err.message : "Gửi đánh giá thất bại.");
     }
   };
+
+  const hasNoEligible = !initialInvoiceId && !eligibleQuery.isLoading && eligibleList.length === 0;
 
   return (
     <section className="surface-card space-y-5 p-5 sm:p-6">
@@ -119,6 +149,63 @@ function SubmitFeedbackForm() {
       </div>
 
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+        {/* Thông tin hoá đơn đã thanh toán (Tự động lấy, ẩn ô nhập tay) */}
+        {activeInvoice ? (
+          <div className="rounded-lg border bg-muted/30 p-3.5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-muted-foreground text-xs">Đang đánh giá hoá đơn:</span>
+                <span className="font-mono font-bold text-primary">{activeInvoice.invoiceCode}</span>
+              </div>
+              <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 border border-emerald-500/20">
+                Đã thanh toán (PAID)
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground pl-6">
+              <span>{activeInvoice.tableNumber}</span>
+              <span>•</span>
+              <span>{formatVND(activeInvoice.finalAmount)}</span>
+              <span>•</span>
+              <span>{formatFeedbackDate(activeInvoice.paidAt)}</span>
+            </div>
+
+            {eligibleList.length > 1 && (
+              <div className="mt-3 pt-2.5 border-t text-xs">
+                <span className="text-muted-foreground mr-2">Chọn hoá đơn khác:</span>
+                <select
+                  value={selectedInvoiceId}
+                  onChange={(e) => setSelectedInvoiceId(e.target.value)}
+                  className="rounded border bg-background px-2 py-1 text-xs"
+                >
+                  {eligibleList.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.invoiceCode} ({inv.tableNumber} - {formatVND(inv.finalAmount)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        ) : initialInvoiceId ? (
+          <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-primary shrink-0" />
+            <span>Mã hoá đơn liên kết: <strong className="font-mono text-primary">{initialInvoiceId}</strong></span>
+          </div>
+        ) : hasNoEligible ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-300">
+            <p className="font-semibold">Chưa có hoá đơn hoàn tất thanh toán</p>
+            <p className="mt-1 text-muted-foreground">
+              Hệ thống chỉ cho phép gửi đánh giá cho những đơn hàng / đặt bàn đã thanh toán xong (PAID). Vui lòng dùng bữa và thanh toán trước khi gửi phản hồi.
+            </p>
+          </div>
+        ) : eligibleQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Đang kiểm tra hoá đơn thanh toán...</span>
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           <label htmlFor="feedback-rating" className="text-sm font-medium">
             Mức độ hài lòng <span className="text-destructive">*</span>
@@ -130,7 +217,7 @@ function SubmitFeedbackForm() {
               setRating(value);
               setError(null);
             }}
-            disabled={submit.isPending}
+            disabled={submit.isPending || hasNoEligible}
           />
         </div>
 
@@ -145,27 +232,10 @@ function SubmitFeedbackForm() {
             placeholder="Món ăn, không gian, thái độ phục vụ..."
             rows={5}
             maxLength={COMMENT_MAX_LENGTH}
-            disabled={submit.isPending}
+            disabled={submit.isPending || hasNoEligible}
           />
           <p className="text-right text-xs tabular-nums text-muted-foreground">
             Còn {remaining} ký tự
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="feedback-invoice" className="text-sm font-medium">
-            Mã hoá đơn <span className="font-normal text-muted-foreground">(không bắt buộc)</span>
-          </label>
-          <Input
-            id="feedback-invoice"
-            value={invoiceId}
-            onChange={(e) => setInvoiceId(e.target.value)}
-            placeholder="VD: HV-20261108193000-1A2B3C4D"
-            maxLength={50}
-            disabled={submit.isPending}
-          />
-          <p className="text-xs text-muted-foreground">
-            Mã in trên hoá đơn thanh toán. Mỗi hoá đơn chỉ được đánh giá một lần.
           </p>
         </div>
 
@@ -179,7 +249,11 @@ function SubmitFeedbackForm() {
           </div>
         )}
 
-        <Button type="submit" className="w-full sm:w-auto" disabled={submit.isPending}>
+        <Button
+          type="submit"
+          className="w-full sm:w-auto"
+          disabled={submit.isPending || hasNoEligible}
+        >
           {submit.isPending ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
