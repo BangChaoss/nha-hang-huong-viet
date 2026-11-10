@@ -48,6 +48,24 @@ export type AdminFeedbackFilters = {
   size?: number;
 };
 
+export type ReservationInvoiceInfo = {
+  reservationId: string;
+  invoiceId: string | null;
+  invoiceCode: string | null;
+  invoiceStatus: string | null;
+  finalAmount: number | null;
+  isPaid: boolean;
+  hasFeedback: boolean;
+};
+
+export type EligibleInvoice = {
+  id: string;
+  invoiceCode: string;
+  finalAmount: number;
+  tableNumber: string;
+  paidAt: string;
+};
+
 export const COMMENT_MAX_LENGTH = 1000;
 export const REPLY_MAX_LENGTH = 2000;
 
@@ -146,6 +164,14 @@ export const feedbackApi = {
   /** Đánh giá công khai cho trang khách hàng. */
   getPublic: (page = 0, size = 6) =>
     requestBody<FeedbackPage>(`/api/feedbacks/public?page=${page}&size=${size}`),
+
+  /** Lấy thông tin hoá đơn của đơn đặt bàn để phục vụ gửi feedback. */
+  getReservationInvoice: (reservationId: string) =>
+    requestBody<ReservationInvoiceInfo>(`/api/feedbacks/reservation/${encodeURIComponent(reservationId.trim())}/invoice`),
+
+  /** Lấy danh sách các hoá đơn đã thanh toán chưa được đánh giá của khách hàng. */
+  getEligibleInvoices: () =>
+    requestBody<EligibleInvoice[]>("/api/feedbacks/eligible-invoices"),
 
   /** UC25: danh sách đánh giá có bộ lọc cho Quản lý. */
   listAdmin: (filters: AdminFeedbackFilters) =>
