@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +58,17 @@ public class KitchenTicketService {
      * BR-34/BR-35: hàng đợi KDS luôn được sắp xếp FIFO theo thời điểm tạo.
      */
     public List<KitchenTicketResponse> listAll(CookingStatus status) {
+        return listAll(status, null);
+    }
+
+    public List<KitchenTicketResponse> listAll(CookingStatus status, LocalDate date) {
+        if (date != null) {
+            LocalDateTime start = date.atStartOfDay();
+            LocalDateTime end = date.atTime(LocalTime.MAX);
+            List<KitchenTicket> tickets = kitchenTicketRepository.findByDateAndStatusOrderByCreatedAtAsc(start, end, status);
+            return tickets.stream().map(KitchenTicketResponse::from).toList();
+        }
+
         List<KitchenTicket> tickets = (status != null)
             ? kitchenTicketRepository.findByStatusOrderByCreatedAtAsc(status)
             : kitchenTicketRepository.findAllByOrderByCreatedAtAsc();
