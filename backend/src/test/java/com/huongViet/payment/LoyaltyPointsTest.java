@@ -142,6 +142,8 @@ class LoyaltyPointsTest {
             account.addPoints(new BigDecimal("800"));
             when(loyaltyAccountRepository.findByCustomerPhone("0901234567"))
                     .thenReturn(Optional.of(account));
+            when(loyaltySettingsRepository.findById("default"))
+                    .thenReturn(Optional.of(new LoyaltySettings("default", new BigDecimal("5.000"), BigDecimal.ONE)));
 
             Map<String, Object> result = paymentService.getLoyaltyBalance(" 0901-234-567 ");
             assertEquals("0901234567", result.get("phoneNumber"));
@@ -153,6 +155,8 @@ class LoyaltyPointsTest {
         void testGetLoyaltyBalance_AccountNotFoundReturnsZero() {
             when(loyaltyAccountRepository.findByCustomerPhone("0988776655"))
                     .thenReturn(Optional.empty());
+            when(loyaltySettingsRepository.findById("default"))
+                    .thenReturn(Optional.of(new LoyaltySettings("default", new BigDecimal("5.000"), BigDecimal.ONE)));
 
             Map<String, Object> result = paymentService.getLoyaltyBalance("0988776655");
             assertEquals("0988776655", result.get("phoneNumber"));
@@ -168,6 +172,8 @@ class LoyaltyPointsTest {
         @DisplayName("Lấy tỷ lệ tích điểm mặc định khi chưa có trong CSDL (5.000%)")
         void testGetRate_DefaultWhenNotFound() {
             when(loyaltySettingsRepository.findById("default")).thenReturn(Optional.empty());
+            when(loyaltySettingsRepository.save(any(LoyaltySettings.class)))
+                    .thenAnswer(inv -> inv.getArgument(0));
 
             LoyaltyRateResponse response = paymentService.getRate();
             assertNotNull(response);
