@@ -82,6 +82,12 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "orderType", "other");
     }
 
+    private void stubDefaultSettings() {
+        when(loyaltySettingsRepository.findById("default"))
+                .thenReturn(Optional.of(new LoyaltySettings(
+                        "default", new BigDecimal("5.000"), BigDecimal.ONE)));
+    }
+
     @Nested
     @DisplayName("Tạo thanh toán VNPay (createPayment)")
     class CreatePaymentTests {
@@ -153,6 +159,7 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Lỗi 400 khi dùng điểm mà không tìm thấy ví điểm hoặc số dư âm")
         void testCreatePayment_LoyaltyAccountNotFoundOrNegative() {
+            stubDefaultSettings();
             when(loyaltyAccountRepository.findByCustomerPhone("0901234567"))
                     .thenReturn(Optional.empty());
 
@@ -167,8 +174,9 @@ class PaymentServiceTest {
         }
 
         @Test
-        @DisplayName("Dùng điểm: điểm được làm tròn bội số 100 và không vượt quá số dư/sau giảm giá")
+        @DisplayName("Dùng điểm: dùng tối đa số điểm nguyên còn lại nhưng không vượt quá số dư/sau giảm giá")
         void testCreatePayment_PointsCalculationAndRounding() {
+            stubDefaultSettings();
             LoyaltyAccount account = new LoyaltyAccount("acc-1", "0901234567");
             account.addPoints(new BigDecimal("250")); // Có 250 điểm
             when(loyaltyAccountRepository.findByCustomerPhone("0901234567"))
@@ -186,15 +194,16 @@ class PaymentServiceTest {
             verify(orderRepository).save(captor.capture());
             PaymentOrder saved = captor.getValue();
 
-            // 250 làm tròn xuống bội 100 -> 200 điểm được dùng
-            assertEquals(new BigDecimal("200"), saved.getPointsUsed());
-            // Số tiền cần trả: 50.000 - 200 = 49.800
-            assertEquals(new BigDecimal("49800.00"), saved.getAmount());
+            // 250 điểm nguyên được dùng hết (mỗi điểm = 1 VND)
+            assertEquals(new BigDecimal("250"), saved.getPointsUsed());
+            // Số tiền cần trả: 50.000 - 250 = 49.750
+            assertEquals(new BigDecimal("49750.00"), saved.getAmount());
         }
 
         @Test
         @DisplayName("Lỗi 400 khi số tiền thanh toán cuối cùng < 1.000 VND (VNPay MIN_PAYMENT)")
         void testCreatePayment_AmountLessThanMin() {
+            stubDefaultSettings();
             when(voucherService.validate(any(VoucherValidationRequest.class)))
                     .thenReturn(new VoucherValidationResponse(true, "Hợp lệ", new BigDecimal("99500"), "DISCOUNT"));
 
@@ -212,6 +221,7 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Tạo thanh toán thành công: Lưu PaymentOrder PENDING và sinh paymentUrl có hash chuẩn")
         void testCreatePayment_Success() {
+            stubDefaultSettings();
             when(voucherService.validate(any(VoucherValidationRequest.class)))
                     .thenReturn(new VoucherValidationResponse(true, "Hợp lệ", new BigDecimal("20000"), "SUMMER"));
 
@@ -437,7 +447,7 @@ class PaymentServiceTest {
                     new BigDecimal("5000"),   // Điểm thưởng
                     "Bàn 10"                  // Số bàn
             );
-            when(orderService.checkoutCash(eq("table-10"), any(CashCheckoutRequest.class)))
+            when(orderService.checkoutWithPaymentMethod(eq("table-10"), any(CashCheckoutRequest.class), eq("VNPAY")))
                     .thenReturn(checkoutResponse);
 
             Map<String, String> params = createSignedParams(Map.of(
