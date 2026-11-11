@@ -95,65 +95,20 @@
   * {
     border-color: var(--color-border);
   }
-  html {
-    font-size: 15px;
-    scroll-behavior: smooth;
-  }
-  @media (min-width: 640px) {
-    html {
-      font-size: 16px;
-    }
-  }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    line-height: 1.68;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
   }
   h1,
   h2,
   h3,
   .font-display {
     font-family: var(--font-display);
-    line-height: 1.25;
   }
 }
 
-/* Vietnamese typography and line-height optimization */
-@utility vn-text {
-  line-height: 1.7;
-  font-feature-settings: "kern" 1;
-  text-rendering: optimizeLegibility;
-}
-
-/* Hero section gradients and glass card styles */
-@utility hero-gradient {
-  background: linear-gradient(
-    135deg,
-    oklch(0.24 0.07 33 / 0.95) 0%,
-    oklch(0.33 0.1 33 / 0.92) 50%,
-    oklch(0.22 0.05 155 / 0.95) 100%
-  );
-}
-
-@utility glass-card {
-  background: oklch(0.993 0.004 80 / 0.85);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid oklch(0.923 0.003 48.7 / 0.6);
-}
-
-@utility glass-dark {
-  background: oklch(0.18 0.03 33 / 0.75);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid oklch(1 0 0 / 0.15);
-}
-
-/* Soft status badges with accessible contrast */
+/* Soft status badges */
 @utility status-available {
   background: var(--color-emerald-50);
   color: var(--color-emerald-800);
