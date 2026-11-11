@@ -102,8 +102,7 @@ class LoyaltyControllerTest {
     @Test
     @DisplayName("GET /api/admin/loyalty/settings trả về tỷ lệ tích điểm")
     void testGetLoyaltySettingsEndpoint() throws Exception {
-        when(paymentService.getRate()).thenReturn(new LoyaltyRateResponse(
-                new BigDecimal("5.000"), BigDecimal.ONE, java.time.LocalDateTime.now()));
+        when(paymentService.getRate()).thenReturn(new LoyaltyRateResponse(new BigDecimal("5.000"), new BigDecimal("1000"), java.time.LocalDateTime.now()));
 
         mockSettingsMvc.perform(get("/api/admin/loyalty/settings"))
                 .andExpect(status().isOk())
@@ -115,8 +114,7 @@ class LoyaltyControllerTest {
     void testUpdateLoyaltySettingsEndpoint() throws Exception {
         LoyaltyRateRequest req = new LoyaltyRateRequest(new BigDecimal("8.000"));
         when(paymentService.updateRate(any(LoyaltyRateRequest.class)))
-                .thenReturn(new LoyaltyRateResponse(
-                        new BigDecimal("8.000"), BigDecimal.ONE, java.time.LocalDateTime.now()));
+                .thenReturn(new LoyaltyRateResponse(new BigDecimal("8.000"), new BigDecimal("1000"), java.time.LocalDateTime.now()));
 
         mockSettingsMvc.perform(put("/api/admin/loyalty/settings")
                         .contentType(MediaType.APPLICATION_JSON)

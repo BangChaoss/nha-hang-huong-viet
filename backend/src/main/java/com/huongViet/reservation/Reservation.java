@@ -168,6 +168,18 @@ public class Reservation {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
+    /**
+     * Standard customer-facing booking code (Single Source of Truth).
+     * Format: HV-XXXXXXXX (first 8 characters in uppercase).
+     */
+    public String getBookingCode() {
+        if (this.id == null || this.id.isBlank()) {
+            return "";
+        }
+        String clean = this.id.length() >= 8 ? this.id.substring(0, 8) : this.id;
+        return "HV-" + clean.toUpperCase();
+    }
+
     public String getCustomerId() { return customerId; }
     public void setCustomerId(String customerId) { this.customerId = customerId; }
 

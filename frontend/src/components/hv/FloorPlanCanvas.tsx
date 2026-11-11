@@ -78,10 +78,20 @@ export function getStandardDimensions(
   return { width: 140, height: 90 };
 }
 
+export type ZoneBox = {
+  zoneName: string;
+  isVip: boolean;
+  boxX: number;
+  boxY: number;
+  boxWidth: number;
+  boxHeight: number;
+  tableCount: number;
+};
+
 /**
  * Kiểm tra va chạm AABB (Axis-Aligned Bounding Box) giữa các bàn đang hiển thị
  */
-function computeCollisions(
+export function computeCollisions(
   layoutsMap: Record<string, LocalTableLayout>,
   visibleIds: string[],
 ): Set<string> {
@@ -104,6 +114,89 @@ function computeCollisions(
       if (overlap) {
         colliding.add(idA);
         colliding.add(idB);
+      }
+    }
+  }
+  return colliding;
+}
+
+/**
+ * Tính toán bounding box của từng khu vực dựa trên tọa độ thực tế của các bàn
+ */
+export function computeZoneBoxes(
+  layoutsMap: Record<string, LocalTableLayout>,
+  visibleLayouts: FloorPlanLayoutResponse[],
+): ZoneBox[] {
+  const groups: Record<string, FloorPlanLayoutResponse[]> = {};
+  for (const item of visibleLayouts) {
+    const zoneName = item.zoneName || "Khu vực chung";
+    if (!groups[zoneName]) {
+      groups[zoneName] = [];
+    }
+    groups[zoneName].push(item);
+  }
+
+  const boxes: ZoneBox[] = [];
+  for (const [zoneName, zoneTables] of Object.entries(groups)) {
+    if (zoneTables.length === 0) continue;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const t of zoneTables) {
+      const layout = layoutsMap[t.tableId] ?? {
+        x: t.positionX,
+        y: t.positionY,
+        width: t.width || 90,
+        height: t.height || 90,
+      };
+      minX = Math.min(minX, layout.x);
+      minY = Math.min(minY, layout.y);
+      maxX = Math.max(maxX, layout.x + layout.width);
+      maxY = Math.max(maxY, layout.y + layout.height);
+    }
+
+    const padding = 24;
+    const headerHeight = 30;
+    const boxX = minX - padding;
+    const boxY = minY - padding - headerHeight;
+    const boxWidth = maxX - minX + padding * 2;
+    const boxHeight = maxY - minY + padding * 2 + headerHeight;
+    const isVip = Boolean(zoneTables[0]?.zoneIsVip);
+
+    boxes.push({
+      zoneName,
+      isVip,
+      boxX,
+      boxY,
+      boxWidth,
+      boxHeight,
+      tableCount: zoneTables.length,
+    });
+  }
+  return boxes;
+}
+
+/**
+ * Kiểm tra va chạm AABB giữa các khu vực (Zone Collision Detection)
+ */
+export function computeZoneCollisions(zoneBoxes: ZoneBox[]): Set<string> {
+  const colliding = new Set<string>();
+  for (let i = 0; i < zoneBoxes.length; i++) {
+    const a = zoneBoxes[i]!;
+    for (let j = i + 1; j < zoneBoxes.length; j++) {
+      const b = zoneBoxes[j]!;
+      const overlap =
+        a.boxX < b.boxX + b.boxWidth &&
+        a.boxX + a.boxWidth > b.boxX &&
+        a.boxY < b.boxY + b.boxHeight &&
+        a.boxY + a.boxHeight > b.boxY;
+
+      if (overlap) {
+        colliding.add(a.zoneName);
+        colliding.add(b.zoneName);
       }
     }
   }
@@ -143,6 +236,9 @@ export function FloorPlanCanvas({
 
   // Danh sách các bàn đang bị đè/trùng lặp vị trí (Collision warning)
   const [collidingTableIds, setCollidingTableIds] = useState<Set<string>>(new Set());
+
+  // Danh sách các khu vực đang bị đè/trùng lặp ranh giới (Zone collision warning)
+  const [collidingZoneNames, setCollidingZoneNames] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setIsMounted(true);
@@ -188,11 +284,16 @@ export function FloorPlanCanvas({
     setHasChanges(false);
 
     // Kiểm tra va chạm ban đầu
+    const activeVisible = layouts.filter((l) => l.status !== "MAINTENANCE");
     const collisions = computeCollisions(
       initialMap,
-      layouts.filter((l) => l.status !== "MAINTENANCE").map((l) => l.tableId),
+      activeVisible.map((l) => l.tableId),
     );
     setCollidingTableIds(collisions);
+
+    const initialBoxes = computeZoneBoxes(initialMap, activeVisible);
+    const initialZoneCollisions = computeZoneCollisions(initialBoxes);
+    setCollidingZoneNames(initialZoneCollisions);
   }, [layouts]);
 
   // Ghi nhận trạng thái mới vào History Stack
@@ -215,6 +316,10 @@ export function FloorPlanCanvas({
         visibleLayouts.map((l) => l.tableId),
       );
       setCollidingTableIds(collisions);
+
+      const zoneBoxes = computeZoneBoxes(newLayouts, visibleLayouts);
+      const zoneCollisions = computeZoneCollisions(zoneBoxes);
+      setCollidingZoneNames(zoneCollisions);
     },
     [historyIndex, visibleLayouts],
   );
@@ -233,6 +338,10 @@ export function FloorPlanCanvas({
           visibleLayouts.map((l) => l.tableId),
         );
         setCollidingTableIds(collisions);
+
+        const zoneBoxes = computeZoneBoxes(targetState, visibleLayouts);
+        const zoneCollisions = computeZoneCollisions(zoneBoxes);
+        setCollidingZoneNames(zoneCollisions);
         toast.info("Đã hoàn tác thao tác gần nhất.");
       }
     }
@@ -252,6 +361,10 @@ export function FloorPlanCanvas({
           visibleLayouts.map((l) => l.tableId),
         );
         setCollidingTableIds(collisions);
+
+        const zoneBoxes = computeZoneBoxes(targetState, visibleLayouts);
+        const zoneCollisions = computeZoneCollisions(zoneBoxes);
+        setCollidingZoneNames(zoneCollisions);
         toast.info("Đã làm lại thao tác vừa hoàn tác.");
       }
     }
@@ -282,18 +395,10 @@ export function FloorPlanCanvas({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [readOnly, handleUndo, handleRedo]);
 
-  // Gom nhóm các bàn hiển thị theo khu vực để vẽ ranh giới (Zone Boundaries)
-  const zoneGroups = useMemo(() => {
-    const groups: Record<string, FloorPlanLayoutResponse[]> = {};
-    for (const item of visibleLayouts) {
-      const zoneName = item.zoneName || "Khu vực chung";
-      if (!groups[zoneName]) {
-        groups[zoneName] = [];
-      }
-      groups[zoneName].push(item);
-    }
-    return groups;
-  }, [visibleLayouts]);
+  // Tính toán danh sách các hộp ranh giới khu vực (Zone Boxes)
+  const currentZoneBoxes = useMemo(() => {
+    return computeZoneBoxes(localLayouts, visibleLayouts);
+  }, [localLayouts, visibleLayouts]);
 
   const handleZoom = (direction: "in" | "out") => {
     setStageScale((prev) => {
@@ -505,6 +610,10 @@ export function FloorPlanCanvas({
         visibleLayouts.map((l) => l.tableId),
       );
       setCollidingTableIds(collisions);
+
+      const zoneBoxes = computeZoneBoxes(previewLayouts, visibleLayouts);
+      const zoneCollisions = computeZoneCollisions(zoneBoxes);
+      setCollidingZoneNames(zoneCollisions);
     }
   };
 
@@ -532,8 +641,14 @@ export function FloorPlanCanvas({
     );
     setCollidingTableIds(collisions);
 
+    const zoneBoxes = computeZoneBoxes(updatedLayouts, visibleLayouts);
+    const zoneCollisions = computeZoneCollisions(zoneBoxes);
+    setCollidingZoneNames(zoneCollisions);
+
     if (collisions.has(activeId)) {
       toast.warning("Vị trí bàn này đang đè lên bàn khác. Vui lòng căn chỉnh tách ra.");
+    } else if (zoneCollisions.size > 0) {
+      toast.warning("Khu vực này đang bị đè lên khu vực khác. Vui lòng căn chỉnh tách ra.");
     }
 
     pushHistory(updatedLayouts);
@@ -659,6 +774,10 @@ export function FloorPlanCanvas({
   // Lưu sơ đồ bàn xuống Backend
   const handleSave = async () => {
     if (!onSaveLayouts || !hasChanges) return;
+    if (collidingTableIds.size > 0 || collidingZoneNames.size > 0) {
+      toast.error("Không thể lưu sơ đồ khi đang có bàn hoặc khu vực bị đè/trùng lặp.");
+      return;
+    }
     setIsSaving(true);
     try {
       const requests: FloorPlanLayoutRequest[] = layouts.map((item) => {
@@ -856,10 +975,16 @@ export function FloorPlanCanvas({
             {collidingTableIds.size > 0 && (
               <span className="text-xs font-semibold text-rose-600 flex items-center gap-1 animate-pulse">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Có {collidingTableIds.size} bàn bị đè lên nhau
+                Có {collidingTableIds.size} bàn bị đè
               </span>
             )}
-            {hasChanges && collidingTableIds.size === 0 && (
+            {collidingZoneNames.size > 0 && (
+              <span className="text-xs font-semibold text-rose-600 flex items-center gap-1 animate-pulse">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Có {collidingZoneNames.size} khu vực bị đè
+              </span>
+            )}
+            {hasChanges && collidingTableIds.size === 0 && collidingZoneNames.size === 0 && (
               <span className="text-xs font-medium text-amber-600 animate-pulse">
                 Có thay đổi chưa lưu
               </span>
@@ -867,9 +992,19 @@ export function FloorPlanCanvas({
             <Button
               type="button"
               size="sm"
-              disabled={!hasChanges || isSaving}
+              disabled={
+                !hasChanges ||
+                isSaving ||
+                collidingTableIds.size > 0 ||
+                collidingZoneNames.size > 0
+              }
               onClick={() => void handleSave()}
               className="h-8 gap-1.5 shadow-xs"
+              title={
+                collidingTableIds.size > 0 || collidingZoneNames.size > 0
+                  ? "Vui lòng tách các bàn hoặc khu vực bị đè trước khi lưu"
+                  : undefined
+              }
             >
               <Save className="h-3.5 w-3.5" />
               {isSaving ? "Đang lưu..." : "Lưu vị trí"}
@@ -958,69 +1093,74 @@ export function FloorPlanCanvas({
               {gridLines}
 
               {/* Ranh giới & Nhãn khu vực (Zone Boundaries) */}
-              {Object.entries(zoneGroups).map(([zoneName, zoneTables]) => {
-                if (zoneTables.length === 0) return null;
-
-                let minX = Infinity;
-                let minY = Infinity;
-                let maxX = -Infinity;
-                let maxY = -Infinity;
-
-                for (const t of zoneTables) {
-                  const layout = localLayouts[t.tableId] ?? {
-                    x: t.positionX,
-                    y: t.positionY,
-                    width: t.width || 90,
-                    height: t.height || 90,
-                  };
-                  minX = Math.min(minX, layout.x);
-                  minY = Math.min(minY, layout.y);
-                  maxX = Math.max(maxX, layout.x + layout.width);
-                  maxY = Math.max(maxY, layout.y + layout.height);
-                }
-
-                const padding = 24;
-                const headerHeight = 30;
-                const boxX = minX - padding;
-                const boxY = minY - padding - headerHeight;
-                const boxWidth = maxX - minX + padding * 2;
-                const boxHeight = maxY - minY + padding * 2 + headerHeight;
-                const isVip = Boolean(zoneTables[0]?.zoneIsVip);
-                const badgeWidth = Math.max(zoneName.length * 9 + 48, 120);
+              {currentZoneBoxes.map((zone) => {
+                const isColliding = collidingZoneNames.has(zone.zoneName);
+                const strokeColor = isColliding
+                  ? "#ef4444"
+                  : zone.isVip
+                    ? "#f59e0b"
+                    : "#94a3b8";
+                const strokeWidth = isColliding ? 2.5 : 1.5;
+                const fillColor = isColliding
+                  ? "rgba(239, 68, 68, 0.14)"
+                  : zone.isVip
+                    ? "rgba(254, 243, 199, 0.22)"
+                    : "rgba(241, 245, 249, 0.45)";
+                const badgeFill = isColliding ? "#fee2e2" : zone.isVip ? "#fef3c7" : "#e2e8f0";
+                const badgeStroke = isColliding ? "#ef4444" : zone.isVip ? "#f59e0b" : "#cbd5e1";
+                const textFill = isColliding ? "#b91c1c" : zone.isVip ? "#b45309" : "#334155";
+                const badgeLabel = `${zone.zoneName}${zone.isVip ? " ★ VIP" : ""} (${zone.tableCount} bàn)${isColliding ? " ⚠️ Đè khu vực!" : ""}`;
+                const badgeWidth = Math.max(badgeLabel.length * 8.5 + 40, 120);
 
                 return (
-                  <Group key={`zone-boundary-${zoneName}`}>
+                  <Group key={`zone-boundary-${zone.zoneName}`}>
                     {/* Hộp ranh giới khu vực */}
                     <Rect
-                      x={boxX}
-                      y={boxY}
-                      width={boxWidth}
-                      height={boxHeight}
+                      x={zone.boxX}
+                      y={zone.boxY}
+                      width={zone.boxWidth}
+                      height={zone.boxHeight}
                       cornerRadius={16}
-                      stroke={isVip ? "#f59e0b" : "#94a3b8"}
-                      strokeWidth={1.5}
+                      stroke={strokeColor}
+                      strokeWidth={strokeWidth}
                       dash={[6, 4]}
-                      fill={isVip ? "rgba(254, 243, 199, 0.22)" : "rgba(241, 245, 249, 0.45)"}
+                      fill={fillColor}
                     />
 
+                    {/* Huy hiệu cảnh báo ở góc trên bên phải khu vực khi bị đè */}
+                    {isColliding && (
+                      <Group x={zone.boxX + zone.boxWidth - 14} y={zone.boxY - 4}>
+                        <Circle radius={10} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} />
+                        <Text
+                          text="!"
+                          x={-3}
+                          y={-7}
+                          fontSize={13}
+                          fontFamily="sans-serif"
+                          fontStyle="bold"
+                          fill="#ffffff"
+                        />
+                      </Group>
+                    )}
+
                     {/* Thẻ tên khu vực */}
-                    <Group x={boxX + 12} y={boxY + 6}>
+                    <Group x={zone.boxX + 12} y={zone.boxY + 6}>
                       <Rect
                         width={badgeWidth}
                         height={22}
                         cornerRadius={6}
-                        fill={isVip ? "#fef3c7" : "#e2e8f0"}
-                        stroke={isVip ? "#f59e0b" : "#cbd5e1"}
+                        fill={badgeFill}
+                        stroke={badgeStroke}
                         strokeWidth={1}
                       />
                       <Text
-                        text={`${zoneName}${isVip ? " ★ VIP" : ""} (${zoneTables.length} bàn)`}
+                        text={badgeLabel}
                         x={8}
                         y={5}
                         fontSize={11}
                         fontStyle="bold"
                         fontFamily="sans-serif"
-                        fill={isVip ? "#b45309" : "#334155"}
+                        fill={textFill}
                       />
                     </Group>
                   </Group>

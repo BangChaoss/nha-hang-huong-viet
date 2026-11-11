@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Clock } from "lucide-react";
+import { AlertTriangle, Calendar, Clock, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useKitchenTickets } from "@/features/order/hooks/use-kitchen-tickets";
 import { useUpdateTicketStatus } from "@/features/order/hooks/use-ticket-status";
@@ -21,8 +22,20 @@ function elapsedMinutes(createdAt: string, now: number) {
   return Math.max(0, Math.floor((now - start) / 60000));
 }
 
+function getTodayString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
-  const { data: tickets, isLoading, isError, error } = useKitchenTickets();
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayString);
+  const { data: tickets, isLoading, isError, error, refetch, isFetching } = useKitchenTickets(
+    undefined,
+    selectedDate
+  );
   const updateStatus = useUpdateTicketStatus();
   const { session } = useSession();
   const [now, setNow] = useState(Date.now());
@@ -54,27 +67,67 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
     );
   };
 
+  const isToday = selectedDate === getTodayString();
+
   return (
     <div className="space-y-6">
-      <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
             Màn hình bếp · FIFO
           </p>
           <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
           {!canUpdateStatus && (
-            <p className="mt-3 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+            <p className="mt-2 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
               Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do nhân viên phục vụ
               hoặc quản lý thực hiện.
             </p>
           )}
         </div>
+
+        {/* Bộ điều khiển chọn ngày hiển thị */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1 text-sm shadow-xs">
+            <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="h-7 w-36 border-none bg-transparent p-0 text-xs font-medium focus-visible:ring-0"
+              aria-label="Chọn ngày hiển thị phiếu bếp"
+            />
+          </div>
+          {!isToday && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => setSelectedDate(getTodayString())}
+            >
+              Hôm nay
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1", isFetching && "animate-spin")} />
+            Làm mới
+          </Button>
+        </div>
       </div>
+
       {isError && (
         <p className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
           {error instanceof Error ? error.message : "Không tải được phiếu bếp."}
         </p>
       )}
+
       {isLoading ? (
         <p className="py-8 text-center text-sm text-muted-foreground">Đang tải phiếu bếp…</p>
       ) : (
@@ -92,7 +145,9 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
                 </div>
                 <div className="space-y-3">
                   {list.length === 0 && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">Trống</p>
+                    <p className="py-8 text-center text-sm text-muted-foreground">
+                      Không có phiếu nào
+                    </p>
                   )}
                   {list.map((t, idx) => {
                     const mins = elapsedMinutes(t.createdAt, now);

@@ -1,6 +1,6 @@
 import type { AppRole } from "@/lib/role-routing";
 
-export type AuthUser = { id: string; username: string; email: string; role: AppRole };
+export type AuthUser = { id: string; username: string; email: string; role: AppRole; phoneNumber?: string };
 export type AuthResponse = AuthUser & { token: string; refreshToken: string | null };
 export type RefreshResponse = { token: string; refreshToken: string };
 

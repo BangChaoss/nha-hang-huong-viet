@@ -114,9 +114,10 @@ export const orderApi = {
 
 /** API của màn hình bếp (UC-16). */
 export const kitchenApi = {
-  listTickets: (status?: CookingStatus): Promise<KitchenTicketResponse[]> => {
+  listTickets: (status?: CookingStatus, date?: string): Promise<KitchenTicketResponse[]> => {
     const search = new URLSearchParams();
     if (status) search.append("status", status);
+    if (date) search.append("date", date);
     const queryString = search.toString();
     return request<KitchenTicketResponse[]>(
       `/api/kitchen/tickets${queryString ? `?${queryString}` : ""}`,

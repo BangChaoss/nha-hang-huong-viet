@@ -1,17 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import {Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, LayoutGrid, Trash2, Eye, Loader2, BarChart3, MessagesSquare,} from "lucide-react";
+import {Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
+   Trash2, Eye, Loader2, BarChart3, MessagesSquare,ArrowLeft,} from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   voucherApi,
   type Voucher,
@@ -96,6 +91,9 @@ export function ManagerDashboard({
   const [voucherSaving, setVoucherSaving] = useState(false);
   const [voucherLoading, setVoucherLoading] = useState(false);
 
+  // Mini-tab bên trong tab vouchers ("manage" | "usages")
+  const [voucherSubTab, setVoucherSubTab] = useState<"manage" | "usages">("manage");
+
   // Loyalty Settings
   const [loyaltyRate, setLoyaltyRate] = useState("5");
   const [pointValueVnd, setPointValueVnd] = useState("1");
@@ -121,6 +119,7 @@ export function ManagerDashboard({
 
   const handleOpenUsages = async (v: Voucher) => {
     setSelectedVoucherForUsages(v);
+    setVoucherSubTab("usages");
     setUsagesLoading(true);
     try {
       const data = await voucherApi.getUsages(v.id);
@@ -244,282 +243,408 @@ export function ManagerDashboard({
         </section>
       )}
 
+      {/* TAB VOUCHERS: SỬ DỤNG MINI-TABS THAY VÌ DIALOG POPUP */}
       {activeTab === "vouchers" && (
         <section className="space-y-6">
-          <div className="surface-card space-y-4 p-5">
-            <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
-            <p className="text-sm text-muted-foreground">
-              Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính theo số điện thoại.
-            </p>
-            <form
-              className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const value = Number(voucherForm.discountValue);
-                const maxDiscount = voucherForm.maxDiscountAmount.trim() ? Number(voucherForm.maxDiscountAmount) : null;
-                const minOrder = Number(voucherForm.minOrderAmount);
-                const totalQuantity = Number(voucherForm.totalQuantity);
-                const perCustomer = Number(voucherForm.maxUsesPerCustomer);
+          <Tabs
+            value={voucherSubTab}
+            onValueChange={(val) => setVoucherSubTab(val as "manage" | "usages")}
+            className="space-y-6"
+          >
+            <TabsList className="bg-muted p-1">
+              <TabsTrigger value="manage" className="text-sm">
+                Danh sách & Tạo Voucher
+              </TabsTrigger>
+              <TabsTrigger value="usages" className="text-sm flex items-center gap-1.5">
+                <Eye className="h-4 w-4" />
+                <span>
+                  Lượt sử dụng voucher{" "}
+                  {selectedVoucherForUsages ? `(${selectedVoucherForUsages.voucherCode})` : ""}
+                </span>
+              </TabsTrigger>
+            </TabsList>
 
-                if (!voucherForm.voucherCode.trim() || !voucherForm.title.trim() || !voucherForm.startDate || !voucherForm.endDate) {
-                  toast.error("Vui lòng nhập mã, tên chương trình và thời gian áp dụng.");
-                  return;
-                }
-                if (voucherForm.endDate < voucherForm.startDate) {
-                  toast.error("Ngày kết thúc không được trước ngày bắt đầu.");
-                  return;
-                }
-                if (!Number.isFinite(value) || value <= 0 || (voucherForm.discountType === "PERCENTAGE" && value > 100)) {
-                  toast.error("Giá trị giảm không hợp lệ.");
-                  return;
-                }
+            {/* MINI-TAB 1: TẠO VÀ QUẢN LÝ VOUCHER */}
+            <TabsContent value="manage" className="space-y-6 mt-0">
+              <div className="surface-card space-y-4 p-5">
+                <h2 className="text-2xl font-medium">Tạo voucher nhà hàng</h2>
+                <p className="text-sm text-muted-foreground">
+                  Khách dùng voucher khi thanh toán cần nhập số điện thoại; giới hạn lượt dùng được tính theo số điện thoại.
+                </p>
+                <form
+                  className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const value = Number(voucherForm.discountValue);
+                    const maxDiscount = voucherForm.maxDiscountAmount.trim() ? Number(voucherForm.maxDiscountAmount) : null;
+                    const minOrder = Number(voucherForm.minOrderAmount);
+                    const totalQuantity = Number(voucherForm.totalQuantity);
+                    const perCustomer = Number(voucherForm.maxUsesPerCustomer);
 
-                const payload: VoucherPayload = {
-                  voucherCode: voucherForm.voucherCode.trim().toUpperCase(),
-                  title: voucherForm.title.trim(),
-                  description: voucherForm.description.trim() || null,
-                  discountType: voucherForm.discountType,
-                  discountValue: value,
-                  maxDiscountAmount: maxDiscount,
-                  minOrderAmount: minOrder,
-                  startDate: `${voucherForm.startDate}T00:00:00`,
-                  endDate: `${voucherForm.endDate}T23:59:59`,
-                  totalQuantity,
-                  maxUsesPerCustomer: perCustomer,
-                };
+                    if (!voucherForm.voucherCode.trim() || !voucherForm.title.trim() || !voucherForm.startDate || !voucherForm.endDate) {
+                      toast.error("Vui lòng nhập mã, tên chương trình và thời gian áp dụng.");
+                      return;
+                    }
+                    if (voucherForm.endDate < voucherForm.startDate) {
+                      toast.error("Ngày kết thúc không được trước ngày bắt đầu.");
+                      return;
+                    }
+                    if (!Number.isFinite(value) || value <= 0 || (voucherForm.discountType === "PERCENTAGE" && value > 100)) {
+                      toast.error("Giá trị giảm không hợp lệ.");
+                      return;
+                    }
 
-                setVoucherSaving(true);
-                try {
-                  await voucherApi.create(payload);
-                  await loadVouchers();
-                  setVoucherForm(emptyVoucher());
-                  toast.success("Đã tạo voucher thành công.");
-                } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Không tạo được voucher.");
-                } finally {
-                  setVoucherSaving(false);
-                }
-              }}
-            >
-              <Field label="Mã Voucher">
-                <Input
-                  required
-                  maxLength={50}
-                  value={voucherForm.voucherCode}
-                  onChange={(e) => updateVoucher("voucherCode", e.target.value)}
-                  placeholder="HUONGVIET20"
-                />
-              </Field>
-              <Field label="Tên chương trình">
-                <Input
-                  required
-                  maxLength={150}
-                  value={voucherForm.title}
-                  onChange={(e) => updateVoucher("title", e.target.value)}
-                  placeholder="Ưu đãi khách hàng mới"
-                />
-              </Field>
-              <Field label="Mô tả chi tiết">
-                <Input
-                  value={voucherForm.description}
-                  onChange={(e) => updateVoucher("description", e.target.value)}
-                  placeholder="Điều kiện và nội dung ưu đãi"
-                />
-              </Field>
-              <Field label="Loại giảm giá">
-                <select
-                  className="w-full rounded-md border bg-background p-2.5 text-sm"
-                  value={voucherForm.discountType}
-                  onChange={(e) => {
-                    const type = e.target.value as DiscountType;
-                    updateVoucher("discountType", type);
-                    if (type === "FIXED_AMOUNT") updateVoucher("maxDiscountAmount", "");
-                    else updateVoucher("maxDiscountAmount", "100000");
+                    const payload: VoucherPayload = {
+                      voucherCode: voucherForm.voucherCode.trim().toUpperCase(),
+                      title: voucherForm.title.trim(),
+                      description: voucherForm.description.trim() || null,
+                      discountType: voucherForm.discountType,
+                      discountValue: value,
+                      maxDiscountAmount: maxDiscount,
+                      minOrderAmount: minOrder,
+                      startDate: `${voucherForm.startDate}T00:00:00`,
+                      endDate: `${voucherForm.endDate}T23:59:59`,
+                      totalQuantity,
+                      maxUsesPerCustomer: perCustomer,
+                    };
+
+                    setVoucherSaving(true);
+                    try {
+                      await voucherApi.create(payload);
+                      await loadVouchers();
+                      setVoucherForm(emptyVoucher());
+                      toast.success("Đã tạo voucher thành công.");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Không tạo được voucher.");
+                    } finally {
+                      setVoucherSaving(false);
+                    }
                   }}
                 >
-                  <option value="PERCENTAGE">Giảm theo phần trăm (%)</option>
-                  <option value="FIXED_AMOUNT">Giảm theo giá tiền (VNĐ)</option>
-                </select>
-              </Field>
-              <Field label={voucherForm.discountType === "PERCENTAGE" ? "Giá trị giảm (%)" : "Giá trị giảm (VNĐ)"}>
-                <Input
-                  required
-                  type="number"
-                  min="0.01"
-                  max={voucherForm.discountType === "PERCENTAGE" ? 100 : undefined}
-                  step="0.01"
-                  value={voucherForm.discountValue}
-                  onChange={(e) => updateVoucher("discountValue", e.target.value)}
-                />
-              </Field>
-              {voucherForm.discountType === "PERCENTAGE" && (
-                <Field label="Mức giảm tối đa (VNĐ)">
-                  <Input
-                    type="number"
-                    min="0"
-                    step="1000"
-                    value={voucherForm.maxDiscountAmount}
-                    onChange={(e) => updateVoucher("maxDiscountAmount", e.target.value)}
-                    placeholder="100000"
-                  />
-                </Field>
-              )}
-              <Field label="Đơn tối thiểu (VNĐ)">
-                <Input
-                  required
-                  type="number"
-                  min="0"
-                  step="1000"
-                  value={voucherForm.minOrderAmount}
-                  onChange={(e) => updateVoucher("minOrderAmount", e.target.value)}
-                />
-              </Field>
-              <Field label="Ngày bắt đầu">
-                <Input
-                  required
-                  type="date"
-                  value={voucherForm.startDate}
-                  onChange={(e) => updateVoucher("startDate", e.target.value)}
-                />
-              </Field>
-              <Field label="Ngày kết thúc">
-                <Input
-                  required
-                  type="date"
-                  min={voucherForm.startDate || undefined}
-                  value={voucherForm.endDate}
-                  onChange={(e) => updateVoucher("endDate", e.target.value)}
-                />
-              </Field>
-              <Field label="Số lượng phát hành">
-                <Input
-                  required
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={voucherForm.totalQuantity}
-                  onChange={(e) => updateVoucher("totalQuantity", e.target.value)}
-                />
-              </Field>
-              <Field label="Giới hạn dùng/khách (theo SĐT)">
-                <Input
-                  required
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={voucherForm.maxUsesPerCustomer}
-                  onChange={(e) => updateVoucher("maxUsesPerCustomer", e.target.value)}
-                />
-              </Field>
-              <div className="flex items-end">
-                <Button type="submit" disabled={voucherSaving} className="w-full">
-                  <Plus className="mr-2 h-4 w-4" />
-                  {voucherSaving ? "Đang lưu..." : "Tạo voucher"}
-                </Button>
+                  <Field label="Mã Voucher">
+                    <Input
+                      required
+                      maxLength={50}
+                      value={voucherForm.voucherCode}
+                      onChange={(e) => updateVoucher("voucherCode", e.target.value)}
+                      placeholder="HUONGVIET20"
+                    />
+                  </Field>
+                  <Field label="Tên chương trình">
+                    <Input
+                      required
+                      maxLength={150}
+                      value={voucherForm.title}
+                      onChange={(e) => updateVoucher("title", e.target.value)}
+                      placeholder="Ưu đãi khách hàng mới"
+                    />
+                  </Field>
+                  <Field label="Mô tả chi tiết">
+                    <Input
+                      value={voucherForm.description}
+                      onChange={(e) => updateVoucher("description", e.target.value)}
+                      placeholder="Điều kiện và nội dung ưu đãi"
+                    />
+                  </Field>
+                  <Field label="Loại giảm giá">
+                    <select
+                      className="w-full rounded-md border bg-background p-2.5 text-sm"
+                      value={voucherForm.discountType}
+                      onChange={(e) => {
+                        const type = e.target.value as DiscountType;
+                        updateVoucher("discountType", type);
+                        if (type === "FIXED_AMOUNT") updateVoucher("maxDiscountAmount", "");
+                        else updateVoucher("maxDiscountAmount", "100000");
+                      }}
+                    >
+                      <option value="PERCENTAGE">Giảm theo phần trăm (%)</option>
+                      <option value="FIXED_AMOUNT">Giảm theo giá tiền (VNĐ)</option>
+                    </select>
+                  </Field>
+                  <Field label={voucherForm.discountType === "PERCENTAGE" ? "Giá trị giảm (%)" : "Giá trị giảm (VNĐ)"}>
+                    <Input
+                      required
+                      type="number"
+                      min="0.01"
+                      max={voucherForm.discountType === "PERCENTAGE" ? 100 : undefined}
+                      step="0.01"
+                      value={voucherForm.discountValue}
+                      onChange={(e) => updateVoucher("discountValue", e.target.value)}
+                    />
+                  </Field>
+                  {voucherForm.discountType === "PERCENTAGE" && (
+                    <Field label="Mức giảm tối đa (VNĐ)">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value={voucherForm.maxDiscountAmount}
+                        onChange={(e) => updateVoucher("maxDiscountAmount", e.target.value)}
+                        placeholder="100000"
+                      />
+                    </Field>
+                  )}
+                  <Field label="Đơn tối thiểu (VNĐ)">
+                    <Input
+                      required
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={voucherForm.minOrderAmount}
+                      onChange={(e) => updateVoucher("minOrderAmount", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Ngày bắt đầu">
+                    <Input
+                      required
+                      type="date"
+                      value={voucherForm.startDate}
+                      onChange={(e) => updateVoucher("startDate", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Ngày kết thúc">
+                    <Input
+                      required
+                      type="date"
+                      min={voucherForm.startDate || undefined}
+                      value={voucherForm.endDate}
+                      onChange={(e) => updateVoucher("endDate", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Số lượng phát hành">
+                    <Input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={voucherForm.totalQuantity}
+                      onChange={(e) => updateVoucher("totalQuantity", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Giới hạn dùng/khách (theo SĐT)">
+                    <Input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={voucherForm.maxUsesPerCustomer}
+                      onChange={(e) => updateVoucher("maxUsesPerCustomer", e.target.value)}
+                    />
+                  </Field>
+                  <div className="flex items-end">
+                    <Button type="submit" disabled={voucherSaving} className="w-full">
+                      <Plus className="mr-2 h-4 w-4" />
+                      {voucherSaving ? "Đang lưu..." : "Tạo voucher"}
+                    </Button>
+                  </div>
+                </form>
               </div>
-            </form>
-          </div>
 
-          <div className="surface-card overflow-x-auto p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-2xl font-medium">Danh sách voucher</h2>
-              <Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>
-                {voucherLoading ? "Đang tải..." : "Làm mới"}
-              </Button>
-            </div>
-            {vouchersList.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left">
-                    <th className="py-2">Mã / Tên</th>
-                    <th>Ưu đãi</th>
-                    <th>Hiệu lực</th>
-                    <th>Lượt dùng / Phát hành</th>
-                    <th>Giới hạn/khách</th>
-                    <th>Trạng thái</th>
-                    <th className="text-right">Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {vouchersList.map((v) => (
-                    <tr key={v.id} className="border-b last:border-0">
-                      <td className="py-3">
-                        <b className="font-mono text-primary">{v.voucherCode}</b>
-                        <p className="font-medium">{v.title}</p>
-                      </td>
-                      <td>
-                        {v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : formatVND(v.discountValue)}
-                        <p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>
-                      </td>
-                      <td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => void handleOpenUsages(v)}
-                          className="font-medium text-primary hover:underline cursor-pointer"
-                        >
-                          {v.usedQuantity} / {v.totalQuantity}
-                        </button>
-                      </td>
-                      <td>{v.maxUsesPerCustomer} lượt / SĐT</td>
-                      <td>
-                        <span className={v.active ? "text-emerald-600 font-medium" : "text-muted-foreground"}>
-                          {v.active ? "Đang bật" : "Đã tắt"}
+              <div className="surface-card overflow-x-auto p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-2xl font-medium">Danh sách voucher</h2>
+                  <Button type="button" variant="outline" onClick={() => void loadVouchers()} disabled={voucherLoading}>
+                    {voucherLoading ? "Đang tải..." : "Làm mới"}
+                  </Button>
+                </div>
+                {vouchersList.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Chưa có voucher nào được tạo.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="py-2">Mã / Tên</th>
+                        <th>Ưu đãi</th>
+                        <th>Hiệu lực</th>
+                        <th>Lượt dùng / Phát hành</th>
+                        <th>Giới hạn/khách</th>
+                        <th>Trạng thái</th>
+                        <th className="text-right">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vouchersList.map((v) => (
+                        <tr key={v.id} className="border-b last:border-0">
+                          <td className="py-3">
+                            <b className="font-mono text-primary">{v.voucherCode}</b>
+                            <p className="font-medium">{v.title}</p>
+                          </td>
+                          <td>
+                            {v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : formatVND(v.discountValue)}
+                            <p className="text-xs text-muted-foreground">Đơn tối thiểu {formatVND(v.minOrderAmount)}</p>
+                          </td>
+                          <td>{formatVoucherDate(v.startDate)} – {formatVoucherDate(v.endDate)}</td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenUsages(v)}
+                              className="font-medium text-primary hover:underline cursor-pointer"
+                              title="Bấm để xem danh sách lượt sử dụng"
+                            >
+                              {v.usedQuantity} / {v.totalQuantity}
+                            </button>
+                          </td>
+                          <td>{v.maxUsesPerCustomer} lượt / SĐT</td>
+                          <td>
+                            <span className={v.active ? "text-emerald-600 font-medium" : "text-muted-foreground"}>
+                              {v.active ? "Đang bật" : "Đã tắt"}
+                            </span>
+                          </td>
+                          <td className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void handleOpenUsages(v)}
+                                title="Xem danh sách lượt sử dụng"
+                              >
+                                <Eye className="mr-1 h-3.5 w-3.5" />
+                                Lượt dùng
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    await voucherApi.setActive(v.id, !v.active);
+                                    await loadVouchers();
+                                  } catch (error) {
+                                    toast.error(error instanceof Error ? error.message : "Lỗi cập nhật.");
+                                  }
+                                }}
+                              >
+                                {v.active ? "Tắt" : "Bật"}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                onClick={async () => {
+                                  if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return;
+                                  try {
+                                    await voucherApi.remove(v.id);
+                                    await loadVouchers();
+                                    toast.success("Đã xóa voucher.");
+                                  } catch (error) {
+                                    toast.error(error instanceof Error ? error.message : "Không xóa được voucher.");
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 text-alert" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </TabsContent>
+
+            {/* MINI-TAB 2: LƯỢT SỬ DỤNG VOUCHER (THAY THẾ POPUP) */}
+            <TabsContent value="usages" className="space-y-4 mt-0">
+              <div className="surface-card p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setVoucherSubTab("manage")}
+                    >
+                      <ArrowLeft className="mr-1.5 h-4 w-4" />
+                      Về danh sách
+                    </Button>
+                    <div>
+                      <h2 className="text-xl font-semibold">
+                        Lịch sử sử dụng voucher:{" "}
+                        <span className="font-mono text-primary">
+                          {selectedVoucherForUsages?.voucherCode ?? "Chưa chọn"}
                         </span>
-                      </td>
-                      <td className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleOpenUsages(v)}
-                          >
-                            <Eye className="mr-1 h-3.5 w-3.5" />
-                            Lượt dùng
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              try {
-                                await voucherApi.setActive(v.id, !v.active);
-                                await loadVouchers();
-                              } catch (error) {
-                                toast.error(error instanceof Error ? error.message : "Lỗi cập nhật.");
-                              }
-                            }}
-                          >
-                            {v.active ? "Tắt" : "Bật"}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            onClick={async () => {
-                              if (!window.confirm(`Xóa voucher ${v.voucherCode}?`)) return;
-                              try {
-                                await voucherApi.remove(v.id);
-                                await loadVouchers();
-                                toast.success("Đã xóa voucher.");
-                              } catch (error) {
-                                toast.error(error instanceof Error ? error.message : "Không xóa được voucher.");
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-alert" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+                      </h2>
+                      {selectedVoucherForUsages && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {selectedVoucherForUsages.title} · Đã dùng {selectedVoucherForUsages.usedQuantity} /{" "}
+                          {selectedVoucherForUsages.totalQuantity} lượt
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Dropdown chuyển nhanh voucher khác */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground shrink-0">Chọn voucher khác:</span>
+                    <select
+                      className="rounded-md border bg-background px-3 py-1.5 text-xs font-mono font-medium"
+                      value={selectedVoucherForUsages?.id ?? ""}
+                      onChange={(e) => {
+                        const targetVoucher = vouchersList.find((v) => v.id === e.target.value);
+                        if (targetVoucher) {
+                          void handleOpenUsages(targetVoucher);
+                        }
+                      }}
+                    >
+                      <option value="" disabled>
+                        -- Chọn voucher --
+                      </option>
+                      {vouchersList.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.voucherCode} ({v.usedQuantity}/{v.totalQuantity})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {usagesLoading ? (
+                  <div className="flex items-center justify-center py-16 text-muted-foreground">
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Đang tải dữ liệu lượt sử dụng voucher...
+                  </div>
+                ) : !selectedVoucherForUsages ? (
+                  <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
+                    Vui lòng chọn một voucher từ danh sách để xem lịch sử sử dụng.
+                  </div>
+                ) : usagesList.length === 0 ? (
+                  <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
+                    Voucher <strong>{selectedVoucherForUsages.voucherCode}</strong> chưa có lượt sử dụng nào.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                          <th className="py-2.5 px-3 font-semibold">STT</th>
+                          <th className="py-2.5 px-3 font-semibold">Khách hàng (SĐT)</th>
+                          <th className="py-2.5 px-3 font-semibold">Mã hóa đơn</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Số tiền giảm</th>
+                          <th className="py-2.5 px-3 font-semibold">Thời gian sử dụng</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usagesList.map((item, idx) => (
+                          <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-2.5 px-3 tabular-nums">{idx + 1}</td>
+                            <td className="py-2.5 px-3 font-mono font-medium">{item.customerPhone}</td>
+                            <td className="py-2.5 px-3 font-mono text-xs">{item.invoiceCode}</td>
+                            <td className="py-2.5 px-3 font-semibold text-primary tabular-nums text-right">
+                              {formatVND(item.discountApplied)}
+                            </td>
+                            <td className="py-2.5 px-3 text-muted-foreground text-xs">
+                              {item.usedAt ? new Date(item.usedAt).toLocaleString("vi-VN") : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
         </section>
       )}
 
@@ -648,76 +773,6 @@ export function ManagerDashboard({
           <MenuManagement />
         </>
       )}
-
-      {/* DIALOG XEM CHI TIẾT CÁC LƯỢT DÙNG CỦA VOUCHER */}
-      <Dialog
-        open={Boolean(selectedVoucherForUsages)}
-        onOpenChange={(open) => !open && setSelectedVoucherForUsages(null)}
-      >
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold font-display">
-              Chi tiết lượt sử dụng voucher: {selectedVoucherForUsages?.voucherCode}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedVoucherForUsages?.title} · Đã sử dụng {selectedVoucherForUsages?.usedQuantity} /{" "}
-              {selectedVoucherForUsages?.totalQuantity} lượt
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-2">
-            {usagesLoading ? (
-              <div className="flex items-center justify-center py-10 text-muted-foreground">
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Đang tải dữ liệu lượt dùng...
-              </div>
-            ) : usagesList.length === 0 ? (
-              <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
-                Voucher này chưa được khách hàng nào sử dụng.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50 text-left">
-                      <th className="py-2.5 px-3 font-semibold">STT</th>
-                      <th className="py-2.5 px-3 font-semibold">Khách hàng (SĐT)</th>
-                      <th className="py-2.5 px-3 font-semibold">Mã hóa đơn</th>
-                      <th className="py-2.5 px-3 font-semibold">Số tiền giảm</th>
-                      <th className="py-2.5 px-3 font-semibold">Thời gian sử dụng</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usagesList.map((item, idx) => (
-                      <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30">
-                        <td className="py-2.5 px-3 tabular-nums">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-mono font-medium">{item.customerPhone}</td>
-                        <td className="py-2.5 px-3 font-mono text-xs">{item.invoiceCode}</td>
-                        <td className="py-2.5 px-3 font-semibold text-primary tabular-nums">
-                          {formatVND(item.discountApplied)}
-                        </td>
-                        <td className="py-2.5 px-3 text-muted-foreground text-xs">
-                          {item.usedAt ? new Date(item.usedAt).toLocaleString("vi-VN") : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setSelectedVoucherForUsages(null)}
-            >
-              Đóng
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
