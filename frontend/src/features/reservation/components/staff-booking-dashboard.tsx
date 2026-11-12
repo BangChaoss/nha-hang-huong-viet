@@ -570,6 +570,8 @@ export function StaffBookingDashboard() {
                   <SelectItem value="PENDING_HOLD">Chờ xác nhận</SelectItem>
                   <SelectItem value="CONFIRMED">Đã xác nhận</SelectItem>
                   <SelectItem value="ARRIVED">Đã nhận bàn</SelectItem>
+                  <SelectItem value="PAID">Đã thanh toán</SelectItem>
+                  <SelectItem value="REVIEWED">Đã đánh giá</SelectItem>
                   <SelectItem value="CANCELLED">Đã hủy</SelectItem>
                   <SelectItem value="NO_SHOW">Không đến (No-Show)</SelectItem>
                 </SelectContent>

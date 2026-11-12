@@ -131,6 +131,29 @@ public class FeedbackService {
         logger.info("Feedback submitted successfully [id={}, customerId={}, rating={}]", 
             saved.getId(), currentCustomer.getId(), saved.getRating());
 
+        // Tự động cập nhật trạng thái đơn đặt bàn liên quan sang REVIEWED (Đã đánh giá)
+        if (invoiceId != null) {
+            try {
+                String findReservationSql = """
+                    SELECT r.id
+                    FROM reservations r
+                    JOIN orders o ON (o.table_id = r.table_id OR r.merged_table_ids LIKE CONCAT('%', o.table_id, '%'))
+                    JOIN invoices i ON i.order_id = o.id
+                    WHERE i.id = ? AND r.status = 'PAID'
+                    ORDER BY r.reservation_date DESC, r.reservation_time DESC
+                    LIMIT 1
+                """;
+                List<String> resIds = jdbcTemplate.query(findReservationSql, (rs, rowNum) -> rs.getString("id"), invoiceId);
+                if (!resIds.isEmpty()) {
+                    String resId = resIds.get(0);
+                    jdbcTemplate.update("UPDATE reservations SET status = 'REVIEWED', updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?", resId);
+                    logger.info("Reservation {} automatically updated to REVIEWED after feedback", resId);
+                }
+            } catch (Exception ex) {
+                logger.warn("Could not automatically update reservation status to REVIEWED: {}", ex.getMessage());
+            }
+        }
+
         return FeedbackResponse.from(saved);
     }
 

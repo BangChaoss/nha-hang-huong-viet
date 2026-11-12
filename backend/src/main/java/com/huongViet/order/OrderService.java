@@ -389,8 +389,10 @@ public class OrderService {
             }
 
             if (matchesPrimary || matchesMerged) {
-                r.setTableId(null);
-                r.setMergedTableIds(null);
+                // Chuyển trạng thái đơn bàn sang PAID (Đã thanh toán)
+                if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                    r.setStatus(ReservationStatus.PAID);
+                }
                 reservationRepository.save(r);
             }
         }
