@@ -374,7 +374,7 @@ CREATE TABLE kitchen_tickets (
     id CHAR(36) NOT NULL,
     order_item_id CHAR(36) NOT NULL,
     order_id CHAR(36) NULL,
-    table_number VARCHAR(20) NOT NULL,
+    table_number VARCHAR(100) NOT NULL,
     item_name VARCHAR(100) NOT NULL,
     quantity INT NOT NULL,
     note VARCHAR(255) NULL,
@@ -453,6 +453,7 @@ CREATE TABLE invoices (
     order_id CHAR(36) NOT NULL,
     customer_id CHAR(36) NULL,
     staff_id CHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) DEFAULT NULL,
     voucher_id CHAR(36) NULL,
     voucher_code_snapshot VARCHAR(50) NULL,
     voucher_discount_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
@@ -659,6 +660,7 @@ CREATE TABLE loyalty_settings (
     id VARCHAR(36) NOT NULL,
     earn_rate_percent DECIMAL(7, 3) NOT NULL DEFAULT 5.000,
     updated_at DATETIME NOT NULL,
+    point_to_vnd_rate DECIMAL(12, 3) NOT NULL DEFAULT 1.000,
 
     PRIMARY KEY (id),
 
