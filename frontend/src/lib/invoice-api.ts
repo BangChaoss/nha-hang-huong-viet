@@ -16,6 +16,7 @@ export interface InvoiceRecord {
   orderId: string;
   tableNumber: string;
   staffId: string | null;
+  customerPhone: string | null;
   voucherCode: string | null;
   voucherDiscountAmount: number;
   subtotalAmount: number;
@@ -43,7 +44,7 @@ async function request<T>(path: string): Promise<T> {
       const data = await res.json();
       message = data.message || message;
     } catch {
-      // bỏ qua
+      // bỏ qua nếu không phải JSON
     }
     throw new Error(message);
   }

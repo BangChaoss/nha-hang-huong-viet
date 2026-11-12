@@ -108,7 +108,10 @@ function formatDisplayDate(dateStr: string): string {
 }
 
 export function StaffBookingDashboard() {
-  const todayStr = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStr = React.useMemo(() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}, []);
 
   const [activeTab, setActiveTab] = React.useState<DashboardTab>("needs-action");
   const [viewMode, setViewMode] = React.useState<ViewMode>(() => {

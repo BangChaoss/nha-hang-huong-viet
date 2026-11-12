@@ -45,8 +45,9 @@ public class Reservation {
     @Column(name = "guest_email", length = 100)
     private String guestEmail;
 
+    // tableId dùng cho JPQL/read-only mapping để không xung đột với @ManyToOne table
     @JdbcTypeCode(SqlTypes.CHAR)
-    @Column(name = "table_id", length = 36, columnDefinition = "CHAR(36)")
+    @Column(name = "table_id", length = 36, columnDefinition = "CHAR(36)", insertable = false, updatable = false)
     private String tableId;
 
     @Column(name = "merged_table_ids", length = 500)
@@ -95,8 +96,9 @@ public class Reservation {
     @JoinColumn(name = "customer_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
     private User customer;
 
+    // Cho phép updatable = true để Hibernate cập nhật trực tiếp khóa ngoại table_id mà không báo lỗi HHH000502
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "table_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
+    @JoinColumn(name = "table_id", columnDefinition = "CHAR(36)")
     private RestaurantTable table;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -164,14 +166,9 @@ public class Reservation {
         this.updatedAt = LocalDateTime.now();
     }
 
-    // Getters and Setters
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    /**
-     * Standard customer-facing booking code (Single Source of Truth).
-     * Format: HV-XXXXXXXX (first 8 characters in uppercase).
-     */
     public String getBookingCode() {
         if (this.id == null || this.id.isBlank()) {
             return "";
@@ -192,8 +189,19 @@ public class Reservation {
     public String getGuestEmail() { return guestEmail; }
     public void setGuestEmail(String guestEmail) { this.guestEmail = guestEmail; }
 
-    public String getTableId() { return tableId; }
-    public void setTableId(String tableId) { this.tableId = tableId; }
+    public String getTableId() {
+        if (this.table != null) {
+            return this.table.getId();
+        }
+        return this.tableId;
+    }
+
+    public void setTableId(String tableId) {
+        this.tableId = tableId;
+        if (tableId == null) {
+            this.table = null;
+        }
+    }
 
     public String getMergedTableIds() { return mergedTableIds; }
     public void setMergedTableIds(String mergedTableIds) { this.mergedTableIds = mergedTableIds; }
@@ -235,7 +243,10 @@ public class Reservation {
     public void setCustomer(User customer) { this.customer = customer; }
 
     public RestaurantTable getTable() { return table; }
-    public void setTable(RestaurantTable table) { this.table = table; }
+    public void setTable(RestaurantTable table) {
+        this.table = table;
+        this.tableId = (table != null) ? table.getId() : null;
+    }
 
     public String getZoneId() { return zoneId; }
     public void setZoneId(String zoneId) { this.zoneId = zoneId; }
