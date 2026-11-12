@@ -48,6 +48,7 @@ public class FeedbackService {
 
     /**
      * Khách hàng gửi đánh giá (UC19/UC20).
+     * Cho phép đánh giá khi hóa đơn gắn với tài khoản user hoặc số điện thoại của user.
      */
     public FeedbackResponse submitFeedback(User currentCustomer, CreateFeedbackRequest request) {
         if (currentCustomer == null) {
@@ -73,14 +74,20 @@ public class FeedbackService {
 
         if (invoiceRef != null) {
             // 2. Tìm hóa đơn theo id (UUID) hoặc mã in trên hóa đơn (HV-...)
-            String sql = "SELECT id, customer_id, status FROM invoices WHERE id = ? OR invoice_code = ? LIMIT 1";
+            String sql = "SELECT id, customer_id, customer_phone, status FROM invoices WHERE id = ? OR invoice_code = ? LIMIT 1";
             List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, invoiceRef, invoiceRef);
 
-            // Nếu không tìm thấy trong bảng invoices, kiểm tra xem invoiceRef có phải là reservationId không
+            // Nếu không tìm thấy trực tiếp trong invoices, kiểm tra xem invoiceRef có phải là reservationId không
             if (rows.isEmpty()) {
                 Optional<Reservation> resOpt = reservationRepository.findByIdAndDeletedAtIsNull(invoiceRef);
                 if (resOpt.isPresent()) {
                     Reservation res = resOpt.get();
+                    if (res.getStatus() != ReservationStatus.PAID && res.getStatus() != ReservationStatus.REVIEWED) {
+                        throw new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST,
+                            "Đơn đặt bàn chưa hoàn tất thanh toán. Quý khách vui lòng thanh toán trước khi gửi đánh giá."
+                        );
+                    }
                     ReservationInvoiceInfoResponse invInfo = getInvoiceForReservation(res.getId(), currentCustomer);
                     if (invInfo != null && invInfo.invoiceId() != null) {
                         rows = jdbcTemplate.queryForList(sql, invInfo.invoiceId(), invInfo.invoiceId());
@@ -95,7 +102,7 @@ public class FeedbackService {
             Map<String, Object> invoiceRow = rows.get(0);
             invoiceId = (String) invoiceRow.get("id");
 
-            // 3. Chặn spam trùng lặp: Mỗi hóa đơn chỉ được đánh giá duy nhất 1 lần (BR-45, E2)
+            // 3. Chặn spam trùng lặp: Mỗi hóa đơn chỉ được đánh giá duy nhất 1 lần (BR-45)
             if (feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull(invoiceId)) {
                 throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -103,7 +110,7 @@ public class FeedbackService {
                 );
             }
 
-            // 4. Hóa đơn phải đã thanh toán hoàn thành (PAID) (E1)
+            // 4. Hóa đơn bắt buộc phải ở trạng thái ĐÃ THANH TOÁN (PAID)
             String status = (String) invoiceRow.get("status");
             if (!"PAID".equalsIgnoreCase(status)) {
                 throw new ResponseStatusException(
@@ -112,13 +119,59 @@ public class FeedbackService {
                 );
             }
 
-            // 5. Kiểm tra quyền sở hữu hóa đơn nếu có gắn mã tài khoản khác
+            // 5. Kiểm tra quyền sở hữu: hợp lệ nếu gắn với user id, số điện thoại hoặc lịch sử đặt bàn/voucher
             String invoiceCustomerId = (String) invoiceRow.get("customer_id");
-            if (invoiceCustomerId != null && !invoiceCustomerId.equals(currentCustomer.getId())) {
+            String invoicePhone = (String) invoiceRow.get("customer_phone");
+            boolean matchId = invoiceCustomerId != null && invoiceCustomerId.equals(currentCustomer.getId());
+
+            boolean matchPhone = false;
+            String userPhone = currentCustomer.getPhoneNumber();
+            if (invoicePhone != null && !invoicePhone.isBlank() && userPhone != null && !userPhone.isBlank()) {
+                String cleanInvoicePhone = invoicePhone.replaceAll("[^0-9]", "");
+                String cleanUserPhone = userPhone.replaceAll("[^0-9]", "");
+                if (cleanInvoicePhone.equals(cleanUserPhone)) {
+                    matchPhone = true;
+                } else if (cleanInvoicePhone.length() >= 9 && cleanUserPhone.length() >= 9) {
+                    matchPhone = cleanInvoicePhone.substring(cleanInvoicePhone.length() - 9)
+                        .equals(cleanUserPhone.substring(cleanUserPhone.length() - 9));
+                }
+            }
+
+            boolean matchReservationOrVoucher = false;
+            if (!matchId && !matchPhone) {
+                // Kiểm tra liên kết từ đặt bàn hoặc lượt dùng voucher
+                String checkSql = """
+                    SELECT COUNT(*) FROM (
+                        SELECT r.id FROM reservations r
+                        LEFT JOIN orders o ON (o.table_id = r.table_id OR (r.merged_table_ids IS NOT NULL AND r.merged_table_ids LIKE CONCAT('%', o.table_id, '%')))
+                        WHERE (r.customer_id = ? OR r.guest_phone = ?)
+                          AND (r.id = ? OR r.id = ? OR o.id = (SELECT order_id FROM invoices WHERE id = ? LIMIT 1))
+                        UNION ALL
+                        SELECT vu.id FROM voucher_usages vu
+                        WHERE vu.invoice_id = ? AND vu.customer_phone = ?
+                    ) t
+                """;
+                try {
+                    Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class,
+                        currentCustomer.getId(), currentCustomer.getPhoneNumber(),
+                        invoiceId, invoiceRef, invoiceId,
+                        invoiceId, currentCustomer.getPhoneNumber());
+                    matchReservationOrVoucher = count != null && count > 0;
+                } catch (Exception ignored) {}
+            }
+
+            if (invoiceCustomerId != null && !matchId && !matchPhone && !matchReservationOrVoucher) {
                 throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
                     "Bạn không có quyền đánh giá hóa đơn của khách hàng khác."
                 );
+            }
+
+            // Gắn chặt customer_id vào invoice nếu trước đó bị null
+            if (invoiceCustomerId == null) {
+                try {
+                    jdbcTemplate.update("UPDATE invoices SET customer_id = ? WHERE id = ?", currentCustomer.getId(), invoiceId);
+                } catch (Exception ignored) {}
             }
         }
 
@@ -139,12 +192,12 @@ public class FeedbackService {
         logger.info("Feedback submitted successfully [id={}, customerId={}, rating={}]", 
             saved.getId(), currentCustomer.getId(), saved.getRating());
 
-        // 6. Tự động cập nhật trạng thái đơn đặt bàn liên quan sang REVIEWED (Đã đánh giá)
+        // 6. Cập nhật trạng thái đơn đặt bàn liên quan sang REVIEWED
         try {
             int updated = 0;
             if (invoiceRef != null) {
                 updated = jdbcTemplate.update(
-                    "UPDATE reservations SET status = 'REVIEWED', updated_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND status IN ('PAID', 'ARRIVED')",
+                    "UPDATE reservations SET status = 'REVIEWED', updated_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND status = 'PAID'",
                     invoiceRef
                 );
             }
@@ -154,7 +207,7 @@ public class FeedbackService {
                     FROM reservations r
                     LEFT JOIN orders o ON (o.table_id = r.table_id OR (r.merged_table_ids IS NOT NULL AND r.merged_table_ids LIKE CONCAT('%', o.table_id, '%')))
                     LEFT JOIN invoices i ON i.order_id = o.id
-                    WHERE (i.id = ? OR r.customer_id = ? OR r.guest_phone = ?) AND r.status IN ('PAID', 'ARRIVED')
+                    WHERE (i.id = ? OR r.customer_id = ? OR r.guest_phone = ?) AND r.status = 'PAID'
                     ORDER BY (i.id = ?) DESC, r.reservation_date DESC, r.reservation_time DESC
                     LIMIT 1
                 """;
@@ -293,9 +346,9 @@ public class FeedbackService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn đặt bàn."));
 
         String resStatus = reservation.getStatus() != null ? reservation.getStatus().name() : "";
-        boolean isEligibleStatus = "PAID".equalsIgnoreCase(resStatus) || "ARRIVED".equalsIgnoreCase(resStatus) || "REVIEWED".equalsIgnoreCase(resStatus);
+        boolean isEligibleStatus = "PAID".equalsIgnoreCase(resStatus) || "REVIEWED".equalsIgnoreCase(resStatus);
 
-        // 1. Thử tìm hóa đơn qua bàn ăn (hỗ trợ cả bàn gộp)
+        // 1. Tìm hóa đơn qua bàn ăn (hỗ trợ cả bàn gộp)
         String sqlByTable = """
             SELECT i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
             FROM orders o
@@ -312,7 +365,7 @@ public class FeedbackService {
             reservation.getMergedTableIds() != null ? reservation.getMergedTableIds() : ""
         );
 
-        // 2. Nếu chưa thấy, thử tìm hóa đơn qua số điện thoại hoặc customer_id của khách
+        // 2. Tìm hóa đơn qua số điện thoại hoặc customer_id của khách
         if (rows.isEmpty() || !"PAID".equalsIgnoreCase((String) rows.get(0).get("invoice_status"))) {
             String sqlByPhone = """
                 SELECT i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
@@ -343,10 +396,25 @@ public class FeedbackService {
             invoiceCode = (String) row.get("invoice_code");
             invoiceStatus = (String) row.get("invoice_status");
             finalAmount = (BigDecimal) row.get("final_amount");
+
+            // Liên kết ngay thông tin tài khoản và SĐT vào hóa đơn
+            if ("PAID".equalsIgnoreCase(invoiceStatus)) {
+                String custId = reservation.getCustomerId() != null ? reservation.getCustomerId() : (currentUser != null ? currentUser.getId() : null);
+                String custPhone = reservation.getGuestPhone() != null ? reservation.getGuestPhone() : (currentUser != null ? currentUser.getPhoneNumber() : null);
+                try {
+                    jdbcTemplate.update("""
+                        UPDATE invoices 
+                        SET customer_id = COALESCE(customer_id, ?), 
+                            customer_phone = CASE WHEN (customer_phone IS NULL OR customer_phone = '') THEN ? ELSE customer_phone END 
+                        WHERE id = ?
+                    """, custId, custPhone, invoiceId);
+                } catch (Exception ex) {
+                    logger.debug("Không thể cập nhật liên kết customer trên invoice: {}", ex.getMessage());
+                }
+            }
         }
 
-        // 3. Nếu chưa có hóa đơn trong DB nhưng đơn đặt bàn đã ở trạng thái PAID / ARRIVED / REVIEWED:
-        // Tự động tạo 1 bản ghi hóa đơn PAID hợp lệ gắn với mã đặt bàn để khách hàng có thể đánh giá ngay
+        // 3. Tự tạo hóa đơn cho đơn đặt bàn nếu chưa có trong DB nhưng đã ở trạng thái PAID / REVIEWED
         if ((invoiceId == null || !"PAID".equalsIgnoreCase(invoiceStatus)) && isEligibleStatus) {
             String genInvoiceCode = "HV-" + reservation.getBookingCode();
             List<Map<String, Object>> existingGen = jdbcTemplate.queryForList(
@@ -370,7 +438,9 @@ public class FeedbackService {
                                              discount_amount, tax_amount, final_amount, deposit_deducted,
                                              loyalty_points_earned, status, paid_at, created_at)
                         VALUES (?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 'PAID', CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
-                    """, invoiceId, invoiceCode, reservation.getCustomerId(), reservation.getGuestPhone(),
+                    """, invoiceId, invoiceCode, 
+                         reservation.getCustomerId() != null ? reservation.getCustomerId() : (currentUser != null ? currentUser.getId() : null), 
+                         reservation.getGuestPhone(),
                          finalAmount, finalAmount);
                     logger.info("Auto-generated PAID invoice {} for reservation {}", invoiceCode, reservation.getId());
                 } catch (Exception ex) {
@@ -395,23 +465,134 @@ public class FeedbackService {
     }
 
     /**
-     * Lấy danh sách các hóa đơn đã thanh toán của khách hàng mà chưa được gửi đánh giá.
+     * Lấy danh sách TOÀN BỘ các hóa đơn / đơn hàng đã thanh toán (PAID) của user:
+     * 1. Hóa đơn gắn trực tiếp với tài khoản (customer_id).
+     * 2. Hóa đơn khách hàng thanh toán tại quầy có sử dụng số điện thoại của user đó (customer_phone, kể cả 0... hay +84...).
+     * 3. Hóa đơn phát sinh từ các đơn đặt bàn có trong lịch sử đặt bàn của user.
+     * 4. Hóa đơn có áp dụng voucher gắn với số điện thoại của user.
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public List<EligibleInvoiceResponse> getEligibleInvoices(User currentUser) {
         if (currentUser == null) {
             return Collections.emptyList();
         }
 
+        String phone = currentUser.getPhoneNumber() != null ? currentUser.getPhoneNumber().trim() : "";
+        String cleanPhone = phone.replaceAll("[^0-9]", "");
+        String localPhone = "";
+        String intlPhone = "";
+        String last9Digits = cleanPhone.length() >= 9 ? cleanPhone.substring(cleanPhone.length() - 9) : cleanPhone;
+
+        if (cleanPhone.startsWith("0")) {
+            localPhone = cleanPhone;
+            intlPhone = "+84" + cleanPhone.substring(1);
+        } else if (cleanPhone.startsWith("84")) {
+            localPhone = "0" + cleanPhone.substring(2);
+            intlPhone = "+" + cleanPhone;
+        } else if (!cleanPhone.isBlank()) {
+            localPhone = "0" + cleanPhone;
+            intlPhone = "+84" + cleanPhone;
+        }
+
+        // 1. Tự động đồng bộ hóa đơn từ tất cả các đơn đặt bàn có trạng thái PAID trong lịch sử của khách hàng
+        try {
+            List<Reservation> userReservations = new ArrayList<>();
+            if (currentUser.getId() != null) {
+                userReservations.addAll(reservationRepository.findByCustomerIdWithTableAndZone(currentUser.getId()));
+            }
+            if (!cleanPhone.isBlank()) {
+                List<Reservation> byPhone = reservationRepository.findByGuestPhoneWithTableAndZone(cleanPhone);
+                for (Reservation r : byPhone) {
+                    if (userReservations.stream().noneMatch(ex -> ex.getId().equals(r.getId()))) {
+                        userReservations.add(r);
+                    }
+                }
+                if (!localPhone.isBlank()) {
+                    for (Reservation r : reservationRepository.findByGuestPhoneWithTableAndZone(localPhone)) {
+                        if (userReservations.stream().noneMatch(ex -> ex.getId().equals(r.getId()))) {
+                            userReservations.add(r);
+                        }
+                    }
+                }
+                if (!intlPhone.isBlank()) {
+                    for (Reservation r : reservationRepository.findByGuestPhoneWithTableAndZone(intlPhone)) {
+                        if (userReservations.stream().noneMatch(ex -> ex.getId().equals(r.getId()))) {
+                            userReservations.add(r);
+                        }
+                    }
+                }
+            }
+
+            for (Reservation res : userReservations) {
+                if (res.getStatus() == ReservationStatus.PAID) {
+                    getInvoiceForReservation(res.getId(), currentUser);
+                }
+            }
+        } catch (Exception ex) {
+            logger.warn("Lỗi đồng bộ hóa đơn từ lịch sử đặt bàn: {}", ex.getMessage());
+        }
+
+        // 2. Truy vấn toàn diện: lấy cả hóa đơn trực tiếp, hóa đơn thanh toán bằng SĐT của user và hóa đơn từ đặt bàn
         String sql = """
-            SELECT i.id, i.invoice_code, i.final_amount,
+            SELECT DISTINCT i.id, i.invoice_code, i.final_amount,
                    COALESCE(i.paid_at, i.created_at) AS paid_at,
-                   COALESCE(t.table_number, 'Bàn ăn') AS table_number
+                   COALESCE(
+                       t.table_number,
+                       (SELECT COALESCE(rt.table_number, 'Bàn đặt') 
+                        FROM reservations r3 
+                        LEFT JOIN restaurant_tables rt ON rt.id = r3.table_id 
+                        WHERE i.invoice_code = CONCAT('HV-', UPPER(SUBSTRING(r3.id, 1, 8))) 
+                        LIMIT 1),
+                       'Bàn ăn'
+                   ) AS table_number
             FROM invoices i
             LEFT JOIN orders o ON i.order_id = o.id
             LEFT JOIN restaurant_tables t ON o.table_id = t.id
-            WHERE i.customer_id = ? AND i.status = 'PAID'
+            WHERE i.status = 'PAID'
               AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.invoice_id = i.id AND f.deleted_at IS NULL)
+              AND (
+                  -- 1. Hóa đơn gắn trực tiếp mã user_id
+                  i.customer_id = ?
+                  -- 2. Hóa đơn thanh toán tại quầy sử dụng số điện thoại của user
+                  OR (
+                      i.customer_phone IS NOT NULL AND i.customer_phone != '' AND (
+                          i.customer_phone = ? 
+                          OR i.customer_phone = ? 
+                          OR i.customer_phone = ?
+                          OR (LENGTH(i.customer_phone) >= 9 AND RIGHT(REPLACE(REPLACE(i.customer_phone, ' ', ''), '-', ''), 9) = ?)
+                      )
+                  )
+                  -- 3. Hóa đơn có áp dụng voucher bằng số điện thoại của user
+                  OR EXISTS (
+                      SELECT 1 FROM voucher_usages vu
+                      WHERE vu.invoice_id = i.id
+                        AND (
+                            vu.customer_phone = ? 
+                            OR vu.customer_phone = ?
+                            OR (LENGTH(vu.customer_phone) >= 9 AND RIGHT(REPLACE(vu.customer_phone, ' ', ''), 9) = ?)
+                        )
+                  )
+                  -- 4. Hóa đơn liên kết từ lịch sử đặt bàn của user
+                  OR EXISTS (
+                      SELECT 1 FROM reservations r
+                      WHERE r.deleted_at IS NULL
+                        AND (
+                            r.customer_id = ? 
+                            OR r.guest_phone = ? 
+                            OR r.guest_phone = ? 
+                            OR (LENGTH(r.guest_phone) >= 9 AND RIGHT(r.guest_phone, 9) = ?)
+                        )
+                        AND (
+                            i.id = r.id
+                            OR i.invoice_code = CONCAT('HV-', UPPER(SUBSTRING(r.id, 1, 8)))
+                            OR (
+                                o.table_id IS NOT NULL 
+                                AND (o.table_id = r.table_id OR (r.merged_table_ids IS NOT NULL AND r.merged_table_ids LIKE CONCAT('%', o.table_id, '%')))
+                                AND r.reservation_date = DATE(COALESCE(i.paid_at, i.created_at))
+                            )
+                        )
+                  )
+              )
             ORDER BY COALESCE(i.paid_at, i.created_at) DESC
         """;
 
@@ -425,6 +606,11 @@ public class FeedbackService {
                 rs.getString("table_number"),
                 paidAt
             );
-        }, currentUser.getId());
+        },
+        currentUser.getId(),
+        phone, localPhone, intlPhone, last9Digits,
+        phone, localPhone, last9Digits,
+        currentUser.getId(), phone, localPhone, last9Digits
+        );
     }
 }

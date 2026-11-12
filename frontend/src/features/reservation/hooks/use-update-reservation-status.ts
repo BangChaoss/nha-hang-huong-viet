@@ -13,6 +13,8 @@ export function useUpdateReservationStatus() {
       void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["reservation-availability"] });
+      void queryClient.invalidateQueries({ queryKey: ["floor-plan-layouts"] });
     },
   });
 }
