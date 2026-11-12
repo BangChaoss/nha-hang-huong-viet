@@ -8,6 +8,8 @@ public enum ReservationStatus {
     PENDING_DEPOSIT,    // Future VIP / large party deposit awaiting
     CONFIRMED,          // Staff confirmed and assigned table (UC09)
     ARRIVED,            // Customer checked in at the restaurant
+    PAID,
+    REVIEWED, 
     CANCELLED,          // Cancelled by customer or staff
     NO_SHOW             // Customer failed to arrive
 }

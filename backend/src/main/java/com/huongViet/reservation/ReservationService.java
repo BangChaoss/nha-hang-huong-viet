@@ -64,7 +64,9 @@ public class ReservationService {
         ReservationStatus.PENDING_HOLD, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
         ReservationStatus.PENDING_DEPOSIT, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
         ReservationStatus.CONFIRMED, Set.of(ReservationStatus.ARRIVED, ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW),
-        ReservationStatus.ARRIVED, Set.of(),
+        ReservationStatus.ARRIVED, Set.of(ReservationStatus.PAID, ReservationStatus.CANCELLED),
+        ReservationStatus.PAID, Set.of(ReservationStatus.REVIEWED),
+        ReservationStatus.REVIEWED, Set.of(),
         ReservationStatus.CANCELLED, Set.of(),
         ReservationStatus.NO_SHOW, Set.of()
     );
@@ -342,7 +344,6 @@ public class ReservationService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ có thể check-in các đơn đặt bàn trong ngày hôm nay.");
             }
 
-            // Chuyển tất cả các bàn trong cụm sang OCCUPIED và broadcast WebSocket
             List<String> targetTableIds = new ArrayList<>();
             if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
                 targetTableIds.addAll(Arrays.stream(reservation.getMergedTableIds().split(","))
