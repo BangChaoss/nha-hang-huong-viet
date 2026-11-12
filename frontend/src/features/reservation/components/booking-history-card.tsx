@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Loader2,
   CheckCircle,
+  UtensilsCrossed,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -40,12 +41,23 @@ export function BookingHistoryCard({
   const [checkingInvoice, setCheckingInvoice] = React.useState(false);
 
   const handleLeaveFeedback = async () => {
+    // Chỉ cho phép đánh giá khi đơn đã thanh toán hoàn tất (PAID)
+    if (booking.status !== "PAID") {
+      toast.warning("Chỉ có thể đánh giá khi đơn đặt bàn đã hoàn tất thanh toán hóa đơn.");
+      return;
+    }
+
     try {
       setCheckingInvoice(true);
       const info = await feedbackApi.getReservationInvoice(booking.id);
 
       if (info.hasFeedback) {
-        toast.info("Đơn đặt bàn này đã được gửi đánh giá rồi.");
+        toast.info("Đơn đặt bàn này đã được gửi đánh giá trước đó rồi.");
+        return;
+      }
+
+      if (!info.isPaid) {
+        toast.warning("Đơn đặt bàn này chưa hoàn tất thanh toán hóa đơn. Vui lòng thanh toán trước khi đánh giá.");
         return;
       }
 
@@ -54,7 +66,7 @@ export function BookingHistoryCard({
         onLeaveFeedback(invId);
       }
     } catch (err: unknown) {
-      if ((booking.status === "PAID" || booking.status === "ARRIVED") && onLeaveFeedback) {
+      if (booking.status === "PAID" && onLeaveFeedback) {
         onLeaveFeedback(booking.id);
         return;
       }
@@ -160,8 +172,16 @@ export function BookingHistoryCard({
           </span>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* 1. Nút "Để lại đánh giá" hiển thị khi đã đến nhận bàn (ARRIVED) hoặc đã thanh toán (PAID) */}
-            {(booking.status === "PAID" || booking.status === "ARRIVED") && (
+            {/* 1. Nếu khách đang ở bàn (ARRIVED) nhưng chưa thanh toán: Hiển thị nhãn trạng thái, KHÔNG hiển thị nút đánh giá */}
+            {booking.status === "ARRIVED" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-400 border border-blue-500/20">
+                <UtensilsCrossed className="h-3.5 w-3.5 mr-0.5" />
+                Đang dùng bữa (chờ thanh toán)
+              </span>
+            )}
+
+            {/* 2. NÚT ĐÁNH GIÁ: CHỈ HIỂN THỊ KHI ĐÃ HOÀN TẤT THANH TOÁN (status === "PAID") */}
+            {booking.status === "PAID" && (
               <Button
                 type="button"
                 variant="outline"
@@ -179,7 +199,7 @@ export function BookingHistoryCard({
               </Button>
             )}
 
-            {/* 2. Đã đánh giá (REVIEWED) */}
+            {/* 3. Đã đánh giá (REVIEWED) */}
             {booking.status === "REVIEWED" && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 px-2.5 py-1 text-xs text-purple-700 dark:text-purple-400 border border-purple-500/20 font-semibold">
                 <CheckCircle className="h-3.5 w-3.5 text-purple-600" />
@@ -187,7 +207,7 @@ export function BookingHistoryCard({
               </span>
             )}
 
-            {/* 3. Nút Hủy đặt bàn: Hiển thị khi CHƯA ĐẾN NHẬN BÀN */}
+            {/* 4. Nút Hủy đặt bàn: Hiển thị khi CHƯA ĐẾN NHẬN BÀN */}
             {canCancel && (
               <TooltipProvider>
                 <Tooltip>

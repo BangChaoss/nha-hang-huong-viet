@@ -14,7 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Component
@@ -40,8 +43,8 @@ public class NoShowScheduler {
 
     /**
      * BR-26 / UC13-E1: Runs every 5 minutes to detect overdue CONFIRMED reservations.
-     * If reservation_time + 15 minutes < now → NO_SHOW.
-     * Releases assigned table back to AVAILABLE.
+     * If reservation_time + 15 minutes < now -> NO_SHOW.
+     * Releases assigned table(s) (including merged tables) back to AVAILABLE.
      */
     @Scheduled(fixedRate = 300_000) // 5 minutes
     @Transactional
@@ -56,23 +59,35 @@ public class NoShowScheduler {
             reservation.setStatus(ReservationStatus.NO_SHOW);
             reservation.setCancellationReason("Tự động hủy do quá giờ nhận bàn (No-Show)");
 
-            // Release table if currently RESERVED
-            if (reservation.getTableId() != null) {
-                tableRepository.findByIdAndDeletedAtIsNull(reservation.getTableId())
-                    .ifPresent(table -> {
-                        if (table.getStatus() == TableStatus.RESERVED) {
-                            table.setStatus(TableStatus.AVAILABLE);
-                            tableRepository.save(table);
-                            try {
-                                String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
-                                messagingTemplate.convertAndSend("/topic/table-status",
-                                    new TableStatusMessage(table.getId(), table.getTableNumber(),
-                                        TableStatus.RESERVED, TableStatus.AVAILABLE, zoneName));
-                            } catch (Exception ex) {
-                                logger.warn("Không thể phát sự kiện giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
-                            }
+            // Thu thập tất cả các bàn đã gán (kể cả cụm bàn gộp)
+            Set<String> targetTableIds = new HashSet<>();
+            if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+                Arrays.stream(reservation.getMergedTableIds().split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .forEach(targetTableIds::add);
+            }
+            if (reservation.getTableId() != null && !reservation.getTableId().isBlank()) {
+                targetTableIds.add(reservation.getTableId().trim());
+            }
+
+            // Giải phóng triệt để toàn bộ bàn về AVAILABLE
+            for (String tableId : targetTableIds) {
+                tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(table -> {
+                    TableStatus oldTableStatus = table.getStatus();
+                    if (oldTableStatus != TableStatus.MAINTENANCE) {
+                        table.setStatus(TableStatus.AVAILABLE);
+                        tableRepository.save(table);
+                        try {
+                            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+                            messagingTemplate.convertAndSend("/topic/table-status",
+                                new TableStatusMessage(table.getId(), table.getTableNumber(),
+                                    oldTableStatus, TableStatus.AVAILABLE, zoneName));
+                        } catch (Exception ex) {
+                            logger.warn("Không thể phát sự kiện giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
                         }
-                    });
+                    }
+                });
             }
 
             reservationRepository.save(reservation);

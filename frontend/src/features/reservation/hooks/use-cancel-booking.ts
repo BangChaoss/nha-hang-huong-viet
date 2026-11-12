@@ -13,6 +13,7 @@ export function useCancelBooking() {
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation-availability"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["floor-plan-layouts"] });
     },
   });
 }

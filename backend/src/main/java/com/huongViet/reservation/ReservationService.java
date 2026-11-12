@@ -30,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -277,7 +278,7 @@ public class ReservationService {
         validateTransition(oldStatus, newStatus);
         String oldTableId = reservation.getTableId();
 
-        // XÁC NHẬN ĐẶT BÀN & GỘP BÀN
+        // 1. XÁC NHẬN ĐẶT BÀN & GỘP BÀN
         if (newStatus == ReservationStatus.CONFIRMED) {
             List<String> targetTableIds = new ArrayList<>();
             if (request.tableIds() != null && !request.tableIds().isEmpty()) {
@@ -330,14 +331,49 @@ public class ReservationService {
                 }
             }
 
+            // Giải phóng các bàn cũ nếu trước đó đã từng gán mà nay không nằm trong danh sách gộp mới
+            Set<String> newTableSet = new HashSet<>(targetTableIds);
+            Set<String> previousTableIds = new HashSet<>();
+            if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+                Arrays.stream(reservation.getMergedTableIds().split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).forEach(previousTableIds::add);
+            }
+            if (oldTableId != null && !oldTableId.isBlank()) {
+                previousTableIds.add(oldTableId.trim());
+            }
+            previousTableIds.removeAll(newTableSet);
+            for (String unassignedId : previousTableIds) {
+                tableRepository.findByIdAndDeletedAtIsNull(unassignedId).ifPresent(tbl -> {
+                    if (tbl.getStatus() == TableStatus.RESERVED) {
+                        TableStatus prevStatus = tbl.getStatus();
+                        tbl.setStatus(TableStatus.AVAILABLE);
+                        tableRepository.save(tbl);
+                        broadcastTableStatus(tbl, prevStatus, TableStatus.AVAILABLE);
+                    }
+                });
+            }
+
             RestaurantTable primaryTable = assignedTables.get(0);
             reservation.setTableId(primaryTable.getId());
             reservation.setTable(primaryTable);
             reservation.setZoneId(primaryZoneId);
             reservation.setMergedTableIds(String.join(",", targetTableIds));
+
+            // ĐỒNG BỘ: Nếu đơn đặt bàn diễn ra trong ngày hôm nay, lập tức đổi các bàn sang RESERVED
+            LocalDate today = LocalDate.now();
+            if (reservation.getReservationDate().isEqual(today)) {
+                for (RestaurantTable tbl : assignedTables) {
+                    if (tbl.getStatus() == TableStatus.AVAILABLE) {
+                        TableStatus prevStatus = tbl.getStatus();
+                        tbl.setStatus(TableStatus.RESERVED);
+                        tableRepository.save(tbl);
+                        broadcastTableStatus(tbl, prevStatus, TableStatus.RESERVED);
+                    }
+                }
+            }
         }
 
-        // CHECK-IN KHÁCH NHẬN BÀN
+        // 2. CHECK-IN KHÁCH NHẬN BÀN
         if (newStatus == ReservationStatus.ARRIVED) {
             LocalDate today = LocalDate.now();
             if (!reservation.getReservationDate().isEqual(today)) {
@@ -362,7 +398,7 @@ public class ReservationService {
             }
         }
 
-        // KHI HỦY HOẶC ĐÁNH DẤU NO_SHOW: TỰ ĐỘNG GIẢI PHÓNG BÀN
+        // 3. KHI HỦY HOẶC ĐÁNH DẤU NO_SHOW: TỰ ĐỘNG GIẢI PHÓNG TOÀN BỘ CÁC BÀN VỀ AVAILABLE NGAY LẬP TỨC
         if (newStatus == ReservationStatus.CANCELLED || newStatus == ReservationStatus.NO_SHOW) {
             releaseAssignedTables(reservation);
         }
@@ -435,7 +471,7 @@ public class ReservationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thời gian hẹn đặt bàn đã qua, không thể hủy.");
         }
 
-        // Tự động giải phóng bàn đã gán về trạng thái AVAILABLE
+        // Tự động giải phóng triệt để toàn bộ các bàn đã gán (kể cả bàn gộp) về trạng thái AVAILABLE ngay lập tức
         releaseAssignedTables(reservation);
 
         ReservationStatus oldStatus = reservation.getStatus();
@@ -458,26 +494,35 @@ public class ReservationService {
     }
 
     /**
-     * Tự động giải phóng các bàn đã gán trong đơn đặt bàn về trạng thái AVAILABLE.
+     * Tự động giải phóng toàn bộ các bàn đã gán trong đơn đặt bàn (hỗ trợ cả bàn đơn và cụm bàn gộp)
+     * về trạng thái AVAILABLE ngay lập tức và phát thông báo WebSocket đến toàn bộ client.
      */
-    private void releaseAssignedTables(Reservation reservation) {
-        List<String> targetTableIds = new ArrayList<>();
+    public void releaseAssignedTables(Reservation reservation) {
+        Set<String> targetTableIds = new HashSet<>();
         if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
-            targetTableIds.addAll(Arrays.stream(reservation.getMergedTableIds().split(","))
-                .map(String::trim).filter(s -> !s.isEmpty()).distinct().toList());
-        } else if (reservation.getTableId() != null && !reservation.getTableId().isBlank()) {
+            Arrays.stream(reservation.getMergedTableIds().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .forEach(targetTableIds::add);
+        }
+        if (reservation.getTableId() != null && !reservation.getTableId().isBlank()) {
             targetTableIds.add(reservation.getTableId().trim());
         }
 
         for (String tableId : targetTableIds) {
             tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(t -> {
-                if (t.getStatus() == TableStatus.RESERVED) {
-                    TableStatus oldStatus = t.getStatus();
+                TableStatus oldStatus = t.getStatus();
+                // Nếu bàn không bị bảo trì và chưa phải là AVAILABLE thì cập nhật về AVAILABLE
+                if (oldStatus != TableStatus.MAINTENANCE && oldStatus != TableStatus.AVAILABLE) {
                     t.setStatus(TableStatus.AVAILABLE);
                     tableRepository.save(t);
                     broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE);
-                    logger.info("Table {} automatically released RESERVED -> AVAILABLE due to cancellation of reservation {}",
-                        t.getTableNumber(), reservation.getId());
+                    logger.info("Table {} ({}) automatically released {} -> AVAILABLE due to cancellation of reservation {}",
+                        t.getTableNumber(), t.getId(), oldStatus, reservation.getId());
+                } else if (oldStatus == TableStatus.AVAILABLE) {
+                    // Ngay cả khi bàn trên DB đã là AVAILABLE, vẫn phát broadcast để client (POS, FloorPlan)
+                    // hủy cache hiển thị trạng thái ảo theo đơn đặt bàn
+                    broadcastTableStatus(t, TableStatus.RESERVED, TableStatus.AVAILABLE);
                 }
             });
         }
