@@ -117,10 +117,16 @@ public class OrderService {
      * Xác định tên hiển thị bàn (nếu bàn gộp thì nối Bàn 01 + Bàn 02).
      */
     private String resolveDisplayTableNumber(String tableId) {
-        List<String> relatedIds = findRelatedTableIds(tableId);
-        if (relatedIds.size() > 1) {
-            List<RestaurantTable> tables = tableRepository.findAllById(relatedIds);
-            return tables.stream().map(RestaurantTable::getTableNumber).collect(Collectors.joining(" + "));
+        List<String> relatedTableIds = findRelatedTableIds(tableId);
+        if (relatedTableIds.size() > 1) {
+            List<RestaurantTable> tables = tableRepository.findAllById(relatedTableIds);
+            String display = tables.stream()
+                    .map(RestaurantTable::getTableNumber)
+                    .collect(Collectors.joining(" + "));
+            if (display.length() > 100) {
+                return display.substring(0, 97) + "...";
+            }
+            return display;
         }
         return tableRepository.findById(tableId).map(RestaurantTable::getTableNumber).orElse("Bàn ăn");
     }
@@ -424,20 +430,20 @@ public class OrderService {
 
             try {
                 jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, voucher_id, " +
-                                "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
-                                "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                        invoiceId, invoiceCode, order.getId(), customerId, staffId, phone, currentVoucherId,
-                        currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
-                        tax, finalAmount, earned);
+                        "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                invoiceId, invoiceCode, order.getId(), customerId, staffId, phone, currentVoucherId,
+                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
+                tax, finalAmount, earned);
             } catch (Exception ex) {
                 jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, voucher_id, " +
-                                "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
-                                "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                        invoiceId, invoiceCode, order.getId(), customerId, staffId, currentVoucherId,
-                        currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
-                        tax, finalAmount, earned);
+                        "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                invoiceId, invoiceCode, order.getId(), customerId, staffId, currentVoucherId,
+                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
+                tax, finalAmount, earned);
             }
 
             for (OrderItem item : items) {

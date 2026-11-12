@@ -34,7 +34,7 @@ public class KitchenTicket {
     @Column(name = "order_id", length = 36, columnDefinition = "CHAR(36)")
     private String orderId;
 
-    @Column(name = "table_number", nullable = false, length = 20)
+    @Column(name = "table_number", nullable = false, length = 100)
     private String tableNumber;
 
     @Column(name = "item_name", nullable = false, length = 100)
