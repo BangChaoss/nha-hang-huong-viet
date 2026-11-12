@@ -44,23 +44,20 @@ export function BookingHistoryCard({
       setCheckingInvoice(true);
       const info = await feedbackApi.getReservationInvoice(booking.id);
 
-      if (!info.isPaid) {
-        toast.error("Đơn đặt bàn này chưa thanh toán hoá đơn.");
-        return;
-      }
-
       if (info.hasFeedback) {
         toast.info("Đơn đặt bàn này đã được gửi đánh giá rồi.");
         return;
       }
 
-      const invId = info.invoiceId || info.invoiceCode;
-      if (invId && onLeaveFeedback) {
+      const invId = info.invoiceId || info.invoiceCode || booking.id;
+      if (onLeaveFeedback) {
         onLeaveFeedback(invId);
-      } else {
-        toast.error("Không tìm thấy mã hoá đơn để đánh giá.");
       }
     } catch (err: unknown) {
+      if ((booking.status === "PAID" || booking.status === "ARRIVED") && onLeaveFeedback) {
+        onLeaveFeedback(booking.id);
+        return;
+      }
       const msg = err instanceof Error ? err.message : "Không thể kiểm tra hoá đơn cho đơn đặt bàn này.";
       toast.error(msg);
     } finally {
@@ -73,20 +70,20 @@ export function BookingHistoryCard({
   const timeFormatted = booking.reservationTime ? booking.reservationTime.substring(0, 5) : "";
   const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
 
-  // Quy tắc hủy 60 phút
-  const isWithin60Min = React.useMemo(() => {
+  // Kiểm tra thời gian hẹn đã qua hay chưa
+  const isPastBookingTime = React.useMemo(() => {
     if (["CANCELLED", "NO_SHOW", "ARRIVED", "PAID", "REVIEWED"].includes(booking.status)) {
       return false;
     }
     try {
       const target = new Date(`${booking.reservationDate}T${booking.reservationTime}`);
-      const diffMinutes = (target.getTime() - Date.now()) / (1000 * 60);
-      return diffMinutes < 60;
+      return Date.now() > target.getTime();
     } catch {
       return false;
     }
   }, [booking.reservationDate, booking.reservationTime, booking.status]);
 
+  // Nút hủy chỉ hiển thị khi CHƯA ĐẾN NHẬN BÀN (PENDING_HOLD, PENDING_DEPOSIT, CONFIRMED)
   const canCancel =
     ["PENDING_HOLD", "PENDING_DEPOSIT", "CONFIRMED"].includes(booking.status) &&
     Boolean(onCancelClick);
@@ -133,7 +130,12 @@ export function BookingHistoryCard({
         {booking.tableNumber && (
           <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-secondary/50 px-2.5 py-1 text-xs font-medium text-secondary-foreground">
             <Sparkles className="h-3.5 w-3.5 text-primary" />
-            <span>{booking.tableNumber.startsWith("Bàn") || booking.tableNumber.includes("+") ? "" : "Bàn số: "}<strong>{booking.tableNumber}</strong></span>
+            <span>
+              {booking.tableNumber.startsWith("Bàn") || booking.tableNumber.includes("+")
+                ? ""
+                : "Bàn số: "}
+              <strong>{booking.tableNumber}</strong>
+            </span>
           </div>
         )}
 
@@ -158,14 +160,14 @@ export function BookingHistoryCard({
           </span>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* 1. Nút "Để lại đánh giá" chỉ hiển thị khi đã thanh toán (PAID) */}
-            {booking.status === "PAID" && (
+            {/* 1. Nút "Để lại đánh giá" hiển thị khi đã đến nhận bàn (ARRIVED) hoặc đã thanh toán (PAID) */}
+            {(booking.status === "PAID" || booking.status === "ARRIVED") && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 disabled={checkingInvoice}
-                className="h-8 text-xs border-primary/50 bg-primary/5 text-primary hover:bg-primary/15 font-semibold"
+                className="h-8 text-xs border-primary/50 bg-primary/5 text-primary hover:bg-primary/15 font-semibold cursor-pointer"
                 onClick={handleLeaveFeedback}
               >
                 {checkingInvoice ? (
@@ -179,13 +181,13 @@ export function BookingHistoryCard({
 
             {/* 2. Đã đánh giá (REVIEWED) */}
             {booking.status === "REVIEWED" && (
-              <span className="inline-flex items-center gap-1 text-purple-700 dark:text-purple-400 font-medium">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 px-2.5 py-1 text-xs text-purple-700 dark:text-purple-400 border border-purple-500/20 font-semibold">
                 <CheckCircle className="h-3.5 w-3.5 text-purple-600" />
-                Đã gửi đánh giá
+                Đã đánh giá
               </span>
             )}
 
-            {/* 3. Nút hủy đơn */}
+            {/* 3. Nút Hủy đặt bàn: Hiển thị khi CHƯA ĐẾN NHẬN BÀN */}
             {canCancel && (
               <TooltipProvider>
                 <Tooltip>
@@ -195,18 +197,18 @@ export function BookingHistoryCard({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        disabled={isWithin60Min}
+                        disabled={isPastBookingTime}
                         onClick={() => onCancelClick?.(booking)}
-                        className="h-7 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50 cursor-pointer"
                       >
                         <XCircle className="h-3.5 w-3.5 mr-1" />
                         Hủy đặt bàn
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  {isWithin60Min && (
+                  {isPastBookingTime && (
                     <TooltipContent className="text-xs max-w-xs">
-                      Chỉ được hủy đặt bàn trước giờ đến tối thiểu 1 tiếng. Vui lòng liên hệ hotline nhà hàng để được hỗ trợ.
+                      Thời gian hẹn đặt bàn đã qua. Vui lòng liên hệ hotline nhà hàng để được hỗ trợ.
                     </TooltipContent>
                   )}
                 </Tooltip>
