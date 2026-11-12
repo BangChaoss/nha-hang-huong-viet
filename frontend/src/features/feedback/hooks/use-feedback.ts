@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   feedbackApi,
   type AdminFeedbackFilters,
+  type EligibleInvoice,
   type Feedback,
   type FeedbackPage,
   type FeedbackStats,
@@ -22,6 +23,15 @@ export function useMyReviews(enabled = true) {
   return useQuery<Feedback[], Error>({
     queryKey: feedbackKeys.mine(),
     queryFn: feedbackApi.getMyReviews,
+    enabled,
+  });
+}
+
+/** Danh sách các hoá đơn đã thanh toán chưa được đánh giá của khách. */
+export function useEligibleInvoices(enabled = true) {
+  return useQuery<EligibleInvoice[], Error>({
+    queryKey: [...feedbackKeys.all, "eligible-invoices"] as const,
+    queryFn: feedbackApi.getEligibleInvoices,
     enabled,
   });
 }

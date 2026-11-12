@@ -3,7 +3,9 @@ package com.huongViet.feedback;
 import com.huongViet.auth.User;
 import com.huongViet.common.PageResponse;
 import com.huongViet.feedback.dto.CreateFeedbackRequest;
+import com.huongViet.feedback.dto.EligibleInvoiceResponse;
 import com.huongViet.feedback.dto.FeedbackResponse;
+import com.huongViet.feedback.dto.ReservationInvoiceInfoResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -55,6 +57,27 @@ public class FeedbackCustomerController {
         return feedbackService.getFeedbackByInvoice(invoiceId)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    /**
+     * Lấy thông tin hóa đơn gắn với đơn đặt bàn để phục vụ gửi đánh giá (UC19/UC20).
+     */
+    @GetMapping("/reservation/{reservationId}/invoice")
+    public ResponseEntity<ReservationInvoiceInfoResponse> getInvoiceForReservation(
+        @AuthenticationPrincipal User currentUser,
+        @PathVariable String reservationId
+    ) {
+        return ResponseEntity.ok(feedbackService.getInvoiceForReservation(reservationId, currentUser));
+    }
+
+    /**
+     * Lấy danh sách các hóa đơn đã thanh toán của khách hàng mà chưa được gửi đánh giá.
+     */
+    @GetMapping("/eligible-invoices")
+    public ResponseEntity<List<EligibleInvoiceResponse>> getEligibleInvoices(
+        @AuthenticationPrincipal User currentUser
+    ) {
+        return ResponseEntity.ok(feedbackService.getEligibleInvoices(currentUser));
     }
 
     /**

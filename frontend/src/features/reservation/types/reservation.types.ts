@@ -50,6 +50,12 @@ export interface UpdateReservationStatusRequest {
   reason?: string;
 }
 
+export interface AdminReservationQueryParams {
+  date?: string;
+  scope?: "upcoming" | "pending" | "date";
+  status?: ReservationStatus;
+}
+
 export interface AvailableTable {
   id: string;
   tableNumber: string;

@@ -241,5 +241,84 @@ public class FeedbackService {
 
         return new FeedbackStatsResponse(total, average, counts, unreplied);
     }
+
+    /**
+     * Lấy thông tin hóa đơn gắn với đơn đặt bàn của khách hàng để phục vụ đánh giá (UC19/UC20).
+     */
+    @Transactional(readOnly = true)
+    public ReservationInvoiceInfoResponse getInvoiceForReservation(String reservationId, User currentUser) {
+        if (reservationId == null || reservationId.trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thiếu mã đặt bàn.");
+        }
+
+        String sql = """
+            SELECT r.id AS reservation_id, r.customer_id, r.table_id, r.status AS reservation_status,
+                   i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
+            FROM reservations r
+            LEFT JOIN orders o ON o.table_id = r.table_id
+            LEFT JOIN invoices i ON i.order_id = o.id
+            WHERE r.id = ?
+            ORDER BY i.created_at DESC
+            LIMIT 1
+        """;
+
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, reservationId.trim());
+        if (rows.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn đặt bàn.");
+        }
+
+        Map<String, Object> row = rows.get(0);
+        String invoiceId = (String) row.get("invoice_id");
+        String invoiceCode = (String) row.get("invoice_code");
+        String invoiceStatus = (String) row.get("invoice_status");
+        BigDecimal finalAmount = (BigDecimal) row.get("final_amount");
+
+        boolean isPaid = "PAID".equalsIgnoreCase(invoiceStatus);
+        boolean hasFeedback = invoiceId != null && feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull(invoiceId);
+
+        return new ReservationInvoiceInfoResponse(
+            reservationId,
+            invoiceId,
+            invoiceCode,
+            invoiceStatus,
+            finalAmount,
+            isPaid,
+            hasFeedback
+        );
+    }
+
+    /**
+     * Lấy danh sách các hóa đơn đã thanh toán của khách hàng mà chưa được gửi đánh giá.
+     */
+    @Transactional(readOnly = true)
+    public List<EligibleInvoiceResponse> getEligibleInvoices(User currentUser) {
+        if (currentUser == null) {
+            return Collections.emptyList();
+        }
+
+        String sql = """
+            SELECT i.id, i.invoice_code, i.final_amount,
+                   COALESCE(i.paid_at, i.created_at) AS paid_at,
+                   COALESCE(t.table_number, 'Bàn ăn') AS table_number
+            FROM invoices i
+            LEFT JOIN orders o ON i.order_id = o.id
+            LEFT JOIN restaurant_tables t ON o.table_id = t.id
+            WHERE i.customer_id = ? AND i.status = 'PAID'
+              AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.invoice_id = i.id AND f.deleted_at IS NULL)
+            ORDER BY COALESCE(i.paid_at, i.created_at) DESC
+        """;
+
+        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            java.sql.Timestamp paidTs = rs.getTimestamp("paid_at");
+            LocalDateTime paidAt = (paidTs != null) ? paidTs.toLocalDateTime() : null;
+            return new EligibleInvoiceResponse(
+                rs.getString("id"),
+                rs.getString("invoice_code"),
+                rs.getBigDecimal("final_amount"),
+                rs.getString("table_number"),
+                paidAt
+            );
+        }, currentUser.getId());
+    }
 }
 

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   Calendar,
   Clock,
@@ -10,7 +11,9 @@ import {
   XCircle,
   Star,
   AlertCircle,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +23,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { feedbackApi } from "@/features/feedback/api/feedback-api";
 import { RESERVATION_STATUS_CONFIG, type ReservationResponse } from "../types/reservation.types";
 
 interface BookingHistoryCardProps {
@@ -28,6 +32,38 @@ interface BookingHistoryCardProps {
 }
 
 export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCardProps) {
+  const navigate = useNavigate();
+  const [checkingInvoice, setCheckingInvoice] = React.useState(false);
+
+  const handleLeaveFeedback = async () => {
+    try {
+      setCheckingInvoice(true);
+      const info = await feedbackApi.getReservationInvoice(booking.id);
+
+      if (!info.isPaid) {
+        toast.error("Đơn đặt bàn này chưa thanh toán hoá đơn. Quý khách chỉ có thể gửi đánh giá sau khi hoàn tất thanh toán (PAID).");
+        return;
+      }
+
+      if (info.hasFeedback) {
+        toast.info("Đơn đặt bàn này đã được gửi đánh giá rồi.");
+        return;
+      }
+
+      // Đã thanh toán và chưa đánh giá -> chuyển sang trang /feedback với mã hoá đơn
+      const invId = info.invoiceId || info.invoiceCode;
+      void navigate({
+        to: "/feedback",
+        search: invId ? { invoiceId: invId } : {},
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Không thể kiểm tra hoá đơn cho đơn đặt bàn này.";
+      toast.error(msg);
+    } finally {
+      setCheckingInvoice(false);
+    }
+  };
+
   const statusCfg =
     RESERVATION_STATUS_CONFIG[booking.status] || RESERVATION_STATUS_CONFIG.PENDING_HOLD;
   const timeFormatted = booking.reservationTime ? booking.reservationTime.substring(0, 5) : "";
@@ -131,12 +167,15 @@ export function BookingHistoryCard({ booking, onCancelClick }: BookingHistoryCar
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={checkingInvoice}
                 className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10"
-                onClick={() => {
-                  window.alert("Tính năng đánh giá món ăn và dịch vụ đang được kết nối.");
-                }}
+                onClick={handleLeaveFeedback}
               >
-                <Star className="h-3.5 w-3.5 mr-1 text-amber-500 fill-amber-500" />
+                {checkingInvoice ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : (
+                  <Star className="h-3.5 w-3.5 mr-1 text-amber-500 fill-amber-500" />
+                )}
                 Để lại đánh giá
               </Button>
             )}
