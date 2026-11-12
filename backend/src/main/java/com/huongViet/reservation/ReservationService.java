@@ -64,7 +64,7 @@ public class ReservationService {
         ReservationStatus.PENDING_HOLD, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
         ReservationStatus.PENDING_DEPOSIT, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
         ReservationStatus.CONFIRMED, Set.of(ReservationStatus.ARRIVED, ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW),
-        ReservationStatus.ARRIVED, Set.of(ReservationStatus.PAID, ReservationStatus.CANCELLED),
+        ReservationStatus.ARRIVED, Set.of(ReservationStatus.PAID, ReservationStatus.REVIEWED),
         ReservationStatus.PAID, Set.of(ReservationStatus.REVIEWED),
         ReservationStatus.REVIEWED, Set.of(),
         ReservationStatus.CANCELLED, Set.of(),
@@ -362,6 +362,11 @@ public class ReservationService {
             }
         }
 
+        // KHI HỦY HOẶC ĐÁNH DẤU NO_SHOW: TỰ ĐỘNG GIẢI PHÓNG BÀN
+        if (newStatus == ReservationStatus.CANCELLED || newStatus == ReservationStatus.NO_SHOW) {
+            releaseAssignedTables(reservation);
+        }
+
         if (request.reason() != null && !request.reason().isBlank()) {
             reservation.setCancellationReason(request.reason());
         }
@@ -417,11 +422,21 @@ public class ReservationService {
 
         validateTransition(reservation.getStatus(), ReservationStatus.CANCELLED);
 
-        LocalDateTime reservationDateTime = LocalDateTime.of(reservation.getReservationDate(), reservation.getReservationTime());
-        if (Duration.between(LocalDateTime.now(), reservationDateTime).toMinutes() < 60) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Chỉ được hủy đặt bàn trước giờ đến tối thiểu 1 tiếng. Vui lòng liên hệ hotline nhà hàng để được hỗ trợ.");
+        // Khách hàng chỉ được phép hủy khi chưa đến nhận bàn (PENDING_HOLD, PENDING_DEPOSIT, CONFIRMED)
+        if (reservation.getStatus() != ReservationStatus.PENDING_HOLD
+            && reservation.getStatus() != ReservationStatus.PENDING_DEPOSIT
+            && reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đơn đặt bàn đã nhận bàn hoặc đã kết thúc, không thể hủy.");
         }
+        
+        // Kiểm tra thời gian hẹn chưa diễn ra / chưa quá giờ hẹn
+        LocalDateTime reservationDateTime = LocalDateTime.of(reservation.getReservationDate(), reservation.getReservationTime());
+        if (LocalDateTime.now().isAfter(reservationDateTime)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thời gian hẹn đặt bàn đã qua, không thể hủy.");
+        }
+
+        // Tự động giải phóng bàn đã gán về trạng thái AVAILABLE
+        releaseAssignedTables(reservation);
 
         ReservationStatus oldStatus = reservation.getStatus();
         reservation.setStatus(ReservationStatus.CANCELLED);
@@ -440,6 +455,32 @@ public class ReservationService {
         ReservationResponse response = toResponse(saved);
         emailService.sendBookingCancelledEmail(saved, reason, response.zoneName());
         return response;
+    }
+
+    /**
+     * Tự động giải phóng các bàn đã gán trong đơn đặt bàn về trạng thái AVAILABLE.
+     */
+    private void releaseAssignedTables(Reservation reservation) {
+        List<String> targetTableIds = new ArrayList<>();
+        if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+            targetTableIds.addAll(Arrays.stream(reservation.getMergedTableIds().split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).distinct().toList());
+        } else if (reservation.getTableId() != null && !reservation.getTableId().isBlank()) {
+            targetTableIds.add(reservation.getTableId().trim());
+        }
+
+        for (String tableId : targetTableIds) {
+            tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(t -> {
+                if (t.getStatus() == TableStatus.RESERVED) {
+                    TableStatus oldStatus = t.getStatus();
+                    t.setStatus(TableStatus.AVAILABLE);
+                    tableRepository.save(t);
+                    broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE);
+                    logger.info("Table {} automatically released RESERVED -> AVAILABLE due to cancellation of reservation {}",
+                        t.getTableNumber(), reservation.getId());
+                }
+            });
+        }
     }
 
     public int getZoneTotalCapacity(String zoneId) {

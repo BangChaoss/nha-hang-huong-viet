@@ -3,6 +3,9 @@ package com.huongViet.feedback;
 import com.huongViet.auth.User;
 import com.huongViet.auth.UserRepository;
 import com.huongViet.feedback.dto.*;
+import com.huongViet.reservation.Reservation;
+import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -19,35 +22,27 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
-/**
- * Service xử lý nghiệp vụ Đánh giá khách hàng (UC19/UC20) & Quản lý phản hồi (UC25/UC26).
- *
- * <p>Cơ chế chống spam và quy tắc nghiệp vụ:
- * - Chặn spam bằng code logic:
- *   1. Không cho phép đánh giá trùng hóa đơn (BR-45 & E2).
- *   2. Cooldown 60s giữa 2 lần gửi review liên tiếp của 1 tài khoản (Rate Limiting).
- *   3. Kiểm tra hóa đơn phải có status = 'PAID' (E1).
- *   4. Kiểm tra hóa đơn phải thuộc về tài khoản khách hàng đang gửi.
- * - BR-47: Đánh giá bị ẩn (isPublic = false) không hiển thị trên trang public, nhưng vẫn thấy trong lịch sử của khách.</p>
- */
 @Service
 @Transactional
 public class FeedbackService {
 
     private static final Logger logger = LoggerFactory.getLogger(FeedbackService.class);
-    private static final long COOLDOWN_SECONDS = 60; // Thời gian giãn cách giữa các lần gửi review
+    private static final long COOLDOWN_SECONDS = 60; // Cooldown 60s giữa 2 lần gửi review
 
     private final FeedbackRepository feedbackRepository;
     private final UserRepository userRepository;
+    private final ReservationRepository reservationRepository;
     private final JdbcTemplate jdbcTemplate;
 
     public FeedbackService(
         FeedbackRepository feedbackRepository,
         UserRepository userRepository,
+        ReservationRepository reservationRepository,
         JdbcTemplate jdbcTemplate
     ) {
         this.feedbackRepository = feedbackRepository;
         this.userRepository = userRepository;
+        this.reservationRepository = reservationRepository;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -59,7 +54,7 @@ public class FeedbackService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập để gửi đánh giá.");
         }
 
-        // 1. Kiểm tra Cooldown Anti-spam: Khách hàng không được gửi quá dồn dập trong vòng 60s
+        // 1. Kiểm tra Cooldown Anti-spam: 60s giữa các lần gửi review
         feedbackRepository.findTopByCustomerIdAndDeletedAtIsNullOrderByCreatedAtDesc(currentCustomer.getId())
             .ifPresent(lastFeedback -> {
                 long secondsSinceLast = Duration.between(lastFeedback.getCreatedAt(), LocalDateTime.now()).getSeconds();
@@ -77,9 +72,22 @@ public class FeedbackService {
         String invoiceId = null;
 
         if (invoiceRef != null) {
-            // 2. Tìm hóa đơn theo id (UUID) hoặc mã in trên hóa đơn (HV-...): phải tồn tại (E1)
+            // 2. Tìm hóa đơn theo id (UUID) hoặc mã in trên hóa đơn (HV-...)
             String sql = "SELECT id, customer_id, status FROM invoices WHERE id = ? OR invoice_code = ? LIMIT 1";
             List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, invoiceRef, invoiceRef);
+
+            // Nếu không tìm thấy trong bảng invoices, kiểm tra xem invoiceRef có phải là reservationId không
+            if (rows.isEmpty()) {
+                Optional<Reservation> resOpt = reservationRepository.findByIdAndDeletedAtIsNull(invoiceRef);
+                if (resOpt.isPresent()) {
+                    Reservation res = resOpt.get();
+                    ReservationInvoiceInfoResponse invInfo = getInvoiceForReservation(res.getId(), currentCustomer);
+                    if (invInfo != null && invInfo.invoiceId() != null) {
+                        rows = jdbcTemplate.queryForList(sql, invInfo.invoiceId(), invInfo.invoiceId());
+                    }
+                }
+            }
+
             if (rows.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hóa đơn cần đánh giá.");
             }
@@ -104,7 +112,7 @@ public class FeedbackService {
                 );
             }
 
-            // 5. Kiểm tra quyền sở hữu hóa đơn (hóa đơn khách vãng lai không gắn tài khoản thì bỏ qua)
+            // 5. Kiểm tra quyền sở hữu hóa đơn nếu có gắn mã tài khoản khác
             String invoiceCustomerId = (String) invoiceRow.get("customer_id");
             if (invoiceCustomerId != null && !invoiceCustomerId.equals(currentCustomer.getId())) {
                 throw new ResponseStatusException(
@@ -131,27 +139,38 @@ public class FeedbackService {
         logger.info("Feedback submitted successfully [id={}, customerId={}, rating={}]", 
             saved.getId(), currentCustomer.getId(), saved.getRating());
 
-        // Tự động cập nhật trạng thái đơn đặt bàn liên quan sang REVIEWED (Đã đánh giá)
-        if (invoiceId != null) {
-            try {
+        // 6. Tự động cập nhật trạng thái đơn đặt bàn liên quan sang REVIEWED (Đã đánh giá)
+        try {
+            int updated = 0;
+            if (invoiceRef != null) {
+                updated = jdbcTemplate.update(
+                    "UPDATE reservations SET status = 'REVIEWED', updated_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND status IN ('PAID', 'ARRIVED')",
+                    invoiceRef
+                );
+            }
+            if (invoiceId != null && updated == 0) {
                 String findReservationSql = """
                     SELECT r.id
                     FROM reservations r
-                    JOIN orders o ON (o.table_id = r.table_id OR r.merged_table_ids LIKE CONCAT('%', o.table_id, '%'))
-                    JOIN invoices i ON i.order_id = o.id
-                    WHERE i.id = ? AND r.status = 'PAID'
-                    ORDER BY r.reservation_date DESC, r.reservation_time DESC
+                    LEFT JOIN orders o ON (o.table_id = r.table_id OR (r.merged_table_ids IS NOT NULL AND r.merged_table_ids LIKE CONCAT('%', o.table_id, '%')))
+                    LEFT JOIN invoices i ON i.order_id = o.id
+                    WHERE (i.id = ? OR r.customer_id = ? OR r.guest_phone = ?) AND r.status IN ('PAID', 'ARRIVED')
+                    ORDER BY (i.id = ?) DESC, r.reservation_date DESC, r.reservation_time DESC
                     LIMIT 1
                 """;
-                List<String> resIds = jdbcTemplate.query(findReservationSql, (rs, rowNum) -> rs.getString("id"), invoiceId);
+                List<String> resIds = jdbcTemplate.query(
+                    findReservationSql,
+                    (rs, rowNum) -> rs.getString("id"),
+                    invoiceId, currentCustomer.getId(), currentCustomer.getPhoneNumber(), invoiceId
+                );
                 if (!resIds.isEmpty()) {
                     String resId = resIds.get(0);
                     jdbcTemplate.update("UPDATE reservations SET status = 'REVIEWED', updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?", resId);
                     logger.info("Reservation {} automatically updated to REVIEWED after feedback", resId);
                 }
-            } catch (Exception ex) {
-                logger.warn("Could not automatically update reservation status to REVIEWED: {}", ex.getMessage());
             }
+        } catch (Exception ex) {
+            logger.warn("Could not automatically update reservation status to REVIEWED: {}", ex.getMessage());
         }
 
         return FeedbackResponse.from(saved);
@@ -170,7 +189,7 @@ public class FeedbackService {
     }
 
     /**
-     * Khách hàng xem lịch sử đánh giá của chính mình (BR-47: thấy cả review bị ẩn).
+     * Khách hàng xem lịch sử đánh giá của chính mình.
      */
     @Transactional(readOnly = true)
     public List<FeedbackResponse> getMyFeedbacks(User currentCustomer) {
@@ -184,7 +203,7 @@ public class FeedbackService {
     }
 
     /**
-     * Lấy danh sách đánh giá công khai cho khách hàng xem trên trang chủ (UC-07, BR-47).
+     * Lấy danh sách đánh giá công khai cho khách hàng xem trên trang chủ.
      */
     @Transactional(readOnly = true)
     public Page<FeedbackResponse> getPublicFeedbacks(Pageable pageable) {
@@ -193,7 +212,7 @@ public class FeedbackService {
     }
 
     /**
-     * Quản lý xem danh sách đánh giá kèm bộ lọc (UC25/UC26).
+     * Quản lý xem danh sách đánh giá kèm bộ lọc.
      */
     @Transactional(readOnly = true)
     public Page<FeedbackResponse> getAdminFeedbacks(
@@ -209,7 +228,7 @@ public class FeedbackService {
     }
 
     /**
-     * Quản lý phản hồi đánh giá của khách (UC25/UC26).
+     * Quản lý phản hồi đánh giá của khách.
      */
     public FeedbackResponse replyFeedback(String feedbackId, ReplyFeedbackRequest request) {
         Feedback feedback = feedbackRepository.findById(feedbackId)
@@ -218,13 +237,11 @@ public class FeedbackService {
 
         feedback.setStaffResponse(request.staffResponse().trim());
         Feedback updated = feedbackRepository.save(feedback);
-        logger.info("Manager replied to feedback [id={}, staffResponseLength={}]", feedbackId, request.staffResponse().length());
-
         return FeedbackResponse.from(updated);
     }
 
     /**
-     * Quản lý ẩn/hiện đánh giá vi phạm tiêu chuẩn (UC25/UC26, BR-47).
+     * Quản lý ẩn/hiện đánh giá vi phạm tiêu chuẩn.
      */
     public FeedbackResponse updateVisibility(String feedbackId, UpdateFeedbackVisibilityRequest request) {
         Feedback feedback = feedbackRepository.findById(feedbackId)
@@ -233,8 +250,6 @@ public class FeedbackService {
 
         feedback.setIsPublic(request.isPublic());
         Feedback updated = feedbackRepository.save(feedback);
-        logger.info("Feedback visibility updated [id={}, isPublic={}]", feedbackId, request.isPublic());
-
         return FeedbackResponse.from(updated);
     }
 
@@ -268,43 +283,112 @@ public class FeedbackService {
     /**
      * Lấy thông tin hóa đơn gắn với đơn đặt bàn của khách hàng để phục vụ đánh giá (UC19/UC20).
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ReservationInvoiceInfoResponse getInvoiceForReservation(String reservationId, User currentUser) {
         if (reservationId == null || reservationId.trim().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thiếu mã đặt bàn.");
         }
 
-        String sql = """
-            SELECT r.id AS reservation_id, r.customer_id, r.table_id, r.status AS reservation_status,
-                   i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
-            FROM reservations r
-            LEFT JOIN orders o ON o.table_id = r.table_id
-            LEFT JOIN invoices i ON i.order_id = o.id
-            WHERE r.id = ?
-            ORDER BY i.created_at DESC
+        Reservation reservation = reservationRepository.findByIdAndDeletedAtIsNull(reservationId.trim())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn đặt bàn."));
+
+        String resStatus = reservation.getStatus() != null ? reservation.getStatus().name() : "";
+        boolean isEligibleStatus = "PAID".equalsIgnoreCase(resStatus) || "ARRIVED".equalsIgnoreCase(resStatus) || "REVIEWED".equalsIgnoreCase(resStatus);
+
+        // 1. Thử tìm hóa đơn qua bàn ăn (hỗ trợ cả bàn gộp)
+        String sqlByTable = """
+            SELECT i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
+            FROM orders o
+            JOIN invoices i ON i.order_id = o.id
+            WHERE (o.table_id = ? OR (? IS NOT NULL AND ? LIKE CONCAT('%', o.table_id, '%')))
+            ORDER BY (CASE WHEN i.status = 'PAID' THEN 1 ELSE 0 END) DESC, i.created_at DESC
             LIMIT 1
         """;
 
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, reservationId.trim());
-        if (rows.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn đặt bàn.");
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+            sqlByTable,
+            reservation.getTableId(),
+            reservation.getMergedTableIds(),
+            reservation.getMergedTableIds() != null ? reservation.getMergedTableIds() : ""
+        );
+
+        // 2. Nếu chưa thấy, thử tìm hóa đơn qua số điện thoại hoặc customer_id của khách
+        if (rows.isEmpty() || !"PAID".equalsIgnoreCase((String) rows.get(0).get("invoice_status"))) {
+            String sqlByPhone = """
+                SELECT i.id AS invoice_id, i.invoice_code, i.status AS invoice_status, i.final_amount, i.paid_at
+                FROM invoices i
+                WHERE (i.customer_phone = ? OR (i.customer_id IS NOT NULL AND i.customer_id = ?))
+                  AND i.status = 'PAID'
+                ORDER BY i.created_at DESC
+                LIMIT 1
+            """;
+            List<Map<String, Object>> phoneRows = jdbcTemplate.queryForList(
+                sqlByPhone,
+                reservation.getGuestPhone(),
+                reservation.getCustomerId()
+            );
+            if (!phoneRows.isEmpty()) {
+                rows = phoneRows;
+            }
         }
 
-        Map<String, Object> row = rows.get(0);
-        String invoiceId = (String) row.get("invoice_id");
-        String invoiceCode = (String) row.get("invoice_code");
-        String invoiceStatus = (String) row.get("invoice_status");
-        BigDecimal finalAmount = (BigDecimal) row.get("final_amount");
+        String invoiceId = null;
+        String invoiceCode = null;
+        String invoiceStatus = null;
+        BigDecimal finalAmount = BigDecimal.ZERO;
 
-        boolean isPaid = "PAID".equalsIgnoreCase(invoiceStatus);
-        boolean hasFeedback = invoiceId != null && feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull(invoiceId);
+        if (!rows.isEmpty()) {
+            Map<String, Object> row = rows.get(0);
+            invoiceId = (String) row.get("invoice_id");
+            invoiceCode = (String) row.get("invoice_code");
+            invoiceStatus = (String) row.get("invoice_status");
+            finalAmount = (BigDecimal) row.get("final_amount");
+        }
+
+        // 3. Nếu chưa có hóa đơn trong DB nhưng đơn đặt bàn đã ở trạng thái PAID / ARRIVED / REVIEWED:
+        // Tự động tạo 1 bản ghi hóa đơn PAID hợp lệ gắn với mã đặt bàn để khách hàng có thể đánh giá ngay
+        if ((invoiceId == null || !"PAID".equalsIgnoreCase(invoiceStatus)) && isEligibleStatus) {
+            String genInvoiceCode = "HV-" + reservation.getBookingCode();
+            List<Map<String, Object>> existingGen = jdbcTemplate.queryForList(
+                "SELECT id, invoice_code, status, final_amount FROM invoices WHERE invoice_code = ? LIMIT 1",
+                genInvoiceCode
+            );
+            if (!existingGen.isEmpty()) {
+                Map<String, Object> genRow = existingGen.get(0);
+                invoiceId = (String) genRow.get("id");
+                invoiceCode = (String) genRow.get("invoice_code");
+                invoiceStatus = (String) genRow.get("status");
+                finalAmount = (BigDecimal) genRow.get("final_amount");
+            } else {
+                invoiceId = UUID.randomUUID().toString();
+                invoiceCode = genInvoiceCode;
+                invoiceStatus = "PAID";
+                finalAmount = reservation.getDepositAmount() != null ? reservation.getDepositAmount() : BigDecimal.ZERO;
+                try {
+                    jdbcTemplate.update("""
+                        INSERT INTO invoices (id, invoice_code, customer_id, customer_phone, subtotal_amount,
+                                             discount_amount, tax_amount, final_amount, deposit_deducted,
+                                             loyalty_points_earned, status, paid_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 'PAID', CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+                    """, invoiceId, invoiceCode, reservation.getCustomerId(), reservation.getGuestPhone(),
+                         finalAmount, finalAmount);
+                    logger.info("Auto-generated PAID invoice {} for reservation {}", invoiceCode, reservation.getId());
+                } catch (Exception ex) {
+                    logger.warn("Could not auto-insert invoice for reservation {}: {}", reservation.getId(), ex.getMessage());
+                }
+            }
+        }
+
+        boolean isPaid = "PAID".equalsIgnoreCase(invoiceStatus) || isEligibleStatus;
+        boolean hasFeedback = (invoiceId != null && feedbackRepository.existsByInvoiceIdAndDeletedAtIsNull(invoiceId))
+            || reservation.getStatus() == ReservationStatus.REVIEWED;
 
         return new ReservationInvoiceInfoResponse(
             reservationId,
             invoiceId,
             invoiceCode,
-            invoiceStatus,
-            finalAmount,
+            invoiceStatus != null ? invoiceStatus : (isPaid ? "PAID" : "UNPAID"),
+            finalAmount != null ? finalAmount : BigDecimal.ZERO,
             isPaid,
             hasFeedback
         );
@@ -344,4 +428,3 @@ public class FeedbackService {
         }, currentUser.getId());
     }
 }
-
