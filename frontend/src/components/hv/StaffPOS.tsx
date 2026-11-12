@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench, Trash2 } from "lucide-react";
+import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench, Trash2, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -70,7 +70,10 @@ const REAL_STATUS_CLASSES: Record<TableStatus, string> = {
 };
 
 function localDateString(date = new Date()): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export function StaffPOS() {
@@ -78,14 +81,12 @@ export function StaffPOS() {
   const [selectedTable, setSelectedTable] = useState<TableResponse | null>(null);
   const [billingTable, setBillingTable] = useState<TableResponse | null>(null);
 
-  // Danh mục khu vực động từ Database (bỏ hoàn toàn hardcode)
   const zonesQuery = useQuery({
     queryKey: ["zones"],
     queryFn: () => zoneApi.list(),
     staleTime: 60_000,
   });
 
-  // Danh sách bàn ăn từ Database
   const tablesQuery = useQuery({
     queryKey: ["tables"],
     queryFn: () => tableApi.list(),
@@ -94,7 +95,6 @@ export function StaffPOS() {
     refetchOnWindowFocus: true,
   });
 
-  // Thông tin đặt bàn hôm nay
   const today = localDateString();
   const reservationsQuery = useQuery({
     queryKey: ["staff-pos-reservations", today],
@@ -112,23 +112,21 @@ export function StaffPOS() {
     onFloorPlanChange: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
   });
 
-  const reservationsByTable = useMemo(() => {
-    const result = new Map<string, ReservationResponse>();
-    for (const reservation of reservationsQuery.data ?? []) {
-      if (!reservation.tableNumber || !["CONFIRMED", "ARRIVED"].includes(reservation.status)) continue;
-      const key = reservation.tableNumber.trim().toLocaleLowerCase("vi-VN");
-      const current = result.get(key);
-      const candidateTime = `${reservation.reservationDate}T${reservation.reservationTime}`;
-      const currentTime = current ? `${current.reservationDate}T${current.reservationTime}` : "";
-      if (!current || candidateTime < currentTime) result.set(key, reservation);
-    }
-    return result;
-  }, [reservationsQuery.data]);
+  // Map reservation theo tableId HOẶC các id trong mergedTableIds
+  const findReservationForTable = (table: TableResponse): ReservationResponse | undefined => {
+    const list = reservationsQuery.data ?? [];
+    return list.find((r) => {
+      if (!["CONFIRMED", "ARRIVED"].includes(r.status)) return false;
+      if (r.tableId === table.id) return true;
+      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).includes(table.id)) return true;
+      if (r.tableNumber && r.tableNumber.includes(table.tableNumber)) return true;
+      return false;
+    });
+  };
 
   const zones: ZoneResponse[] = zonesQuery.data ?? [];
   const tables: TableResponse[] = tablesQuery.data ?? [];
 
-  // Gom bàn theo khu vực động
   const tablesByZone = useMemo(() => {
     const map = new Map<string, TableResponse[]>();
     for (const z of zones) {
@@ -201,8 +199,7 @@ export function StaffPOS() {
             </div>
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
               {zoneTables.map((item) => {
-                const normalizedNumber = item.tableNumber.trim().toLocaleLowerCase("vi-VN");
-                const reservation = reservationsByTable.get(normalizedNumber);
+                const reservation = findReservationForTable(item);
                 const isMaintenance = item.status === "MAINTENANCE" || item.status === "CLEANING";
                 const statusLabel = TABLE_STATUS_LABELS[item.status] ?? item.status;
                 const statusClass = REAL_STATUS_CLASSES[item.status] ?? "status-available";
@@ -240,9 +237,12 @@ export function StaffPOS() {
       {selectedTable?.status === "RESERVED" && (
         <ReservationDialog
           table={selectedTable}
-          reservation={reservationsByTable.get(selectedTable.tableNumber.trim().toLocaleLowerCase("vi-VN"))}
+          reservation={findReservationForTable(selectedTable)}
           onClose={() => setSelectedTable(null)}
           onTableUpdated={(updated) => setSelectedTable(updated)}
+          onCheckInSuccess={(updatedTable) => {
+            setSelectedTable(updatedTable);
+          }}
         />
       )}
 
@@ -270,11 +270,13 @@ function ReservationDialog({
   reservation,
   onClose,
   onTableUpdated,
+  onCheckInSuccess,
 }: {
   table: TableResponse;
   reservation?: ReservationResponse | undefined;
   onClose: () => void;
   onTableUpdated?: (table: TableResponse) => void;
+  onCheckInSuccess?: (table: TableResponse) => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -291,20 +293,21 @@ function ReservationDialog({
 
   const checkInMutation = useMutation({
     mutationFn: async () => {
-      if (!reservation) throw new Error("Không tìm thấy thông tin đặt bàn.");
-      const updatedReservation = await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
       let updatedTable = table;
+      if (reservation) {
+        await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
+      }
       if (table.status !== "OCCUPIED") {
         updatedTable = await tableApi.updateStatus(table.id, "OCCUPIED");
       }
-      return { updatedReservation, updatedTable };
+      return { updatedTable };
     },
-    onSuccess: ({ updatedReservation, updatedTable }) => {
-      toast.success(`Đã check-in ${updatedReservation.guestName} vào ${updatedTable.tableNumber}`);
+    onSuccess: ({ updatedTable }) => {
+      toast.success(`Check-in thành công! Bàn ${updatedTable.tableNumber} đã chuyển sang Đang phục vụ.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
       if (onTableUpdated) onTableUpdated(updatedTable);
-      onClose();
+      if (onCheckInSuccess) onCheckInSuccess(updatedTable);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -313,28 +316,30 @@ function ReservationDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">{table.tableNumber} · Đặt trước</DialogTitle>
+          <DialogTitle className="font-display text-3xl">{table.tableNumber} · Đã đặt trước</DialogTitle>
           <DialogDescription>Thông tin khách đặt bàn</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
-          <p className="font-display text-xl font-semibold">{reservation?.guestName ?? "Chưa có thông tin khách"}</p>
+          <p className="font-display text-xl font-semibold">{reservation?.guestName ?? "Khách đặt trước"}</p>
           <p className="flex items-center gap-2">
-            <Clock className="h-4 w-4" /> {reservation?.reservationTime?.slice(0, 5) ?? "--:--"} · {reservation?.reservationDate ?? "—"}
+            <Clock className="h-4 w-4" /> {reservation?.reservationTime?.slice(0, 5) ?? "--:--"} · {reservation?.reservationDate ?? "Hôm nay"}
           </p>
           <p className="flex items-center gap-2">
-            <Users className="h-4 w-4" /> {reservation?.partySize ?? "—"} khách
+            <Users className="h-4 w-4" /> {reservation?.partySize ?? table.capacity} khách
           </p>
           <p className="flex items-center gap-2">
-            <Phone className="h-4 w-4" /> {reservation?.guestPhone ?? "Chưa có số điện thoại"}
+            <Phone className="h-4 w-4" /> {reservation?.guestPhone ?? "Đang cập nhật SĐT"}
           </p>
           {reservation?.specialRequests && <p className="text-muted-foreground">Ghi chú: {reservation.specialRequests}</p>}
         </div>
+
         <Button
-          className="w-full bg-primary hover:bg-primary-hover"
-          disabled={!reservation || reservation.status !== "CONFIRMED" || checkInMutation.isPending}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5"
+          disabled={checkInMutation.isPending}
           onClick={() => checkInMutation.mutate()}
         >
-          {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in)"}
+          <UserCheck className="mr-2 h-4 w-4" />
+          {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in & Mở bàn)"}
         </Button>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
@@ -477,8 +482,14 @@ function OrderDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">{table.tableNumber} · Gọi món</DialogTitle>
-          <DialogDescription>Món hết hàng sẽ không thể chọn.</DialogDescription>
+          <DialogTitle className="font-display text-3xl">
+            {activeOrder.data?.tableNumber || table.tableNumber} · Gọi món
+          </DialogTitle>
+          <DialogDescription>
+            {activeOrder.data?.tableNumber && activeOrder.data.tableNumber.includes("+")
+              ? "Cụm bàn gộp đang dùng chung đơn hàng này."
+              : "Món hết hàng sẽ không thể chọn."}
+          </DialogDescription>
         </DialogHeader>
 
         <div
@@ -775,6 +786,8 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
   });
 
   const sentItems = (sentOrdersQuery.data ?? []).flatMap((order) => order.items);
+  const displayTableNumber = sentOrdersQuery.data?.[0]?.tableNumber || table.tableNumber;
+
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
@@ -809,7 +822,7 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">Hoá đơn · {table.tableNumber}</DialogTitle>
+          <DialogTitle className="font-display text-3xl">Hoá đơn · {displayTableNumber}</DialogTitle>
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
           {bill.lines.map((line) => (
@@ -995,8 +1008,8 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
               await queryClient.invalidateQueries({ queryKey: ["tables"] });
               await queryClient.invalidateQueries({ queryKey: ["orders"] });
               toast.success(
-                `Thanh toán ${formatVND(Number(settled.total))} thành công! Bàn ${table.tableNumber} đã trống. Điểm thưởng: +${Number(settled.pointsAwarded).toLocaleString("vi-VN")} điểm`,
-              );
+                `Thanh toán ${formatVND(Number(settled.total))} thành công! Cụm ${settled.tableNumber} đã được giải phóng. Điểm thưởng: +${Number(settled.pointsAwarded || 0).toLocaleString("vi-VN")} điểm`,
+            );
               onClose();
             } catch (error) {
               toast.error(error instanceof Error ? error.message : "Không thể hoàn tất thanh toán.");

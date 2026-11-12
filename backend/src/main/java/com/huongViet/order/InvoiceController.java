@@ -22,7 +22,7 @@ public class InvoiceController {
     /**
      * GET /api/invoices?date=YYYY-MM-DD
      */
-    @GetMapping
+    @GetMapping({"", "/"})
     public ResponseEntity<List<InvoiceResponse>> listByDate(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
     ) {
@@ -32,7 +32,7 @@ public class InvoiceController {
     /**
      * GET /api/invoices/{id}
      */
-    @GetMapping("/{id}")
+    @GetMapping({"/{id}", "/{id}/"})
     public ResponseEntity<InvoiceResponse> getById(@PathVariable String id) {
         return ResponseEntity.ok(invoiceService.getById(id));
     }

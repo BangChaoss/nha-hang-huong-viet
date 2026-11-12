@@ -10,6 +10,7 @@ import {
   FileText,
   UtensilsCrossed,
   CheckCircle2,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +26,10 @@ import { formatVND } from "@/lib/restaurant-store";
 import { invoiceApi, type InvoiceRecord } from "@/lib/invoice-api";
 
 export function StaffInvoices() {
-  const [selectedDate, setSelectedDate] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10)
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [search, setSearch] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<InvoiceRecord | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
@@ -46,6 +48,7 @@ export function StaffInvoices() {
       (inv) =>
         inv.invoiceCode.toLowerCase().includes(q) ||
         inv.tableNumber.toLowerCase().includes(q) ||
+        (inv.customerPhone && inv.customerPhone.includes(q)) ||
         (inv.voucherCode && inv.voucherCode.toLowerCase().includes(q))
     );
   }, [query.data, search]);
@@ -64,6 +67,30 @@ export function StaffInvoices() {
 
   return (
     <div className="space-y-6">
+      {/* CSS In ấn hóa đơn độc lập */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          #printable-invoice, #printable-invoice * {
+            visibility: visible;
+          }
+          #printable-invoice {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 10px !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #000 !important;
+            background: #fff !important;
+          }
+        }
+      `}</style>
+
       {/* Header & Bộ lọc */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -126,7 +153,7 @@ export function StaffInvoices() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="text"
-              placeholder="Tìm theo mã hóa đơn, số bàn..."
+              placeholder="Tìm theo mã hóa đơn, số bàn, SĐT tích điểm..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-8 text-xs h-9"
@@ -139,6 +166,14 @@ export function StaffInvoices() {
       <div className="surface-card overflow-x-auto p-4 border rounded-xl">
         {query.isLoading ? (
           <p className="py-12 text-center text-sm text-muted-foreground">Đang tải danh sách hóa đơn...</p>
+        ) : query.isError ? (
+          <div className="py-12 text-center text-destructive space-y-3">
+            <p className="text-sm font-medium">{query.error.message || "Không thể tải danh sách hóa đơn."}</p>
+            <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              Thử lại
+            </Button>
+          </div>
         ) : filteredInvoices.length === 0 ? (
           <div className="py-12 text-center text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto opacity-50" />
@@ -150,6 +185,7 @@ export function StaffInvoices() {
               <tr className="border-b text-left text-muted-foreground text-xs uppercase tracking-wider">
                 <th className="py-2.5 px-3">Mã Hóa Đơn</th>
                 <th className="py-2.5 px-3">Bàn</th>
+                <th className="py-2.5 px-3">Khách hàng / SĐT</th>
                 <th className="py-2.5 px-3">Giờ thanh toán</th>
                 <th className="py-2.5 px-3">Số món</th>
                 <th className="py-2.5 px-3 text-right">Giảm giá</th>
@@ -173,6 +209,16 @@ export function StaffInvoices() {
                   <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
                     <td className="py-3 px-3 font-mono font-bold text-primary">{inv.invoiceCode}</td>
                     <td className="py-3 px-3 font-medium">{inv.tableNumber}</td>
+                    <td className="py-3 px-3 text-xs font-mono">
+                      {inv.customerPhone ? (
+                        <span className="flex items-center gap-1 text-foreground">
+                          <Phone className="h-3 w-3 text-muted-foreground" />
+                          {inv.customerPhone}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground italic">Khách vãng lai</span>
+                      )}
+                    </td>
                     <td className="py-3 px-3 text-xs text-muted-foreground">{paidTime}</td>
                     <td className="py-3 px-3 tabular-nums">{itemCount} phần</td>
                     <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">
@@ -223,8 +269,8 @@ export function StaffInvoices() {
           </DialogHeader>
 
           {previewInvoice && (
-            <div className="py-2" id="printable-invoice" ref={printRef}>
-              <div className="rounded-lg border bg-white p-5 text-zinc-900 shadow-xs font-sans text-xs space-y-3 print:border-none print:shadow-none print:p-0">
+            <div className="py-2" ref={printRef}>
+              <div id="printable-invoice" className="rounded-lg border bg-white p-5 text-zinc-900 shadow-xs font-sans text-xs space-y-3 print:border-none print:shadow-none print:p-0">
                 {/* Header Bill */}
                 <div className="text-center space-y-1 border-b pb-3">
                   <div className="flex items-center justify-center gap-1.5 font-display text-xl font-bold tracking-wider text-zinc-950">
@@ -249,7 +295,9 @@ export function StaffInvoices() {
                   <p>
                     Giờ: {previewInvoice.paidAt ? new Date(previewInvoice.paidAt).toLocaleString("vi-VN") : "—"}
                   </p>
-                  <p className="text-right">Thu ngân: Staff</p>
+                  <p className="text-right">
+                    SĐT tích điểm: <strong className="text-zinc-900 font-mono">{previewInvoice.customerPhone || "Khách vãng lai"}</strong>
+                  </p>
                 </div>
 
                 {/* Bảng món */}
@@ -304,10 +352,10 @@ export function StaffInvoices() {
                   </div>
                 </div>
 
-                {/* Điểm thưởng */}
+                {/* Điểm thưởng & Số điện thoại nhận điểm */}
                 {previewInvoice.loyaltyPointsEarned > 0 && (
                   <div className="rounded bg-amber-50 p-2 text-center text-[10px] text-amber-900">
-                    ✨ Quý khách được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
+                    ✨ Quý khách ({previewInvoice.customerPhone || "SĐT thành viên"}) được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
                   </div>
                 )}
 
