@@ -61,36 +61,84 @@ export function StaffInvoices() {
     return { count, totalAmount, totalDiscount };
   }, [query.data]);
 
+  // HÀM IN BẢO ĐẢM HIỂN THỊ ĐẦY ĐỦ 100% QUA IFRAME
   const handlePrint = () => {
-    window.print();
+    if (!printRef.current) return;
+
+    // Lấy nội dung DOM của hóa đơn
+    const printContent = printRef.current.innerHTML;
+
+    // Tạo iframe ẩn
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+
+    // Kế thừa toàn bộ style/CSS Tailwind của trang để không bị vỡ giao diện
+    const pageStyles = Array.from(document.querySelectorAll("link[rel='stylesheet'], style"))
+      .map((el) => el.outerHTML)
+      .join("\n");
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Hoa_Don_${previewInvoice?.invoiceCode || "HuongViet"}</title>
+          ${pageStyles}
+          <style>
+            @page {
+              /* Dùng "80mm auto" cho máy in 80mm hoặc "58mm auto" cho máy in 58mm */
+              size: 80mm auto; 
+              margin: 2mm 3mm;
+            }
+            body {
+              background-color: #ffffff !important;
+              color: #000000 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            #printable-invoice {
+              box-shadow: none !important;
+              border: none !important;
+              width: 100% !important;
+              max-width: 72mm !important; /* Giới hạn chiều rộng để phù hợp khổ giấy */
+              padding: 0 !important;
+              margin: 0 auto !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContent}
+        </body>
+      </html>
+    `);
+    doc.close();
+
+    // Chờ iframe nạp xong style rồi kích hoạt cửa sổ in
+    iframe.contentWindow?.focus();
+    setTimeout(() => {
+      iframe.contentWindow?.print();
+      // Thu dọn iframe sau khi hoàn tất
+      setTimeout(() => {
+        document.body.removeChild(iframe);
+      }, 500);
+    }, 250);
   };
 
   return (
     <div className="space-y-6">
-      {/* CSS In ấn hóa đơn độc lập */}
-      <style>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          #printable-invoice, #printable-invoice * {
-            visibility: visible;
-          }
-          #printable-invoice {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 10px !important;
-            border: none !important;
-            box-shadow: none !important;
-            color: #000 !important;
-            background: #fff !important;
-          }
-        }
-      `}</style>
-
       {/* Header & Bộ lọc */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -259,13 +307,15 @@ export function StaffInvoices() {
       <Dialog open={Boolean(previewInvoice)} onOpenChange={(open) => !open && setPreviewInvoice(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center justify-between text-base">
-              <span>Hóa đơn: {previewInvoice?.invoiceCode}</span>
+            <div className="flex items-center justify-between pr-6">
+              <DialogTitle className="text-base font-bold">
+                Hóa đơn: {previewInvoice?.invoiceCode}
+              </DialogTitle>
               <Button size="sm" onClick={handlePrint} className="gap-1.5 bg-primary hover:bg-primary/90">
                 <Printer className="h-4 w-4" />
                 In hóa đơn
               </Button>
-            </DialogTitle>
+            </div>
           </DialogHeader>
 
           {previewInvoice && (
@@ -362,7 +412,6 @@ export function StaffInvoices() {
                 {/* Lời cảm ơn */}
                 <div className="text-center pt-2 space-y-0.5 text-[10px] text-zinc-400">
                   <p className="font-semibold text-zinc-600">Cảm ơn Quý khách & Hẹn gặp lại!</p>
-                  <p>Wifi: HuongViet_Restaurant · Pass: 88888888</p>
                 </div>
               </div>
             </div>
