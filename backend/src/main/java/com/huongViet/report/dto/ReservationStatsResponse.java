@@ -7,11 +7,12 @@ public record ReservationStatsResponse(
     long cancelledCount,
     long noShowCount,
     long pendingCount,
+    long paidCount,
     double completionRate,
-    double cancellationRate
+    double cancellationRate,
+    double paidRate
 ) {
     public static ReservationStatsResponse empty() {
-        return new ReservationStatsResponse(0L, 0L, 0L, 0L, 0L, 0L, 0.0, 0.0);
+        return new ReservationStatsResponse(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0, 0.0, 0.0);
     }
 }
-
