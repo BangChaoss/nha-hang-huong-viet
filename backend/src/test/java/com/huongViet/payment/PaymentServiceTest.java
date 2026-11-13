@@ -466,6 +466,66 @@ class PaymentServiceTest {
             assertTrue(order.isPointsDeducted());
             assertNotNull(order.getPaidAt());
         }
+
+        @Test
+        @DisplayName("Callback hết hạn thanh toán (vnp_ResponseCode = 11): Đánh dấu FAILED")
+        void testProcessCallback_ExpiredTransaction() {
+            PaymentOrder order = new PaymentOrder(
+                    "order-exp", "table-2", "0901234567",
+                    new BigDecimal("100000"), BigDecimal.ZERO, new BigDecimal("100000"), null, BigDecimal.ZERO
+            );
+            when(orderRepository.lockById("order-exp")).thenReturn(Optional.of(order));
+
+            Map<String, String> params = createSignedParams(Map.of(
+                    "vnp_TxnRef", "order-exp",
+                    "vnp_Amount", "10000000",
+                    "vnp_ResponseCode", "11", // Đã hết hạn chờ thanh toán
+                    "vnp_TransactionStatus", "02",
+                    "vnp_TransactionNo", "TXN_EXP_11"
+            ));
+
+            String result = paymentService.processCallback(params);
+            assertEquals("PAYMENT_FAILED", result);
+            assertEquals("FAILED", order.getStatus());
+            assertEquals("11", order.getVnpResponseCode());
+        }
+
+        @Test
+        @DisplayName("Callback thành công cho khách không cung cấp SĐT: Không tích điểm")
+        void testProcessCallback_GuestWithoutPhone_Success() {
+            PaymentOrder order = new PaymentOrder(
+                    "order-guest", "table-5", null,
+                    new BigDecimal("80000"), BigDecimal.ZERO, new BigDecimal("80000"), null, BigDecimal.ZERO
+            );
+            when(orderRepository.lockById("order-guest")).thenReturn(Optional.of(order));
+
+            CashCheckoutResponse checkoutResponse = new CashCheckoutResponse(
+                    "table-5",
+                    new BigDecimal("80000"),
+                    new BigDecimal("8000"),
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO,
+                    new BigDecimal("80000"),
+                    BigDecimal.ZERO,
+                    "Bàn 5"
+            );
+            when(orderService.checkoutWithPaymentMethod(eq("table-5"), any(CashCheckoutRequest.class), eq("VNPAY")))
+                    .thenReturn(checkoutResponse);
+
+            Map<String, String> params = createSignedParams(Map.of(
+                    "vnp_TxnRef", "order-guest",
+                    "vnp_Amount", "8000000",
+                    "vnp_ResponseCode", "00",
+                    "vnp_TransactionStatus", "00",
+                    "vnp_TransactionNo", "VNPAY_GUEST_01"
+            ));
+
+            String result = paymentService.processCallback(params);
+            assertEquals("00", result);
+            assertEquals("PAID", order.getStatus());
+            assertEquals(BigDecimal.ZERO, order.getPointsAwarded());
+            verify(loyaltyAccountRepository, never()).save(any(LoyaltyAccount.class));
+        }
     }
 
     @Nested

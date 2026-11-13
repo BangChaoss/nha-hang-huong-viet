@@ -168,13 +168,13 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         WHERE r.status = com.huongViet.reservation.ReservationStatus.CONFIRMED
           AND r.deletedAt IS NULL
           AND (
-            (r.reservationDate < :today)
-            OR (r.reservationDate = :today AND r.reservationTime < :graceTime)
+            (r.reservationDate < :cutoffDate)
+            OR (r.reservationDate = :cutoffDate AND r.reservationTime <= :cutoffTime)
           )
         """)
     List<Reservation> findOverdueConfirmedReservations(
-        @Param("today") LocalDate today,
-        @Param("graceTime") LocalTime graceTime
+        @Param("cutoffDate") LocalDate cutoffDate,
+        @Param("cutoffTime") LocalTime cutoffTime
     );
 
     /**

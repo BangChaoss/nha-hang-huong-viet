@@ -57,7 +57,6 @@ const TABLE_STATUS_LABELS: Record<TableStatus, string> = {
   AVAILABLE: "Trống",
   RESERVED: "Đã đặt trước",
   OCCUPIED: "Đang phục vụ",
-  CLEANING: "Cần dọn dẹp",
   MAINTENANCE: "Bảo trì",
 };
 
@@ -65,7 +64,6 @@ const REAL_STATUS_CLASSES: Record<TableStatus, string> = {
   AVAILABLE: "status-available",
   RESERVED: "status-reserved",
   OCCUPIED: "status-occupied",
-  CLEANING: "status-available",
   MAINTENANCE: "status-maintenance",
 };
 
@@ -200,7 +198,7 @@ export function StaffPOS() {
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
               {zoneTables.map((item) => {
                 const reservation = findReservationForTable(item);
-                const isMaintenance = item.status === "MAINTENANCE" || item.status === "CLEANING";
+                const isMaintenance = item.status === "MAINTENANCE";
                 const statusLabel = TABLE_STATUS_LABELS[item.status] ?? item.status;
                 const statusClass = REAL_STATUS_CLASSES[item.status] ?? "status-available";
 

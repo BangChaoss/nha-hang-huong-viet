@@ -117,6 +117,9 @@ public class OrderService {
      * Xác định tên hiển thị bàn (nếu bàn gộp thì nối Bàn 01 + Bàn 02).
      */
     private String resolveDisplayTableNumber(String tableId) {
+        if (tableId == null) {
+            return null;
+        }
         List<String> relatedTableIds = findRelatedTableIds(tableId);
         if (relatedTableIds.size() > 1) {
             List<RestaurantTable> tables = tableRepository.findAllById(relatedTableIds);

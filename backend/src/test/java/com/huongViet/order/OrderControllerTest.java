@@ -213,7 +213,7 @@ class OrderControllerTest {
             "table-1", new BigDecimal("110000"), new BigDecimal("11000"),
             BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("121000"),
             new BigDecimal("6050"), "Bàn 1");
-        when(orderService.checkoutCash(eq("table-1"), any(CashCheckoutRequest.class))).thenReturn(bill);
+        when(orderService.checkoutCash(eq("table-1"), any(CashCheckoutRequest.class), any())).thenReturn(bill);
 
         mockMvc.perform(post("/api/orders/table/table-1/checkout-cash")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -222,6 +222,21 @@ class OrderControllerTest {
             .andExpect(jsonPath("$.tableId").value("table-1"))
             .andExpect(jsonPath("$.subtotal").value(110000))
             .andExpect(jsonPath("$.vat").value(11000))
+            .andExpect(jsonPath("$.total").value(121000));
+    }
+
+    @Test
+    @DisplayName("POST /api/orders/table/{tableId}/checkout-cash - body rỗng vẫn thanh toán mặc định")
+    void checkoutCash_NullBody_UsesDefaultRequest() throws Exception {
+        CashCheckoutResponse bill = new CashCheckoutResponse(
+            "table-1", new BigDecimal("110000"), new BigDecimal("11000"),
+            BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("121000"),
+            BigDecimal.ZERO, "Bàn 1");
+        when(orderService.checkoutCash(eq("table-1"), any(CashCheckoutRequest.class), any())).thenReturn(bill);
+
+        mockMvc.perform(post("/api/orders/table/table-1/checkout-cash"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.tableId").value("table-1"))
             .andExpect(jsonPath("$.total").value(121000));
     }
 }
