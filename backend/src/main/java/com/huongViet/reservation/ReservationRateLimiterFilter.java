@@ -1,5 +1,6 @@
 package com.huongViet.reservation;
 
+import com.huongViet.auth.JwtService;
 import com.huongViet.auth.User;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -7,6 +8,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
@@ -22,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Multi-tier rate limiter filter protecting public booking endpoint POST /api/reservations.
  * Restricts clients to a maximum of 5 booking attempts per hour based on:
- * 1. Authenticated User ID (if logged in)
+ * 1. Authenticated User ID (via SecurityContextHolder or JWT Bearer token)
  * 2. Device ID header X-Device-Id (if guest)
  * 3. Client IP address (fallback for scripts/bots)
  */
@@ -30,6 +32,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ReservationRateLimiterFilter extends OncePerRequestFilter {
 
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final JwtService jwtService;
+
+    public ReservationRateLimiterFilter(@Autowired(required = false) JwtService jwtService) {
+        this.jwtService = jwtService;
+    }
+
+    public ReservationRateLimiterFilter() {
+        this(null);
+    }
 
     private Bucket createNewBucket() {
         Bandwidth limit = Bandwidth.builder()
@@ -70,10 +81,27 @@ public class ReservationRateLimiterFilter extends OncePerRequestFilter {
 
     public String resolveRateLimitKey(HttpServletRequest request) {
         // Cấp 1: Người dùng đã đăng nhập (User ID)
+        // 1a. Trích xuất từ SecurityContextHolder
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof User user) {
             if (user.getId() != null && !user.getId().isBlank()) {
                 return "user:" + user.getId().trim();
+            }
+        }
+
+        // 1b. Dự phòng: Trích xuất trực tiếp từ JWT Bearer token nếu có Authorization Header
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ") && jwtService != null) {
+            String token = authHeader.substring(7);
+            try {
+                if (jwtService.isTokenValid(token)) {
+                    String userId = jwtService.extractUserId(token);
+                    if (userId != null && !userId.isBlank()) {
+                        return "user:" + userId.trim();
+                    }
+                }
+            } catch (Exception ignored) {
+                // Token không hợp lệ thì tiếp tục kiểm tra Cấp 2
             }
         }
 
