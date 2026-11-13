@@ -70,6 +70,8 @@ class OrderCheckoutServiceTest {
     private VoucherService voucherService;
     @Mock
     private JdbcTemplate jdbcTemplate;
+    @Mock
+    private com.huongViet.reservation.ReservationRepository reservationRepository;
 
     private OrderService orderService;
 
@@ -82,7 +84,7 @@ class OrderCheckoutServiceTest {
         orderService = new OrderService(
             orderRepository, orderItemRepository, kitchenTicketRepository, orderItemAuditRepository,
             menuItemRepository, tableRepository, messagingTemplate, loyaltyAccounts, loyaltySettings,
-            voucherService, jdbcTemplate);
+            voucherService, jdbcTemplate, reservationRepository);
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
         occupiedTable.setStatus(TableStatus.OCCUPIED);

@@ -1,14 +1,16 @@
 package com.huongViet.reservation;
 
+import com.huongViet.auth.User;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
-import io.github.bucket4j.Refill;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -18,8 +20,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Rate limiter filter protecting public booking endpoint POST /api/reservations.
- * Restricts client IP to a maximum of 5 booking attempts per hour.
+ * Multi-tier rate limiter filter protecting public booking endpoint POST /api/reservations.
+ * Restricts clients to a maximum of 5 booking attempts per hour based on:
+ * 1. Authenticated User ID (if logged in)
+ * 2. Device ID header X-Device-Id (if guest)
+ * 3. Client IP address (fallback for scripts/bots)
  */
 @Component
 public class ReservationRateLimiterFilter extends OncePerRequestFilter {
@@ -42,8 +47,8 @@ public class ReservationRateLimiterFilter extends OncePerRequestFilter {
         String method = request.getMethod();
 
         if ("POST".equalsIgnoreCase(method) && "/api/reservations".equals(path)) {
-            String clientIp = getClientIp(request);
-            Bucket bucket = buckets.computeIfAbsent(clientIp, k -> createNewBucket());
+            String rateLimitKey = resolveRateLimitKey(request);
+            Bucket bucket = buckets.computeIfAbsent(rateLimitKey, k -> createNewBucket());
 
             if (!bucket.tryConsume(1)) {
                 response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
@@ -61,6 +66,32 @@ public class ReservationRateLimiterFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    public String resolveRateLimitKey(HttpServletRequest request) {
+        // Cấp 1: Người dùng đã đăng nhập (User ID)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof User user) {
+            if (user.getId() != null && !user.getId().isBlank()) {
+                return "user:" + user.getId().trim();
+            }
+        }
+
+        // Cấp 2: Khách vãng lai với Device ID Header (từ localStorage client)
+        String deviceId = request.getHeader("X-Device-Id");
+        if (deviceId != null && !deviceId.isBlank()) {
+            String sanitized = deviceId.trim();
+            if (sanitized.length() <= 100 && sanitized.matches("^[a-zA-Z0-9_-]+$")) {
+                return "device:" + sanitized;
+            }
+        }
+
+        // Cấp 3: Dự phòng theo Client IP (chống spam bot/script)
+        return "ip:" + getClientIp(request);
+    }
+
+    public void clearBuckets() {
+        buckets.clear();
     }
 
     private String getClientIp(HttpServletRequest request) {

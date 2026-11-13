@@ -97,7 +97,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(reservationRateLimiterFilter, JwtAuthFilter.class);
+            .addFilterAfter(reservationRateLimiterFilter, JwtAuthFilter.class);
 
         return http.build();
     }
