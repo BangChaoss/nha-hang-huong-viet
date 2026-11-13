@@ -52,7 +52,7 @@ class KitchenControllerTest {
     @Test
     @DisplayName("GET /api/kitchen/tickets - trả về toàn bộ hàng đợi theo FIFO")
     void listAll_NoFilter_ReturnsQueue() throws Exception {
-        when(kitchenTicketService.listAll(null)).thenReturn(List.of(ticket));
+        when(kitchenTicketService.listAll(null, null)).thenReturn(List.of(ticket));
 
         mockMvc.perform(get("/api/kitchen/tickets"))
             .andExpect(status().isOk())
@@ -60,7 +60,7 @@ class KitchenControllerTest {
             .andExpect(jsonPath("$[0].tableNumber").value("Bàn 1"))
             .andExpect(jsonPath("$[0].status").value("QUEUED"));
 
-        verify(kitchenTicketService).listAll(null);
+        verify(kitchenTicketService).listAll(null, null);
     }
 
     @Test
@@ -69,13 +69,13 @@ class KitchenControllerTest {
         KitchenTicketResponse preparing = new KitchenTicketResponse(
             "ticket-2", "order-1", "item-2", "Bàn 2", "Lẩu Riêu Cua", 1,
             null, CookingStatus.PREPARING, "2026-11-11T10:05:00", null);
-        when(kitchenTicketService.listAll(CookingStatus.PREPARING)).thenReturn(List.of(preparing));
+        when(kitchenTicketService.listAll(CookingStatus.PREPARING, null)).thenReturn(List.of(preparing));
 
         mockMvc.perform(get("/api/kitchen/tickets").param("status", "PREPARING"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].status").value("PREPARING"));
 
-        verify(kitchenTicketService).listAll(CookingStatus.PREPARING);
+        verify(kitchenTicketService).listAll(CookingStatus.PREPARING, null);
     }
 
     @Test

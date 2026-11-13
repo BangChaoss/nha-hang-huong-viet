@@ -31,6 +31,9 @@ class FeedbackServiceTest {
     private UserRepository userRepository;
 
     @Mock
+    private com.huongViet.reservation.ReservationRepository reservationRepository;
+
+    @Mock
     private JdbcTemplate jdbcTemplate;
 
     private FeedbackService feedbackService;
@@ -38,7 +41,7 @@ class FeedbackServiceTest {
 
     @BeforeEach
     void setUp() {
-        feedbackService = new FeedbackService(feedbackRepository, userRepository, jdbcTemplate);
+        feedbackService = new FeedbackService(feedbackRepository, userRepository, reservationRepository, jdbcTemplate);
         customer = new User("user-1", "nguyenvana", "vana@example.com", "0912345678", "hashedPassword", UserRole.CUSTOMER);
     }
 
