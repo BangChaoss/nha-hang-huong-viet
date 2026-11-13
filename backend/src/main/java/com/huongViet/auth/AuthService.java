@@ -91,7 +91,13 @@ public class AuthService {
             ? userRepository.findByEmailAndDeletedAtIsNull(input.toLowerCase()).orElse(null)
             : userRepository.findByUsernameAndDeletedAtIsNull(input).orElse(null);
 
-        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
+        }
+        if ("LOCKED".equalsIgnoreCase(user.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để được giúp đỡ.");
+        }
+        if (!"ACTIVE".equals(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
         }
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {

@@ -27,7 +27,7 @@ import java.util.*;
 public class FeedbackService {
 
     private static final Logger logger = LoggerFactory.getLogger(FeedbackService.class);
-    private static final long COOLDOWN_SECONDS = 60; // Cooldown 60s giữa 2 lần gửi review
+    private static final long COOLDOWN_SECONDS = 5; // Cooldown 5s giữa 2 lần gửi review
 
     private final FeedbackRepository feedbackRepository;
     private final UserRepository userRepository;
@@ -55,7 +55,7 @@ public class FeedbackService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập để gửi đánh giá.");
         }
 
-        // 1. Kiểm tra Cooldown Anti-spam: 60s giữa các lần gửi review
+        // 1. Kiểm tra Cooldown Anti-spam: 5s giữa các lần gửi review
         feedbackRepository.findTopByCustomerIdAndDeletedAtIsNullOrderByCreatedAtDesc(currentCustomer.getId())
             .ifPresent(lastFeedback -> {
                 long secondsSinceLast = Duration.between(lastFeedback.getCreatedAt(), LocalDateTime.now()).getSeconds();
