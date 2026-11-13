@@ -332,6 +332,51 @@ class VoucherServiceTest {
             assertTrue(res.valid());
             assertEquals(new BigDecimal("50000"), res.discountAmount());
         }
+
+        @Test
+        @DisplayName("Validate không phân biệt chữ hoa thường (code 'save10' khớp 'SAVE10')")
+        void testValidate_CaseInsensitiveCode() {
+            Voucher v = createSampleVoucher("1", "SAVE10", Voucher.DiscountType.PERCENTAGE,
+                    new BigDecimal("10"), null, BigDecimal.ZERO, 1, 5, 100, 0, 1, true);
+            when(repository.findByVoucherCodeIgnoreCaseAndDeletedAtIsNull("SAVE10")).thenReturn(Optional.of(v));
+            when(usageRepository.countByVoucherAndPhone("1", "0901234567")).thenReturn(0L);
+
+            VoucherValidationResponse res = voucherService.validate(
+                    new VoucherValidationRequest("save10", "0901234567", new BigDecimal("100000"))
+            );
+            assertTrue(res.valid());
+            assertEquals(new BigDecimal("10000.00"), res.discountAmount());
+        }
+
+        @Test
+        @DisplayName("Validate voucher phần trăm không có mức giảm tối đa (maxDiscountAmount = null)")
+        void testValidate_NoMaxDiscountAmount() {
+            Voucher v = createSampleVoucher("1", "NOCAP20", Voucher.DiscountType.PERCENTAGE,
+                    new BigDecimal("20"), null, BigDecimal.ZERO, 1, 5, 100, 0, 1, true);
+            when(repository.findByVoucherCodeIgnoreCaseAndDeletedAtIsNull("NOCAP20")).thenReturn(Optional.of(v));
+            when(usageRepository.countByVoucherAndPhone("1", "0901234567")).thenReturn(0L);
+
+            VoucherValidationResponse res = voucherService.validate(
+                    new VoucherValidationRequest("NOCAP20", "0901234567", new BigDecimal("1000000"))
+            );
+            assertTrue(res.valid());
+            assertEquals(new BigDecimal("200000.00"), res.discountAmount());
+        }
+
+        @Test
+        @DisplayName("Validate voucher có minOrderAmount = null được áp dụng cho mọi giá trị đơn")
+        void testValidate_NullMinOrderAmount_TreatedAsZero() {
+            Voucher v = createSampleVoucher("1", "FREEFORALL", Voucher.DiscountType.FIXED_AMOUNT,
+                    new BigDecimal("10000"), null, null, 1, 5, 100, 0, 1, true);
+            when(repository.findByVoucherCodeIgnoreCaseAndDeletedAtIsNull("FREEFORALL")).thenReturn(Optional.of(v));
+            when(usageRepository.countByVoucherAndPhone("1", "0901234567")).thenReturn(0L);
+
+            VoucherValidationResponse res = voucherService.validate(
+                    new VoucherValidationRequest("FREEFORALL", "0901234567", new BigDecimal("25000"))
+            );
+            assertTrue(res.valid());
+            assertEquals(new BigDecimal("10000"), res.discountAmount());
+        }
     }
 
     @Nested

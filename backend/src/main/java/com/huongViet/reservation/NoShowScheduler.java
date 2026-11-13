@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -42,23 +43,26 @@ public class NoShowScheduler {
     }
 
     /**
-     * BR-26 / UC13-E1: Runs every 5 minutes to detect overdue CONFIRMED reservations.
+     * BR-26 / UC13-E1: Runs every 60 seconds to detect overdue CONFIRMED reservations.
      * If reservation_time + 15 minutes < now -> NO_SHOW.
      * Releases assigned table(s) (including merged tables) back to AVAILABLE.
      */
-    @Scheduled(fixedRate = 300_000) // 5 minutes
+    @Scheduled(fixedDelay = 60_000) // Check every 60 seconds
     @Transactional
     public void processNoShows() {
-        LocalDate today = LocalDate.now();
-        LocalTime graceTime = LocalTime.now().minus(GRACE_PERIOD);
+        LocalDateTime cutoff = LocalDateTime.now().minus(GRACE_PERIOD);
 
-        List<Reservation> overdue = reservationRepository.findOverdueConfirmedReservations(today, graceTime);
+        List<Reservation> overdue = reservationRepository.findOverdueConfirmedReservations(
+            cutoff.toLocalDate(),
+            cutoff.toLocalTime()
+        );
 
         for (Reservation reservation : overdue) {
             ReservationStatus oldStatus = reservation.getStatus();
             reservation.setStatus(ReservationStatus.NO_SHOW);
             reservation.setCancellationReason("Tự động hủy do quá giờ nhận bàn (No-Show)");
 
+            reservationRepository.saveAndFlush(reservation);
             // Thu thập tất cả các bàn đã gán (kể cả cụm bàn gộp)
             Set<String> targetTableIds = new HashSet<>();
             if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
@@ -76,8 +80,10 @@ public class NoShowScheduler {
                 tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(table -> {
                     TableStatus oldTableStatus = table.getStatus();
                     if (oldTableStatus != TableStatus.MAINTENANCE) {
-                        table.setStatus(TableStatus.AVAILABLE);
-                        tableRepository.save(table);
+                        if (oldTableStatus != TableStatus.AVAILABLE) {
+                            table.setStatus(TableStatus.AVAILABLE);
+                            tableRepository.save(table);
+                        }
                         try {
                             String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
                             messagingTemplate.convertAndSend("/topic/table-status",

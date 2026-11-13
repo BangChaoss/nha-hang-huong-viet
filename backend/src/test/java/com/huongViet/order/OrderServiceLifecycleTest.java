@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -83,6 +84,8 @@ class OrderServiceLifecycleTest {
             new BigDecimal("55000"), null, true);
         bunCha = new MenuItem("menu-2", "cat-1", "Bún Chả", "Bún chả Hà Nội",
             new BigDecimal("45000"), null, true);
+
+        org.mockito.Mockito.lenient().when(tableRepository.findById("table-1")).thenReturn(Optional.of(occupiedTable));
     }
 
     private Order openOrder() {
@@ -103,6 +106,12 @@ class OrderServiceLifecycleTest {
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        OrderItem item1 = new OrderItem("item-1", "order-1", "menu-1", 2, new BigDecimal("55000"), "Ít cay");
+        item1.setMenuItem(pho);
+        OrderItem item2 = new OrderItem("item-2", "order-1", "menu-2", 1, new BigDecimal("45000"), null);
+        item2.setMenuItem(bunCha);
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc(anyString()))
+            .thenReturn(List.of(item1, item2));
         when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -434,7 +443,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("getById - đơn chưa gắn bàn trả về tableNumber null")
     void getById_OrderWithoutTable_ReturnsNullTableNumber() {
-        Order order = new Order("order-1", "table-1", "staff-1", OrderType.DINE_IN);
+        Order order = new Order("order-1", null, "staff-1", OrderType.TAKE_AWAY);
         when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of());
 

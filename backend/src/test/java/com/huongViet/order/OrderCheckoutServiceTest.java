@@ -6,6 +6,9 @@ import com.huongViet.payment.LoyaltyAccount;
 import com.huongViet.payment.LoyaltyAccountRepository;
 import com.huongViet.payment.LoyaltySettings;
 import com.huongViet.payment.LoyaltySettingsRepository;
+import com.huongViet.reservation.Reservation;
+import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationStatus;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableStatus;
@@ -37,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -91,6 +95,9 @@ class OrderCheckoutServiceTest {
             new BigDecimal("55000"), null, true);
         bunCha = new MenuItem("menu-2", "cat-1", "Bún Chả", null,
             new BigDecimal("45000"), null, true);
+
+        lenient().when(tableRepository.findById("table-1")).thenReturn(Optional.of(occupiedTable));
+        lenient().when(reservationRepository.findActiveReservationsForDate(any())).thenReturn(List.of());
     }
 
     private Order openOrder(String id) {
@@ -197,8 +204,6 @@ class OrderCheckoutServiceTest {
         stubSingleOrder(settings("10.000", "1000"));
         LoyaltyAccount account = new LoyaltyAccount("loyalty-1", "0901234567");
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.of(account));
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
 
         CashCheckoutResponse response = orderService.checkoutCash(
             "table-1", new CashCheckoutRequest("0901234567", null, false));
@@ -213,8 +218,6 @@ class OrderCheckoutServiceTest {
     void checkout_NewPhone_CreatesLoyaltyAccount() {
         stubSingleOrder(settings("5.000", "1"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.empty());
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
 
         CashCheckoutResponse response = orderService.checkoutCash(
             "table-1", new CashCheckoutRequest("0901234567", null, false));
@@ -258,8 +261,6 @@ class OrderCheckoutServiceTest {
         LoyaltyAccount account = new LoyaltyAccount("loyalty-1", "0901234567");
         account.addPoints(new BigDecimal("5000"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.of(account));
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
 
         CashCheckoutResponse response = orderService.checkoutCash(
             "table-1", new CashCheckoutRequest("0901234567", null, true));
@@ -277,8 +278,6 @@ class OrderCheckoutServiceTest {
         LoyaltyAccount account = new LoyaltyAccount("loyalty-1", "0901234567");
         account.addPoints(new BigDecimal("500"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.of(account));
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
 
         CashCheckoutResponse response = orderService.checkoutCash(
             "table-1", new CashCheckoutRequest("0901234567", null, true, new BigDecimal("50")));
@@ -330,8 +329,6 @@ class OrderCheckoutServiceTest {
     void checkout_ValidVoucher_AppliesDiscountAndRedeems() {
         stubSingleOrder(settings("5.000", "1"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.empty());
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
         when(voucherService.validate(any(VoucherValidationRequest.class)))
             .thenReturn(new VoucherValidationResponse(true, "OK", new BigDecimal("10000"), "GIAM10"));
         when(jdbcTemplate.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(), eq("GIAM10")))
@@ -352,8 +349,6 @@ class OrderCheckoutServiceTest {
     void checkout_VoucherRedeemConflict_ThrowsConflict() {
         stubSingleOrder(settings("5.000", "1"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.empty());
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
         when(voucherService.validate(any(VoucherValidationRequest.class)))
             .thenReturn(new VoucherValidationResponse(true, "OK", new BigDecimal("10000"), "GIAM10"));
         when(jdbcTemplate.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(), eq("GIAM10")))
@@ -375,8 +370,6 @@ class OrderCheckoutServiceTest {
     void checkout_NormalizesPhoneNumber() {
         stubSingleOrder(settings("5.000", "1"));
         when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.empty());
-        when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("0901234567")))
-            .thenReturn(List.of());
 
         orderService.checkoutCash("table-1",
             new CashCheckoutRequest(" (0901) 234-567 ", null, false));
@@ -434,5 +427,80 @@ class OrderCheckoutServiceTest {
 
         assertEquals(0, new BigDecimal("155000").compareTo(response.subtotal()));
         verify(orderRepository, times(2)).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("checkoutCash - có staffId thì lưu thông tin nhân viên vào hóa đơn")
+    void checkout_WithStaffId_RecordsStaffInInvoice() {
+        stubSingleOrder(settings("5.000", "1"));
+
+        CashCheckoutResponse response = orderService.checkoutCash(
+            "table-1", new CashCheckoutRequest(null, null, false), "staff-custom");
+
+        assertEquals(0, new BigDecimal("121000").compareTo(response.total()));
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate, org.mockito.Mockito.atLeastOnce()).update(sqlCaptor.capture(), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("checkoutCash - bàn có lịch đặt ARRIVED thì chuyển sang PAID khi thanh toán")
+    void checkout_ActiveReservation_TransitionsToPaid() {
+        stubSingleOrder(settings("5.000", "1"));
+
+        Reservation reservation = new Reservation(
+            "res-1", null, "Khách A", "0901234567", null, 4,
+            java.time.LocalDate.now(), java.time.LocalTime.of(12, 0), null
+        );
+        reservation.setTableId("table-1");
+        reservation.setStatus(ReservationStatus.ARRIVED);
+
+        when(reservationRepository.findActiveReservationsForDate(any())).thenReturn(List.of(reservation));
+
+        CashCheckoutResponse response = orderService.checkoutCash(
+            "table-1", new CashCheckoutRequest(null, null, false));
+
+        assertEquals(0, new BigDecimal("121000").compareTo(response.total()));
+        assertEquals(ReservationStatus.PAID, reservation.getStatus());
+        verify(reservationRepository).save(reservation);
+    }
+
+    @Test
+    @DisplayName("checkoutCash - kết hợp cả voucher giảm giá và điểm thưởng trên cùng hóa đơn")
+    void checkout_CombinedVoucherAndLoyaltyPoints() {
+        stubSingleOrder(settings("5.000", "1000"));
+
+        LoyaltyAccount account = new LoyaltyAccount("loyalty-1", "0901234567");
+        account.addPoints(new BigDecimal("500"));
+        when(loyaltyAccounts.lockByCustomerPhone("0901234567")).thenReturn(Optional.of(account));
+
+        // Subtotal = 110.000đ, VAT 10% = 11.000đ -> Tổng trước giảm = 121.000đ
+        // Voucher giảm 20.000đ -> Sau voucher còn 101.000đ
+        // Dùng 30 điểm (30 * 1.000đ = 30.000đ) -> Còn 71.000đ
+        when(voucherService.validate(any(VoucherValidationRequest.class)))
+            .thenReturn(new VoucherValidationResponse(true, "OK", new BigDecimal("20000"), "COMBO20"));
+        when(jdbcTemplate.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(), eq("COMBO20")))
+            .thenReturn(List.of("voucher-combo"));
+        when(voucherService.redeemForInvoice(any(VoucherValidationRequest.class), anyString()))
+            .thenReturn(new VoucherValidationResponse(true, "OK", new BigDecimal("20000"), "COMBO20"));
+
+        CashCheckoutResponse response = orderService.checkoutCash(
+            "table-1", new CashCheckoutRequest("0901234567", "COMBO20", true, new BigDecimal("30")));
+
+        assertEquals(0, new BigDecimal("20000").compareTo(response.discountAmount()));
+        assertEquals(0, new BigDecimal("30").compareTo(response.pointsRedeemed()));
+        assertEquals(0, new BigDecimal("71000").compareTo(response.total()));
+        verify(voucherService).redeemForInvoice(any(VoucherValidationRequest.class), anyString());
+        verify(loyaltyAccounts).save(account);
+    }
+
+    @Test
+    @DisplayName("checkoutCash - ghi nhận chèn hóa đơn và chi tiết món vào database")
+    void checkout_InsertsInvoiceAndInvoiceItems() {
+        stubSingleOrder(settings("5.000", "1"));
+
+        orderService.checkoutCash("table-1", new CashCheckoutRequest(null, null, false));
+
+        // Kiểm tra jdbcTemplate.update được gọi cho cả invoices và invoice_items
+        verify(jdbcTemplate, times(2)).update(anyString(), any(Object[].class));
     }
 }
