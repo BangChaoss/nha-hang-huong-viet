@@ -48,6 +48,14 @@ import type { ReservationResponse, ReservationStatus } from "../types/reservatio
 type DashboardTab = "needs-action" | "today" | "upcoming" | "calendar";
 type ViewMode = "cards" | "table";
 
+const EXCLUDED_FROM_UPCOMING_STATUSES = new Set<ReservationStatus>([
+  "ARRIVED",
+  "PAID",
+  "REVIEWED",
+  "CANCELLED",
+  "NO_SHOW",
+]);
+
 function playNotificationSound() {
   try {
     const AudioContextClass =
@@ -174,13 +182,16 @@ export function StaffBookingDashboard() {
     const todayBookings = upcomingList.filter((b) => b.reservationDate === todayStr);
     const todayArrived = todayBookings.filter((b) => b.status === "ARRIVED").length;
     const todayConfirmed = todayBookings.filter((b) => b.status === "CONFIRMED").length;
+    const upcomingActiveList = upcomingList.filter(
+      (b) => !EXCLUDED_FROM_UPCOMING_STATUSES.has(b.status),
+    );
 
     return {
       pending: allPending.length,
       todayTotal: todayBookings.length,
       todayConfirmed,
       todayArrived,
-      upcomingTotal: upcomingList.length,
+      upcomingTotal: upcomingActiveList.length,
     };
   }, [pendingQuery.data, upcomingQuery.data, todayStr]);
 
@@ -193,7 +204,9 @@ export function StaffBookingDashboard() {
       return (upcomingQuery.data ?? []).filter((b) => b.reservationDate === todayStr);
     }
     if (activeTab === "upcoming") {
-      return upcomingQuery.data ?? [];
+      return (upcomingQuery.data ?? []).filter(
+        (b) => !EXCLUDED_FROM_UPCOMING_STATUSES.has(b.status),
+      );
     }
     // calendar
     return calendarQuery.data ?? [];
@@ -396,7 +409,10 @@ export function StaffBookingDashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {/* Needs Action / Pending Hold */}
         <Card
-          onClick={() => setActiveTab("needs-action")}
+          onClick={() => {
+            setActiveTab("needs-action");
+            setSelectedStatus("ALL");
+          }}
           className={`p-3 cursor-pointer transition-all border ${
             activeTab === "needs-action"
               ? "ring-2 ring-amber-500 bg-amber-500/10 border-amber-500/40"
@@ -419,9 +435,12 @@ export function StaffBookingDashboard() {
 
         {/* Today's Service */}
         <Card
-          onClick={() => setActiveTab("today")}
+          onClick={() => {
+            setActiveTab("today");
+            setSelectedStatus("ALL");
+          }}
           className={`p-3 cursor-pointer transition-all border ${
-            activeTab === "today"
+            activeTab === "today" && selectedStatus !== "ARRIVED"
               ? "ring-2 ring-primary bg-primary/5 border-primary/40"
               : "hover:bg-accent/40 bg-card"
           }`}
@@ -438,7 +457,10 @@ export function StaffBookingDashboard() {
 
         {/* Upcoming in 7 Days */}
         <Card
-          onClick={() => setActiveTab("upcoming")}
+          onClick={() => {
+            setActiveTab("upcoming");
+            setSelectedStatus("ALL");
+          }}
           className={`p-3 cursor-pointer transition-all border ${
             activeTab === "upcoming"
               ? "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500/40"
@@ -460,10 +482,20 @@ export function StaffBookingDashboard() {
         </Card>
 
         {/* Arrived today */}
-        <Card className="p-3 bg-card border">
+        <Card
+          onClick={() => {
+            setActiveTab("today");
+            setSelectedStatus("ARRIVED");
+          }}
+          className={`p-3 cursor-pointer transition-all border ${
+            activeTab === "today" && selectedStatus === "ARRIVED"
+              ? "ring-2 ring-emerald-500 bg-emerald-500/10 border-emerald-500/40"
+              : "hover:bg-accent/40 bg-card"
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-              Đã nhận bàn hôm nay
+              Đã đến nhận bàn hôm nay
             </span>
             <UserCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
           </div>
@@ -480,56 +512,10 @@ export function StaffBookingDashboard() {
       <div className="flex items-center gap-2 border-b pb-1 overflow-x-auto">
         <button
           type="button"
-          onClick={() => setActiveTab("needs-action")}
-          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 whitespace-nowrap ${
-            activeTab === "needs-action"
-              ? "border-amber-500 text-amber-700 dark:text-amber-400 bg-amber-500/10 font-semibold"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Clock className="h-3.5 w-3.5" />
-          <span>Cần xử lý ngay</span>
-          {metrics.pending > 0 && (
-            <Badge
-              variant="outline"
-              className="bg-amber-600 text-white border-none text-[10px] h-4.5 px-1.5 font-bold"
-            >
-              {metrics.pending}
-            </Badge>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("today")}
-          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 whitespace-nowrap ${
-            activeTab === "today"
-              ? "border-primary text-primary bg-primary/10 font-semibold"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <CalendarIcon className="h-3.5 w-3.5" />
-          <span>Hôm nay</span>
-          <span className="text-[11px] text-muted-foreground">({metrics.todayTotal})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("upcoming")}
-          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 whitespace-nowrap ${
-            activeTab === "upcoming"
-              ? "border-primary text-primary bg-primary/10 font-semibold"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <CalendarDays className="h-3.5 w-3.5" />
-          <span>Sắp tới</span>
-          <span className="text-[11px] text-muted-foreground">({metrics.upcomingTotal})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("calendar")}
+          onClick={() => {
+            setActiveTab("calendar");
+            setSelectedStatus("ALL");
+          }}
           className={`flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 whitespace-nowrap ${
             activeTab === "calendar"
               ? "border-primary text-primary bg-primary/10 font-semibold"
@@ -626,8 +612,12 @@ export function StaffBookingDashboard() {
               {activeTab === "needs-action"
                 ? "Không có đơn nào đang chờ duyệt"
                 : activeTab === "today"
-                  ? "Chưa có đơn đặt bàn nào trong ngày hôm nay"
-                  : "Không tìm thấy yêu cầu đặt bàn nào phù hợp"}
+                  ? selectedStatus === "ARRIVED"
+                    ? "Chưa có khách nào đến nhận bàn trong ngày hôm nay"
+                    : "Chưa có đơn đặt bàn nào trong ngày hôm nay"
+                  : activeTab === "upcoming"
+                    ? "Không có đơn đặt bàn nào sắp tới"
+                    : "Không tìm thấy yêu cầu đặt bàn nào phù hợp"}
             </p>
             <p className="text-xs text-muted-foreground max-w-sm">
               {activeTab === "needs-action"

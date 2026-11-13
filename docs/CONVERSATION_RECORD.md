@@ -104,3 +104,54 @@ Người dùng đã xác nhận các lựa chọn cụ thể:
     - `PATCH /api/tables/{id}/status`
 
 
+
+---
+
+## Phiên làm việc: Tối ưu hóa Bộ lọc & Danh sách Đặt bàn Nhân viên
+- **Thời gian**: 2026-11-13
+- **Nội dung yêu cầu**:
+  1. Trong phần "Sắp tới" của màn "Đặt bàn" của staff: loại bỏ các đơn có trạng thái "Hoàn tất".
+  2. Bỏ 3 nút filter thừa ở dưới ("Cần xử lý ngay", "Hôm nay", "Sắp tới") vì phía trên đã có các Card thống kê có thể bấm trực tiếp.
+  3. Sửa thẻ "Đã đến nhận bàn hôm nay" để có thể bấm được và tự động lọc ra các đơn "Đã đến nhận bàn" (`ARRIVED`) trong ngày hôm nay.
+  4. Đơn "Chờ xác nhận" (`PENDING_HOLD`): Bổ sung nút "Hủy" bên trái nút "Xác nhận & Gán bàn" trên cả Dạng Thẻ (`StaffBookingCard`) và Dạng Bảng (`StaffBookingRow`).
+- **Phân tích mã nguồn**:
+  - `frontend/src/features/reservation/components/staff-booking-dashboard.tsx`:
+    - Thanh Metrics Bar gồm 4 Card: 3 Card đầu đã có `onClick`, riêng Card thứ 4 ("Đã đến nhận bàn hôm nay") chưa có `onClick` và hiệu ứng active.
+    - Thanh Navigation Tabs Bar có 4 nút, trong đó 3 nút trùng lặp chức năng với 3 Card ở trên. Nút thứ 4 là "Tra cứu theo ngày".
+    - Tab "Sắp tới" (`activeTab === 'upcoming'`) nhận dữ liệu từ `upcomingQuery.data` (lấy mọi đơn có `reservationDate >= today`), khiến các đơn đã check-in `ARRIVED` hoặc `PAID` vẫn hiển thị.
+    - `StaffBookingCard.tsx` (dòng 292-296): nếu không phải `PENDING_HOLD` và không phải `CONFIRMED`, mã hiển thị cứng chữ "Hoàn tất".
+- **Kế hoạch triển khai đã chốt**:
+  - Tạo artifact kế hoạch chi tiết `staff_booking_filter_optimization_plan.md` và đã được người dùng phê duyệt ("Proceed").
+  - Đã thu thập và ghi nhận phản hồi lựa chọn của người dùng:
+    1. Vị trí "Tra cứu theo ngày": Giữ thanh tab thu nhỏ chỉ chứa 1 nút "Tra cứu theo ngày" (khi bấm vào mới mở ô chọn ngày như hiện tại).
+    2. Trạng thái loại bỏ khỏi "Sắp tới": Loại bỏ toàn bộ các đơn không còn chờ khách: Đã nhận bàn (`ARRIVED`), Đã thanh toán (`PAID`), Đã đánh giá (`REVIEWED`), Đã hủy (`CANCELLED`), Không đến (`NO_SHOW`) — chỉ giữ lại `PENDING_HOLD`, `PENDING_DEPOSIT` và `CONFIRMED`.
+    3. Thẻ đặt bàn (`StaffBookingCard`): Giữ nguyên chữ "Hoàn tất" màu xám như hiện tại cho các đơn đã qua bước check-in.
+    4. Thẻ "Đã đến nhận bàn hôm nay": Thêm tương tác click, viền active emerald, lọc đơn `ARRIVED` trong `today`.
+    5. Đơn "Chờ xác nhận" (`PENDING_HOLD`): Bổ sung nút "Hủy" bên trái nút "Xác nhận & Gán bàn" trên cả Dạng Thẻ (`StaffBookingCard`) và Dạng Bảng (`StaffBookingRow`).
+
+### Kết quả Triển khai & Kiểm chứng thực tế (Implementation & Verification)
+1. **Các tệp đã thay đổi**:
+   - `frontend/src/features/reservation/components/staff-booking-dashboard.tsx`:
+     - Bổ sung hằng số `EXCLUDED_FROM_UPCOMING_STATUSES = new Set(['ARRIVED', 'PAID', 'REVIEWED', 'CANCELLED', 'NO_SHOW'])`.
+     - Lọc sạch danh sách và cập nhật số đếm thẻ "Sắp tới" (`metrics.upcomingTotal`) loại bỏ các đơn không còn chờ khách.
+     - Nâng cấp thẻ thứ 4 thành "Đã đến nhận bàn hôm nay" tương tác bấm được (`cursor-pointer`), viền xanh sáng `ring-2 ring-emerald-500 bg-emerald-500/10` khi active, kích hoạt bộ lọc đơn `ARRIVED` trong `today`.
+     - Thẻ "Hôm nay" (`activeTab === 'today' && selectedStatus !== 'ARRIVED'`) hiển thị viền sáng `ring-2 ring-primary bg-primary/5` độc lập.
+     - Xóa 3 nút filter trùng lặp ("Cần xử lý ngay", "Hôm nay", "Sắp tới") trên Navigation Tabs Bar, giữ lại 1 nút "Tra cứu theo ngày".
+     - Bổ sung empty state thông báo rõ ràng khi chưa có khách nhận bàn hôm nay.
+   - `frontend/src/features/reservation/components/staff-booking-card.tsx`:
+     - Bổ sung nút "Hủy" (`variant="outline"`, `text-destructive`, `XCircle`) bên trái nút "Xác nhận & Gán bàn" cho các đơn chờ xác nhận (`PENDING_HOLD`).
+   - `frontend/src/features/reservation/components/staff-booking-row.tsx`:
+     - Bổ sung nút "Hủy" (`variant="ghost"`, `text-destructive`, `XCircle`) bên trái nút "Xác nhận & Gán bàn" cho các đơn chờ xác nhận (`PENDING_HOLD`) trong chế độ xem dạng Bảng.
+   - `frontend/src/features/reservation/__tests__/staff-booking-dashboard.test.tsx`:
+     - Bổ sung test kiểm tra nút Hủy của đơn pending trên cả `StaffBookingCard` và `StaffBookingRow`.
+     - Kiểm tra không còn nút tab trùng lặp dưới thanh bar.
+     - Kiểm tra click thẻ "Đã đến nhận bàn hôm nay" lọc chính xác đơn `ARRIVED`.
+     - Kiểm tra tab "Sắp tới" lọc bỏ các đơn `ARRIVED` và `CANCELLED`.
+2. **Kết quả kiểm thử tự động**:
+   - `staff-booking-dashboard.test.tsx`: **6/6 passed (100%)**.
+   - Toàn bộ `frontend/src/features/reservation`: **25/25 passed (100%)**.
+   - `npm run build --prefix frontend`: **Exit code 0**, hoàn tất build production sạch sẽ.
+3. **Commit & Push GitHub**:
+   - **Nhánh**: `feat/uc09-uc13-manage-reservation` (đã đồng bộ với `main`).
+   - **Commit**: `f2e4201 feat(reservation): optimize staff booking filters and add cancel button for pending reservations`.
+   - **Trạng thái**: Đã push thành công lên `origin/feat/uc09-uc13-manage-reservation`. Sẵn sàng tạo Pull Request vào `main`.
