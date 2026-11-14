@@ -153,23 +153,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={value}>
-      {/* `inert` chặn cả click lẫn bàn phím (Tab/Enter) vào trang khi tài khoản bị khóa. */}
-      <div className="contents" inert={locked}>
-        {children}
-      </div>
+      {children}
       {locked && <AccountLockedOverlay />}
     </Ctx.Provider>
   );
 }
 
+/**
+ * Màn hình loading che phần nội dung khi tài khoản bị khóa.
+ * - z-30 nằm DƯỚI header (`sticky z-40` ở mọi trang) → header vẫn bấm được, vd. để đăng xuất.
+ * - Gắn `inert` cho mọi `<main>` (kể cả trang mở sau đó) để chặn luôn thao tác bằng bàn phím.
+ */
 function AccountLockedOverlay() {
+  useEffect(() => {
+    const lockMains = () =>
+      document.querySelectorAll("main").forEach((main) => {
+        if (!main.inert) main.inert = true;
+      });
+    lockMains();
+    const observer = new MutationObserver(lockMains);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      document.querySelectorAll("main").forEach((main) => {
+        main.inert = false;
+      });
+    };
+  }, []);
+
   return (
     <div
-      role="alertdialog"
-      aria-modal="true"
+      role="status"
       aria-busy="true"
       aria-label={ACCOUNT_LOCKED_MESSAGE}
-      className="fixed inset-0 z-[9990] flex flex-col items-center justify-center gap-4 bg-background/80 px-4 text-center backdrop-blur-sm"
+      className="fixed inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-background/80 px-4 text-center backdrop-blur-sm"
     >
       <Loader2 className="h-10 w-10 animate-spin text-primary" aria-hidden />
       <p className="max-w-sm text-sm text-muted-foreground">{ACCOUNT_LOCKED_MESSAGE}</p>
