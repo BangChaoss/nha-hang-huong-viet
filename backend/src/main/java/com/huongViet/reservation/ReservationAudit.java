@@ -30,7 +30,7 @@ public class ReservationAudit {
     private String reservationId;
 
     @JdbcTypeCode(SqlTypes.CHAR)
-    @Column(name = "changed_by", nullable = false, length = 36, columnDefinition = "CHAR(36)")
+    @Column(name = "changed_by", nullable = true, length = 36, columnDefinition = "CHAR(36)")
     private String changedBy;
 
     @Enumerated(EnumType.STRING)

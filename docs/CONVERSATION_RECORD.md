@@ -609,3 +609,62 @@ Người dùng đã xác nhận các lựa chọn cụ thể:
    - **Nhánh**: `feat/uc09-uc13-manage-reservation` (đã đồng bộ với `main`).
    - **Commit**: `f2e4201 feat(reservation): optimize staff booking filters and add cancel button for pending reservations`.
    - **Trạng thái**: Đã push thành công lên `origin/feat/uc09-uc13-manage-reservation`. Sẵn sàng tạo Pull Request vào `main`.
+
+---
+
+## Phiên làm việc: Ẩn Nút Hủy Khi Tra Cứu Khách Vãng Lai Nếu Không Phải Chính Tài Khoản Đặt Bàn
+- **Thời gian**: 2026-11-15
+- **Nội dung yêu cầu**:
+  - Không hiển thị nút hủy khi tra cứu khách vãng lai nếu không phải là chính tài khoản của bản thân.
+  - Khắc phục tình trạng người dùng tra cứu đơn bằng SĐT + Mã đặt bàn nhưng không phải tài khoản chính chủ vẫn thấy nút "Hủy đặt bàn", khi bấm vào xác nhận thì bị thông báo lỗi hệ thống.
+- **Phân tích nguyên nhân & Mã nguồn**:
+  - Phía backend (`ReservationService.java`): Đã có cơ chế bảo vệ phân quyền, chỉ cho phép hủy khi `customerId != null && reservation.getCustomerId().equals(customerId)`.
+  - Phía frontend (`frontend/src/features/reservation/components/booking-history-list.tsx`):
+    - Tại Tab "Tra Cứu Khách Vãng Lai" (`guest`), hàm `guestResults.map` luôn truyền vô điều kiện `onCancelClick={handleOpenCancel}` cho component `BookingHistoryCard`.
+    - DTO `ReservationResponse` trước đó chưa có trường `customerId` để client nhận biết quyền sở hữu đơn đặt bàn.
+- **Giải pháp triển khai đã phê duyệt**:
+  1. **Backend DTO**:
+     - Bổ sung trường `String customerId` vào record `backend/src/main/java/com/huongViet/reservation/dto/ReservationResponse.java`.
+     - Cập nhật hàm factory `ReservationResponse.from(...)` để gán `reservation.getCustomerId()`.
+     - Duy trì đầy đủ các constructor overload cũ để đảm bảo 100% tương thích ngược (backward-compatibility).
+  2. **Frontend Type**:
+     - Bổ sung `customerId?: string | null;` vào interface `ReservationResponse` tại `frontend/src/features/reservation/types/reservation.types.ts`.
+  3. **Frontend Component**:
+     - Cập nhật `frontend/src/features/reservation/components/booking-history-list.tsx`:
+       Kiểm tra điều kiện quyền sở hữu:
+       `const isOwnBooking = Boolean(isAuthenticated && session?.id && booking.customerId && booking.customerId === session.id);`
+       Truyền `onCancelClick={isOwnBooking ? handleOpenCancel : undefined}`.
+       Khi `isOwnBooking === false` (khách chưa đăng nhập, hoặc đăng nhập tài khoản khác, hoặc đơn đặt dạng vãng lai không tài khoản), `BookingHistoryCard` sẽ tự động ẩn hoàn toàn nút "Hủy đặt bàn".
+     - Tab "Lịch Sử Của Tôi" (`member`) giữ nguyên logic `onCancelClick={handleOpenCancel}` hiển thị nút Hủy cho các đơn hợp lệ của bản thân.
+  4. **Kiểm thử tự động & Xác minh**:
+     - Thêm file test mới `frontend/src/features/reservation/__tests__/booking-history-list.test.tsx` kiểm thử 5 trường hợp:
+       1. Khách chưa đăng nhập: Tra cứu khách vãng lai -> **KHÔNG** hiển thị nút Hủy đặt bàn.
+       2. Đăng nhập User 1: Tra cứu đơn của User 2 -> **KHÔNG** hiển thị nút Hủy đặt bàn.
+       3. Đăng nhập User 1: Tra cứu đơn khách vãng lai không tài khoản -> **KHÔNG** hiển thị nút Hủy đặt bàn.
+       4. Đăng nhập User 1: Tra cứu đúng đơn của chính mình -> **CÓ** hiển thị nút Hủy đặt bàn.
+       5. Tab "Lịch Sử Của Tôi": Luôn hiển thị nút Hủy đặt bàn cho các đơn hợp lệ.
+     - Cập nhật helper `getTodayStr()` trong `staff-booking-dashboard.test.tsx` đồng bộ múi giờ địa phương.
+
+### Kết quả Triển khai & Kiểm chứng thực tế (Implementation & Verification)
+1. **Các tệp đã thay đổi**:
+   - `backend/src/main/java/com/huongViet/reservation/dto/ReservationResponse.java`: Bổ sung `customerId` và giữ constructor overload tương thích.
+   - `backend/src/main/java/com/huongViet/reservation/ReservationAudit.java`: Đổi `@Column(name = "changed_by", nullable = true)` cho phép null khi khách vãng lai tự hủy.
+   - `backend/src/main/java/com/huongViet/reservation/ReservationService.java`:
+     - Phân quyền hủy trong `cancelByCustomer`: đơn có `customerId` chỉ cho phép chính tài khoản đó hủy; đơn vãng lai (`customerId == null`) cho phép hủy khi đúng SĐT.
+     - Lưu `ReservationAudit` với `changed_by = null` và lý do ghi nhận `[Khách vãng lai]`, khắc phục triệt để lỗi vi phạm khóa ngoại CSDL (500).
+   - `database/schema.sql` & `backend/src/main/resources/schema.sql`: Cập nhật `changed_by CHAR(36) NULL` trong `reservation_audits`.
+   - `frontend/src/features/reservation/types/reservation.types.ts`: Bổ sung `customerId?: string | null`.
+   - `frontend/src/features/reservation/components/booking-history-list.tsx`:
+     - Cập nhật điều kiện `canCancelBooking`: cho phép hiển thị nút Hủy nếu là đơn khách vãng lai (`!booking.customerId`) HOẶC đơn của chính tài khoản đang đăng nhập (`booking.customerId === session.id`).
+     - Ẩn nút Hủy nếu đơn đó thuộc về tài khoản thành viên khác.
+   - `frontend/src/features/reservation/__tests__/booking-history-list.test.tsx`:
+     - Kiểm thử 5 kịch bản: khách vãng lai tự hủy đơn vãng lai (CÓ nút Hủy), khách tra cứu đơn của tài khoản thành viên khác (KHÔNG có nút Hủy), thành viên đăng nhập tra cứu đơn mình (CÓ nút Hủy), tab Lịch sử của tôi (CÓ nút Hủy).
+   - `backend/src/test/java/com/huongViet/reservation/ReservationServiceTest.java`:
+     - Bổ sung 2 test: khách vãng lai tự hủy đơn vãng lai thành công không vi phạm FK (Test 22); khách vãng lai/tài khoản khác cố tình hủy đơn thành viên bị chặn 403 Forbidden (Test 23).
+2. **Kết quả kiểm thử tự động**:
+   - `ReservationServiceTest#cancelByCustomer*`: **3/3 passed (100%)**.
+   - `booking-history-list.test.tsx`: **5/5 passed (100%)**.
+   - Toàn bộ `frontend/src/features/reservation`: **30/30 passed (100%)** qua 5 test suites.
+   - `mvn test-compile -f backend/pom.xml`: **BUILD SUCCESS**.
+   - `npm run build --prefix frontend`: **Exit code 0**, hoàn tất production build sạch sẽ.
+
