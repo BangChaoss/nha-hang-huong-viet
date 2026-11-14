@@ -73,7 +73,11 @@ export const authApi = {
     request<AuthResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
-      fallback: { 400: invalidInput, 401: "Thông tin đăng nhập không hợp lệ." },
+      fallback: {
+        400: invalidInput,
+        401: "Thông tin đăng nhập không hợp lệ.",
+        403: "Tài khoản của bạn đã bị khóa.",
+      },
     }),
   forgotPassword: (email: string) =>
     request<void>("/api/auth/forgot-password", {

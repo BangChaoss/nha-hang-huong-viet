@@ -7,7 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { authApi, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
+import { ACCOUNT_LOCKED_MESSAGE, watchAccountLock } from "@/lib/account-lock";
 import {
   getSession,
   setSession,
@@ -70,6 +73,23 @@ function isExpired(token: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const [ready, setReady] = useState(false);
+  const navigate = useNavigate();
+
+  // Admin khóa tài khoản khi người dùng đang đăng nhập → báo, xoá phiên và đưa về trang đăng nhập.
+  useEffect(
+    () =>
+      watchAccountLock(() => {
+        if (!getSession()) return; // đã xử lý bởi một response khác
+        setSession(null);
+        toast.error(ACCOUNT_LOCKED_MESSAGE, {
+          id: "account-locked",
+          description: "Vui lòng liên hệ quản lý nhà hàng để được hỗ trợ.",
+          duration: 10_000,
+        });
+        void navigate({ to: "/login", replace: true });
+      }),
+    [navigate],
+  );
 
   // Khôi phục phiên; nếu access token hết hạn thì xoay vòng bằng refresh token.
   useEffect(() => {

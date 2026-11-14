@@ -19,6 +19,7 @@ import java.util.UUID;
 
 @Service
 public class AuthService {
+    public static final String ACCOUNT_LOCKED_MESSAGE = "Tài khoản của bạn đã bị khóa.";
     private final UserRepository userRepository;
     private final PasswordResetTokenRepository tokenRepository;
     private final JwtService jwtService;
@@ -91,10 +92,14 @@ public class AuthService {
             ? userRepository.findByEmailAndDeletedAtIsNull(input.toLowerCase()).orElse(null)
             : userRepository.findByUsernameAndDeletedAtIsNull(input).orElse(null);
 
-        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+        if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
         }
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        // Chỉ báo "bị khóa" khi mật khẩu đúng, để không lộ trạng thái tài khoản cho người đoán mật khẩu.
+        if (User.STATUS_LOCKED.equals(user.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ACCOUNT_LOCKED_MESSAGE);
+        }
+        if (!"ACTIVE".equals(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
         }
 
