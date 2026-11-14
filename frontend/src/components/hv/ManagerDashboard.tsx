@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import {Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
+import {Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
    Trash2, Eye, Loader2, BarChart3, MessagesSquare,ArrowLeft, UtensilsCrossed,} from "lucide-react";
 import { toast } from "sonner";
 import { formatVND, useRestaurant } from "@/lib/restaurant-store";
@@ -68,7 +68,7 @@ export function ManagerDashboard({
   activeTab: controlledTab,
   onTabChange,
 }: ManagerDashboardProps = {}) {
-  const [internalTab, setInternalTab] = useState<ManagerTab>("overview");
+  const [internalTab, setInternalTab] = useState<ManagerTab>("reports");
   const activeTab = controlledTab ?? internalTab;
   const handleTabChange = (tab: ManagerTab) => {
     if (onTabChange) onTabChange(tab);
@@ -135,17 +135,8 @@ export function ManagerDashboard({
       );
   }, []);
 
-  const { transactions, dishes, tables } = useRestaurant();
-  const revenue = transactions.reduce((s, t) => s + t.total, 0);
-  const points = transactions.reduce((s, t) => s + t.points, 0);
-  const served = transactions.length + tables.filter((t) => t.status === "occupied").length;
+  const { dishes } = useRestaurant();
   const top = [...dishes].sort((a, b) => b.sold - a.sold).slice(0, 5);
-  const kpis = [
-    { l: "Doanh thu hôm nay", v: formatVND(revenue), i: Banknote },
-    { l: "Tổng số bàn phục vụ", v: String(served), i: Users },
-    { l: "Đơn hoàn tất", v: String(transactions.length), i: CheckCircle2 },
-    { l: "Điểm tích luỹ đã phát", v: formatVND(points), i: Award },
-  ];
 
   return (
     <div className="space-y-6">
@@ -716,17 +707,6 @@ export function ManagerDashboard({
 
       {activeTab === "overview" && (
         <>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {kpis.map((k) => (
-              <div key={k.l} className="surface-card p-5">
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-sm">{k.l}</span>
-                  <k.i className="h-4 w-4" />
-                </div>
-                <p className="mt-3 text-2xl font-semibold tabular-nums">{k.v}</p>
-              </div>
-            ))}
-          </div>
           <MenuManagement />
           <div>
             <div className="surface-card p-5">
