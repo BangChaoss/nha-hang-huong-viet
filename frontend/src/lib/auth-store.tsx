@@ -4,10 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { authApi, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
 import { ACCOUNT_LOCKED_MESSAGE, watchAccountLock } from "@/lib/account-lock";
@@ -73,22 +74,36 @@ function isExpired(token: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const [ready, setReady] = useState(false);
-  const navigate = useNavigate();
+  // Token của phiên đang bị khóa. Gắn với token nên tự hết hiệu lực khi phiên thay đổi.
+  const [lockedToken, setLockedToken] = useState<string | null>(null);
+  const lockedTokenRef = useRef<string | null>(null);
+  const locked = !!session && session.token === lockedToken;
 
-  // Admin khóa tài khoản khi người dùng đang đăng nhập → báo, xoá phiên và đưa về trang đăng nhập.
+  // Admin khóa tài khoản khi người dùng đang đăng nhập → KHÔNG tự đăng xuất, mà che toàn bộ trang
+  // bằng màn hình loading (không thao tác được) và báo một lần cho mỗi phiên.
+  // Khi admin mở khóa, lần kiểm tra kế tiếp thành công sẽ gỡ màn hình che.
   useEffect(
     () =>
-      watchAccountLock(() => {
-        if (!getSession()) return; // đã xử lý bởi một response khác
-        setSession(null);
-        toast.error(ACCOUNT_LOCKED_MESSAGE, {
-          id: "account-locked",
-          description: "Vui lòng liên hệ quản lý nhà hàng để được hỗ trợ.",
-          duration: 10_000,
-        });
-        void navigate({ to: "/login", replace: true });
-      }),
-    [navigate],
+      watchAccountLock(
+        () => {
+          const token = getSession()?.token ?? null;
+          if (!token || lockedTokenRef.current === token) return;
+          lockedTokenRef.current = token;
+          setLockedToken(token);
+          toast.error(ACCOUNT_LOCKED_MESSAGE, {
+            id: "account-locked",
+            duration: Infinity,
+            closeButton: true,
+          });
+        },
+        () => {
+          if (!lockedTokenRef.current) return;
+          lockedTokenRef.current = null;
+          setLockedToken(null);
+          toast.dismiss("account-locked");
+        },
+      ),
+    [],
   );
 
   // Khôi phục phiên; nếu access token hết hạn thì xoay vòng bằng refresh token.
@@ -136,7 +151,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session, user, ready, login, register, logout],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      {/* `inert` chặn cả click lẫn bàn phím (Tab/Enter) vào trang khi tài khoản bị khóa. */}
+      <div className="contents" inert={locked}>
+        {children}
+      </div>
+      {locked && <AccountLockedOverlay />}
+    </Ctx.Provider>
+  );
+}
+
+function AccountLockedOverlay() {
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-busy="true"
+      aria-label={ACCOUNT_LOCKED_MESSAGE}
+      className="fixed inset-0 z-[9990] flex flex-col items-center justify-center gap-4 bg-background/80 px-4 text-center backdrop-blur-sm"
+    >
+      <Loader2 className="h-10 w-10 animate-spin text-primary" aria-hidden />
+      <p className="max-w-sm text-sm text-muted-foreground">{ACCOUNT_LOCKED_MESSAGE}</p>
+    </div>
+  );
 }
 
 export function useAuth() {

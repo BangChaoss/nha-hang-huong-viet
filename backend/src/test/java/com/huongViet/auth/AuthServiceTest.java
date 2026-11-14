@@ -114,7 +114,7 @@ class AuthServiceTest {
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> authService.login(req));
         assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
-        assertEquals("Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để được giúp đỡ.", ex.getReason());
+        assertEquals("Tài khoản của bạn đã bị khóa", ex.getReason());
     }
 
     @Test

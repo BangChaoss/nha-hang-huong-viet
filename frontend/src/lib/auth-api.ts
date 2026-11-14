@@ -76,7 +76,7 @@ export const authApi = {
       fallback: {
         400: invalidInput,
         401: "Thông tin đăng nhập không hợp lệ.",
-        403: "Tài khoản của bạn đã bị khóa.",
+        403: "Tài khoản của bạn đã bị khóa",
       },
     }),
   forgotPassword: (email: string) =>

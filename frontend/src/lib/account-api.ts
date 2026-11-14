@@ -1,5 +1,6 @@
 import { getSession, setSession, updateSession, type AuthSession } from "@/lib/auth-session";
 import type { AppRole } from "@/lib/role-routing";
+import { isAccountLockedResponse } from "@/lib/account-lock";
 
 export type UserStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
 export type StaffRole = Exclude<AppRole, "CUSTOMER">;
@@ -70,7 +71,9 @@ async function toApiError(response: Response): Promise<ApiError> {
   } catch {
     /* response may have no JSON body */
   }
-  if (response.status === 401) message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+  if (response.status === 401 && !isAccountLockedResponse(response)) {
+    message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+  }
   return new ApiError(message, response.status, fieldErrors);
 }
 
@@ -113,7 +116,8 @@ async function authRequest<T>(path: string, init: RequestInit = {}, retried = fa
       ...(init.headers ?? {}),
     },
   });
-  if (response.status === 401 && session && !retried) {
+  // Tài khoản bị khóa: không refresh, không xoá phiên — chỉ báo lỗi (thông báo do AuthProvider hiển thị).
+  if (response.status === 401 && session && !retried && !isAccountLockedResponse(response)) {
     if (await tryRefresh(session)) return authRequest<T>(path, init, true);
     setSession(null);
   }
