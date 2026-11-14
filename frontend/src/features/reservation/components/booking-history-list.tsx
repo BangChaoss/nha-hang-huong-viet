@@ -201,14 +201,23 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
 
               {guestResults.length > 0 ? (
                 <div className="space-y-3">
-                  {guestResults.map((booking) => (
-                    <BookingHistoryCard
-                      key={booking.id}
-                      booking={booking}
-                      onCancelClick={handleOpenCancel}
-                      onLeaveFeedback={onLeaveFeedback}
-                    />
-                  ))}
+                  {guestResults.map((booking) => {
+                    // Cho phép hủy nếu:
+                    // 1. Đơn của khách vãng lai (không gắn tài khoản thành viên: !booking.customerId)
+                    // 2. HOẶC đơn thuộc về chính tài khoản đang đăng nhập
+                    const canCancelBooking = Boolean(
+                      !booking.customerId ||
+                      (isAuthenticated && session?.id && booking.customerId === session.id)
+                    );
+                    return (
+                      <BookingHistoryCard
+                        key={booking.id}
+                        booking={booking}
+                        onCancelClick={canCancelBooking ? handleOpenCancel : undefined}
+                        onLeaveFeedback={onLeaveFeedback}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">

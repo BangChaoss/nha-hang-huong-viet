@@ -12,6 +12,7 @@ import java.time.LocalTime;
 
 public record ReservationResponse(
     String id,
+    String customerId,
     String guestName,
     String guestPhone,
     String guestEmail,
@@ -50,8 +51,34 @@ public record ReservationResponse(
         String cancellationReason,
         LocalDateTime createdAt
     ) {
-        this(id, guestName, guestPhone, guestEmail, partySize, reservationDate, reservationTime,
+        this(id, null, guestName, guestPhone, guestEmail, partySize, reservationDate, reservationTime,
              specialRequests, status, zoneId, zoneName, zoneIsVip, tableId, tableNumber, null,
+             depositAmount, cancellationReason, createdAt);
+    }
+
+    // Backward-compatible constructor without customerId but with mergedTableIds
+    public ReservationResponse(
+        String id,
+        String guestName,
+        String guestPhone,
+        String guestEmail,
+        Integer partySize,
+        LocalDate reservationDate,
+        LocalTime reservationTime,
+        String specialRequests,
+        ReservationStatus status,
+        String zoneId,
+        String zoneName,
+        Boolean zoneIsVip,
+        String tableId,
+        String tableNumber,
+        String mergedTableIds,
+        BigDecimal depositAmount,
+        String cancellationReason,
+        LocalDateTime createdAt
+    ) {
+        this(id, null, guestName, guestPhone, guestEmail, partySize, reservationDate, reservationTime,
+             specialRequests, status, zoneId, zoneName, zoneIsVip, tableId, tableNumber, mergedTableIds,
              depositAmount, cancellationReason, createdAt);
     }
 
@@ -93,6 +120,7 @@ public record ReservationResponse(
 
         return new ReservationResponse(
             reservation.getId(),
+            reservation.getCustomerId(),
             reservation.getGuestName(),
             reservation.getGuestPhone(),
             reservation.getGuestEmail(),

@@ -7,6 +7,11 @@ import { StaffBookingDashboard } from "../components/staff-booking-dashboard";
 import { Table, TableBody } from "@/components/ui/table";
 import type { ReservationResponse } from "../types/reservation.types";
 
+const getTodayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const mockPendingBooking: ReservationResponse = {
   id: "24589d89-9830-4e3e-86fe-2b23ba4c767f",
   guestName: "Nguyễn Văn A",
@@ -32,7 +37,7 @@ const mockConfirmedBooking: ReservationResponse = {
   guestPhone: "0988776655",
   guestEmail: "thib@gmail.com",
   partySize: 2,
-  reservationDate: new Date().toISOString().slice(0, 10),
+  reservationDate: getTodayStr(),
   reservationTime: "19:00:00",
   status: "CONFIRMED",
   zoneId: "zone-2",
@@ -50,7 +55,7 @@ const mockArrivedBooking: ReservationResponse = {
   guestPhone: "0911223344",
   guestEmail: "vanc@gmail.com",
   partySize: 3,
-  reservationDate: new Date().toISOString().slice(0, 10),
+  reservationDate: getTodayStr(),
   reservationTime: "19:30:00",
   status: "ARRIVED",
   zoneId: "zone-1",
