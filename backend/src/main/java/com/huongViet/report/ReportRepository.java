@@ -161,14 +161,16 @@ public class ReportRepository {
         long cancelled = statusCounts.getOrDefault("CANCELLED", 0L);
         long noShow = statusCounts.getOrDefault("NO_SHOW", 0L);
         long pending = statusCounts.getOrDefault("PENDING_HOLD", 0L) + statusCounts.getOrDefault("PENDING_DEPOSIT", 0L);
+        long paid = statusCounts.getOrDefault("PAID", 0L) + statusCounts.getOrDefault("REVIEWED", 0L);
 
-        long total = arrived + confirmed + cancelled + noShow + pending;
+        long total = arrived + confirmed + cancelled + noShow + pending + paid;
         if (total == 0L) {
             return ReservationStatsResponse.empty();
         }
 
-        double completionRate = Math.round((arrived * 100.0 / total) * 10.0) / 10.0;
+        double completionRate = Math.round(((arrived + paid) * 100.0 / total) * 10.0) / 10.0;
         double cancellationRate = Math.round((cancelled * 100.0 / total) * 10.0) / 10.0;
+        double paidRate = Math.round((paid * 100.0 / total) * 10.0) / 10.0;
 
         return new ReservationStatsResponse(
             total,
@@ -177,8 +179,10 @@ public class ReportRepository {
             cancelled,
             noShow,
             pending,
+            paid,
             completionRate,
-            cancellationRate
+            cancellationRate,
+            paidRate
         );
     }
 

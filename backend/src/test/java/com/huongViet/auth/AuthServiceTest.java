@@ -104,6 +104,20 @@ class AuthServiceTest {
     }
 
     @Test
+    @DisplayName("login should throw FORBIDDEN with locked account message when user is LOCKED")
+    void testLoginLockedUser() {
+        LoginRequest req = new LoginRequest("lockeduser", "anyPassword");
+        User user = new User("uid-2", "lockeduser", "locked@example.com", "0912345679", "hashedPw", UserRole.CUSTOMER);
+        user.setStatus("LOCKED");
+
+        when(userRepository.findByUsernameAndDeletedAtIsNull("lockeduser")).thenReturn(Optional.of(user));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> authService.login(req));
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+        assertEquals("Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để được giúp đỡ.", ex.getReason());
+    }
+
+    @Test
     @DisplayName("resetPassword should update password and mark token used")
     void testResetPasswordSuccess() {
         ResetPasswordRequest req = new ResetPasswordRequest("my-token", "newPassword123");
