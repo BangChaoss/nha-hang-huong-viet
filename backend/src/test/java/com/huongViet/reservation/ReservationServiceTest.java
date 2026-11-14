@@ -27,6 +27,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -663,5 +664,60 @@ class ReservationServiceTest {
             eq("Tôi có việc bận gia đình"),
             any()
         );
+    }
+
+    @Test
+    @DisplayName("22. cancelByCustomer_guestCancelsOwnWalkInBooking_success - Khách vãng lai tự hủy đơn của chính mình thành công")
+    void cancelByCustomer_guestCancelsOwnWalkInBooking_success() {
+        Reservation guestReservation = new Reservation(
+            "res-guest-cancel", null, "Khách Vãng Lai", "0987654321", "guest@example.com", 2,
+            LocalDate.now().plusDays(2), LocalTime.of(19, 0), null, "zone-1"
+        );
+        guestReservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-guest-cancel"))
+            .thenReturn(Optional.of(guestReservation));
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        CancelReservationRequest req = new CancelReservationRequest("Thay đổi kế hoạch", "0987654321");
+
+        ReservationResponse response = reservationService.cancelByCustomer("res-guest-cancel", null, req);
+        assertNotNull(response);
+        assertEquals(ReservationStatus.CANCELLED, response.status());
+        assertEquals("Thay đổi kế hoạch", response.cancellationReason());
+
+        // Xác nhận lưu ReservationAudit với changedBy = null để không vi phạm FK
+        verify(reservationAuditRepository, times(1)).save(argThat(audit ->
+            audit.getChangedBy() == null &&
+            audit.getReason().contains("[Khách vãng lai]")
+        ));
+    }
+
+    @Test
+    @DisplayName("23. cancelByCustomer_guestAttemptsToCancelMemberBooking_throwsForbidden - Khách không thể hủy đơn của tài khoản thành viên khác")
+    void cancelByCustomer_guestAttemptsToCancelMemberBooking_throwsForbidden() {
+        Reservation memberReservation = new Reservation(
+            "res-member-booking", "cust-owner", "Chủ tài khoản", "0987654321", "owner@example.com", 2,
+            LocalDate.now().plusDays(2), LocalTime.of(19, 0), null, "zone-1"
+        );
+        memberReservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-member-booking"))
+            .thenReturn(Optional.of(memberReservation));
+
+        CancelReservationRequest req = new CancelReservationRequest("Hủy đơn", "0987654321");
+
+        // Gọi từ khách chưa đăng nhập (customerId = null)
+        ResponseStatusException ex1 = assertThrows(ResponseStatusException.class, () ->
+            reservationService.cancelByCustomer("res-member-booking", null, req)
+        );
+        assertEquals(HttpStatus.FORBIDDEN, ex1.getStatusCode());
+
+        // Hoặc gọi từ tài khoản khác (customerId = "cust-other")
+        ResponseStatusException ex2 = assertThrows(ResponseStatusException.class, () ->
+            reservationService.cancelByCustomer("res-member-booking", "cust-other", req)
+        );
+        assertEquals(HttpStatus.FORBIDDEN, ex2.getStatusCode());
     }
 }

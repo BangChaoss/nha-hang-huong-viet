@@ -441,14 +441,23 @@ public class ReservationService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
 
         boolean isAuthorized = false;
-        String actor = "CUSTOMER";
-        if (customerId != null && reservation.getCustomerId() != null && reservation.getCustomerId().equals(customerId)) {
-            isAuthorized = true;
-            actor = customerId;
-        } else if (request != null && request.phone() != null && !request.phone().isBlank()) {
-            if (request.phone().trim().equals(reservation.getGuestPhone())) {
+        String actor = null;
+        boolean isGuest = false;
+
+        if (reservation.getCustomerId() != null) {
+            // Đơn thuộc tài khoản thành viên: Bắt buộc phải là chính tài khoản đó hủy
+            if (customerId != null && reservation.getCustomerId().equals(customerId)) {
                 isAuthorized = true;
-                actor = "GUEST:" + reservation.getGuestPhone();
+                actor = customerId;
+            }
+        } else {
+            // Đơn của khách vãng lai: Cho phép hủy khi cung cấp chính xác số điện thoại đặt bàn
+            if (request != null && request.phone() != null && !request.phone().isBlank()) {
+                if (request.phone().trim().equals(reservation.getGuestPhone())) {
+                    isAuthorized = true;
+                    isGuest = true;
+                    actor = null; // null để tránh vi phạm khóa ngoại fk_res_audit_user (users.id)
+                }
             }
         }
 
@@ -484,7 +493,7 @@ public class ReservationService {
 
         ReservationAudit audit = new ReservationAudit(
             UUID.randomUUID().toString(), saved.getId(), actor, oldStatus, ReservationStatus.CANCELLED,
-            reservation.getTableId(), null, reason
+            reservation.getTableId(), null, isGuest ? ("[Khách vãng lai] " + reason) : reason
         );
         reservationAuditRepository.save(audit);
 

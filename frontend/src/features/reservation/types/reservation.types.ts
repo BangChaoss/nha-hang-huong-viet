@@ -21,6 +21,7 @@ export interface CreateReservationRequest {
 
 export interface ReservationResponse {
   id: string;
+  customerId?: string | null;
   guestName: string;
   guestPhone: string;
   guestEmail?: string | null;
