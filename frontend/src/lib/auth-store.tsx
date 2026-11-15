@@ -4,10 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { authApi, type AuthUser, type LoginPayload, type RegisterPayload } from "@/lib/auth-api";
+import { ACCOUNT_LOCKED_MESSAGE, watchAccountLock } from "@/lib/account-lock";
 import {
   getSession,
   setSession,
@@ -70,6 +74,37 @@ function isExpired(token: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const [ready, setReady] = useState(false);
+  // Token của phiên đang bị khóa. Gắn với token nên tự hết hiệu lực khi phiên thay đổi.
+  const [lockedToken, setLockedToken] = useState<string | null>(null);
+  const lockedTokenRef = useRef<string | null>(null);
+  const locked = !!session && session.token === lockedToken;
+
+  // Admin khóa tài khoản khi người dùng đang đăng nhập → KHÔNG tự đăng xuất, mà che toàn bộ trang
+  // bằng màn hình loading (không thao tác được) và báo một lần cho mỗi phiên.
+  // Khi admin mở khóa, lần kiểm tra kế tiếp thành công sẽ gỡ màn hình che.
+  useEffect(
+    () =>
+      watchAccountLock(
+        () => {
+          const token = getSession()?.token ?? null;
+          if (!token || lockedTokenRef.current === token) return;
+          lockedTokenRef.current = token;
+          setLockedToken(token);
+          toast.error(ACCOUNT_LOCKED_MESSAGE, {
+            id: "account-locked",
+            duration: Infinity,
+            closeButton: true,
+          });
+        },
+        () => {
+          if (!lockedTokenRef.current) return;
+          lockedTokenRef.current = null;
+          setLockedToken(null);
+          toast.dismiss("account-locked");
+        },
+      ),
+    [],
+  );
 
   // Khôi phục phiên; nếu access token hết hạn thì xoay vòng bằng refresh token.
   useEffect(() => {
@@ -116,7 +151,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session, user, ready, login, register, logout],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      {locked && <AccountLockedOverlay />}
+    </Ctx.Provider>
+  );
+}
+
+/**
+ * Màn hình loading che phần nội dung khi tài khoản bị khóa.
+ * - z-30 nằm DƯỚI header (`sticky z-40` ở mọi trang) → header vẫn bấm được, vd. để đăng xuất.
+ * - Gắn `inert` cho mọi `<main>` (kể cả trang mở sau đó) để chặn luôn thao tác bằng bàn phím.
+ */
+function AccountLockedOverlay() {
+  useEffect(() => {
+    const lockMains = () =>
+      document.querySelectorAll("main").forEach((main) => {
+        if (!main.inert) main.inert = true;
+      });
+    lockMains();
+    const observer = new MutationObserver(lockMains);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      document.querySelectorAll("main").forEach((main) => {
+        main.inert = false;
+      });
+    };
+  }, []);
+
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label={ACCOUNT_LOCKED_MESSAGE}
+      className="fixed inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-background/80 px-4 text-center backdrop-blur-sm"
+    >
+      <Loader2 className="h-10 w-10 animate-spin text-primary" aria-hidden />
+      <p className="max-w-sm text-sm text-muted-foreground">{ACCOUNT_LOCKED_MESSAGE}</p>
+    </div>
+  );
 }
 
 export function useAuth() {

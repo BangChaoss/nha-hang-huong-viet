@@ -337,10 +337,53 @@ public class OrderService {
             if (!ids.isEmpty()) voucherId = ids.get(0);
         }
 
+        LocalDate today = LocalDate.now();
+        List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(today);
+        Set<String> relatedSet = new HashSet<>(relatedTableIds);
+        Reservation matchingReservation = null;
+
+        for (Reservation r : activeReservations) {
+            boolean matchesPrimary = r.getTableId() != null && relatedSet.contains(r.getTableId());
+            boolean matchesMerged = false;
+            if (r.getMergedTableIds() != null && !r.getMergedTableIds().isBlank()) {
+                List<String> mergedList = Arrays.stream(r.getMergedTableIds().split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+                matchesMerged = mergedList.stream().anyMatch(relatedSet::contains);
+            }
+
+            if (matchesPrimary || matchesMerged) {
+                if (matchingReservation == null) {
+                    matchingReservation = r;
+                }
+                // Chuyển trạng thái đơn bàn sang PAID (Đã thanh toán)
+                if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                    r.setStatus(ReservationStatus.PAID);
+                }
+                reservationRepository.save(r);
+            }
+        }
+
+        String actualCustomerId = null;
+        String actualCustomerPhone = null;
+        if (matchingReservation != null) {
+            // 1. Có đặt bàn trước: Ưu tiên danh tính người đặt bàn (Tiêu chí 1 & Tiêu chí 3)
+            actualCustomerId = matchingReservation.getCustomerId();
+            actualCustomerPhone = matchingReservation.getGuestPhone();
+            if ((actualCustomerId == null || actualCustomerId.isBlank()) && actualCustomerPhone != null && !actualCustomerPhone.isBlank()) {
+                actualCustomerId = findCustomerIdByPhone(actualCustomerPhone);
+            }
+        } else if (!phone.isBlank()) {
+            // 2. Không đặt bàn trước (Khách vãng lai): Dùng SĐT thanh toán để định danh & cấp quyền đánh giá (Tiêu chí 2)
+            actualCustomerPhone = phone;
+            actualCustomerId = findCustomerIdByPhone(phone);
+        }
+
         String effectiveStaffId = (staffId != null && !staffId.isBlank()) ? staffId : SystemUserInitializer.SYSTEM_USER_ID;
 
         String voucherInvoiceId = createCheckoutInvoices(
-                openOrders, phone, voucherId, voucherCode, discount, pointsDiscountAmount, pointsAwarded, effectiveStaffId
+                openOrders, actualCustomerId, actualCustomerPhone, phone, voucherId, voucherCode, discount, pointsDiscountAmount, pointsAwarded, effectiveStaffId
         );
 
         if (!voucherCode.isBlank()) {
@@ -376,30 +419,6 @@ public class OrderService {
             });
         }
 
-        LocalDate today = LocalDate.now();
-        List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(today);
-        Set<String> relatedSet = new HashSet<>(relatedTableIds);
-
-        for (Reservation r : activeReservations) {
-            boolean matchesPrimary = r.getTableId() != null && relatedSet.contains(r.getTableId());
-            boolean matchesMerged = false;
-            if (r.getMergedTableIds() != null && !r.getMergedTableIds().isBlank()) {
-                List<String> mergedList = Arrays.stream(r.getMergedTableIds().split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .collect(Collectors.toList());
-                matchesMerged = mergedList.stream().anyMatch(relatedSet::contains);
-            }
-
-            if (matchesPrimary || matchesMerged) {
-                // Chuyển trạng thái đơn bàn sang PAID (Đã thanh toán)
-                if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
-                    r.setStatus(ReservationStatus.PAID);
-                }
-                reservationRepository.save(r);
-            }
-        }
-
         String displayTableNumber = resolveDisplayTableNumber(tableId);
 
         return new CashCheckoutResponse(
@@ -407,13 +426,14 @@ public class OrderService {
         );
     }
 
-    private String createCheckoutInvoices(List<Order> orders, String phone, String voucherId,
+    private String createCheckoutInvoices(List<Order> orders, String customerId, String customerPhone,
+                                          String loyaltyPhone, String voucherId,
                                           String voucherCode, BigDecimal voucherDiscount,
                                           BigDecimal pointsDiscountAmount, BigDecimal pointsAwarded,
                                           String staffId) {
         String voucherInvoiceId = null;
         boolean first = true;
-        String customerId = findCustomerIdByPhone(phone);
+        String effectiveLoyaltyPhone = (loyaltyPhone != null && !loyaltyPhone.isBlank()) ? loyaltyPhone : null;
         for (Order order : orders) {
             List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
                     .filter(i -> i.getCookingStatus() != CookingStatus.CANCELLED)
@@ -434,19 +454,19 @@ public class OrderService {
             int earned = first ? pointsAwarded.setScale(0, RoundingMode.DOWN).intValue() : 0;
 
             try {
+                jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, loyalty_phone, voucher_id, " +
+                        "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, effectiveLoyaltyPhone, currentVoucherId,
+                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
+                tax, finalAmount, earned);
+            } catch (Exception ex) {
                 jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, voucher_id, " +
                         "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
                         "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                invoiceId, invoiceCode, order.getId(), customerId, staffId, phone, currentVoucherId,
-                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
-                tax, finalAmount, earned);
-            } catch (Exception ex) {
-                jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, voucher_id, " +
-                        "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
-                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                invoiceId, invoiceCode, order.getId(), customerId, staffId, currentVoucherId,
+                invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, currentVoucherId,
                 currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
                 tax, finalAmount, earned);
             }

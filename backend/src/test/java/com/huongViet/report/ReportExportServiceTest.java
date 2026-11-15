@@ -48,7 +48,7 @@ class ReportExportServiceTest {
                 BigDecimal.ZERO
             ),
             List.of(new RevenueTimelinePoint("12:00", BigDecimal.valueOf(1250000), 4L)),
-            new ReservationStatsResponse(5L, 4L, 1L, 0L, 0L, 0L, 80.0, 0.0),
+            new ReservationStatsResponse(5L, 4L, 1L, 0L, 0L, 0L, 3L, 80.0, 0.0, 60.0),
             List.of(new DishSalesItemResponse("dish-1", "Phở Bò Đặc Biệt", "Món chính", 8L, BigDecimal.valueOf(720000), 57.6))
         );
 
@@ -67,6 +67,7 @@ class ReportExportServiceTest {
         assertTrue(content.contains("Phở Bò Đặc Biệt"));
         assertTrue(content.contains("1,250,000"));
         assertTrue(content.contains("VNPay"));
+        assertTrue(content.contains("Đã thanh toán (PAID)"));
     }
 }
 

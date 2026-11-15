@@ -29,6 +29,8 @@ public class User {
     @Column(nullable = false)
     private UserRole role = UserRole.CUSTOMER;
 
+    public static final String STATUS_LOCKED = "LOCKED";
+
     @Column(nullable = false, length = 20)
     private String status = "ACTIVE";
 

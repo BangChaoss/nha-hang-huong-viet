@@ -69,6 +69,7 @@ public class ReportExportService {
                 writer.println("Giá trị trung bình đơn (AOV)," + formatNumber(rev.averageOrderValue()) + ",VNĐ/đơn");
                 writer.println("Tổng số lượt đặt bàn," + res.totalBookings() + ",Lượt");
                 writer.println("Khách đã đến dùng bữa (ARRIVED)," + res.arrivedCount() + ",Lượt (" + PERCENT_FORMAT.format(res.completionRate()) + "%)");
+                writer.println("Đã thanh toán (PAID)," + res.paidCount() + ",Lượt (" + PERCENT_FORMAT.format(res.paidRate()) + "%)");
                 writer.println("Lượt đặt bàn đã xác nhận (CONFIRMED)," + res.confirmedCount() + ",Lượt");
                 writer.println("Lượt hủy bàn (CANCELLED)," + res.cancelledCount() + ",Lượt (" + PERCENT_FORMAT.format(res.cancellationRate()) + "%)");
                 writer.println("Khách không đến (NO SHOW)," + res.noShowCount() + ",Lượt");

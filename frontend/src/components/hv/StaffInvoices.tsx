@@ -49,6 +49,7 @@ export function StaffInvoices() {
         inv.invoiceCode.toLowerCase().includes(q) ||
         inv.tableNumber.toLowerCase().includes(q) ||
         (inv.customerPhone && inv.customerPhone.includes(q)) ||
+        (inv.loyaltyPhone && inv.loyaltyPhone.includes(q)) ||
         (inv.voucherCode && inv.voucherCode.toLowerCase().includes(q))
     );
   }, [query.data, search]);
@@ -259,10 +260,24 @@ export function StaffInvoices() {
                     <td className="py-3 px-3 font-medium">{inv.tableNumber}</td>
                     <td className="py-3 px-3 text-xs font-mono">
                       {inv.customerPhone ? (
-                        <span className="flex items-center gap-1 text-foreground">
-                          <Phone className="h-3 w-3 text-muted-foreground" />
-                          {inv.customerPhone}
-                        </span>
+                        <div className="space-y-0.5">
+                          <span className="flex items-center gap-1 text-foreground">
+                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            {inv.customerPhone}
+                          </span>
+                          {inv.loyaltyPhone && inv.loyaltyPhone !== inv.customerPhone && (
+                            <span className="text-[10px] text-amber-700 block">
+                              Tích: {inv.loyaltyPhone}
+                            </span>
+                          )}
+                        </div>
+                      ) : inv.loyaltyPhone ? (
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground italic">Khách vãng lai</span>
+                          <span className="text-[10px] text-amber-700 block">
+                            Tích: {inv.loyaltyPhone}
+                          </span>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground italic">Khách vãng lai</span>
                       )}
@@ -346,8 +361,13 @@ export function StaffInvoices() {
                     Giờ: {previewInvoice.paidAt ? new Date(previewInvoice.paidAt).toLocaleString("vi-VN") : "—"}
                   </p>
                   <p className="text-right">
-                    SĐT tích điểm: <strong className="text-zinc-900 font-mono">{previewInvoice.customerPhone || "Khách vãng lai"}</strong>
+                    Khách: <strong className="text-zinc-900 font-mono">{previewInvoice.customerPhone || "Khách vãng lai"}</strong>
                   </p>
+                  {previewInvoice.loyaltyPhone && (
+                    <p className="col-span-2 text-right text-[10px] text-amber-800">
+                      SĐT tích điểm: <strong className="font-mono">{previewInvoice.loyaltyPhone}</strong>
+                    </p>
+                  )}
                 </div>
 
                 {/* Bảng món */}
@@ -405,7 +425,7 @@ export function StaffInvoices() {
                 {/* Điểm thưởng & Số điện thoại nhận điểm */}
                 {previewInvoice.loyaltyPointsEarned > 0 && (
                   <div className="rounded bg-amber-50 p-2 text-center text-[10px] text-amber-900">
-                    ✨ Quý khách ({previewInvoice.customerPhone || "SĐT thành viên"}) được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
+                    ✨ Quý khách ({previewInvoice.loyaltyPhone || previewInvoice.customerPhone || "SĐT thành viên"}) được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
                   </div>
                 )}
 
