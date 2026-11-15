@@ -160,14 +160,14 @@ public class FeedbackService {
                 } catch (Exception ignored) {}
             }
 
-            if (invoiceCustomerId != null && !matchId && !matchPhone && !matchReservationOrVoucher) {
+            if (!matchId && !matchPhone && !matchReservationOrVoucher) {
                 throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
                     "Bạn không có quyền đánh giá hóa đơn của khách hàng khác."
                 );
             }
 
-            // Gắn chặt customer_id vào invoice nếu trước đó bị null
+            // Gắn chặt customer_id vào invoice nếu trước đó bị null nhưng người dùng đã xác thực quyền sở hữu hợp lệ
             if (invoiceCustomerId == null) {
                 try {
                     jdbcTemplate.update("UPDATE invoices SET customer_id = ? WHERE id = ?", currentCustomer.getId(), invoiceId);

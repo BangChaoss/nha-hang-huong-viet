@@ -454,6 +454,7 @@ CREATE TABLE invoices (
     customer_id CHAR(36) NULL,
     staff_id CHAR(36) NOT NULL,
     customer_phone VARCHAR(20) DEFAULT NULL,
+    loyalty_phone VARCHAR(20) DEFAULT NULL,
     voucher_id CHAR(36) NULL,
     voucher_code_snapshot VARCHAR(50) NULL,
     voucher_discount_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,

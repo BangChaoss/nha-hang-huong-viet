@@ -36,7 +36,8 @@ public class InvoiceService {
 
         String sql = """
             SELECT i.id, i.invoice_code, i.order_id, i.staff_id,
-                   COALESCE(i.customer_phone, u.phone_number, vu.customer_phone, '') AS customer_phone,
+                   COALESCE(i.customer_phone, u.phone_number, '') AS customer_phone,
+                   COALESCE(i.loyalty_phone, '') AS loyalty_phone,
                    i.voucher_code_snapshot, i.voucher_discount_amount, i.subtotal_amount, i.discount_amount,
                    i.tax_amount, i.final_amount, i.loyalty_points_earned, i.status,
                    COALESCE(i.paid_at, i.created_at) AS paid_at,
@@ -45,7 +46,6 @@ public class InvoiceService {
             LEFT JOIN orders o ON i.order_id = o.id
             LEFT JOIN restaurant_tables t ON o.table_id = t.id
             LEFT JOIN users u ON i.customer_id = u.id
-            LEFT JOIN voucher_usages vu ON vu.invoice_id = i.id
             WHERE i.status = 'PAID'
               AND COALESCE(i.paid_at, i.created_at) >= ?
               AND COALESCE(i.paid_at, i.created_at) < ?
@@ -63,6 +63,7 @@ public class InvoiceService {
                 rs.getString("table_number"),
                 rs.getString("staff_id"),
                 rs.getString("customer_phone"),
+                rs.getString("loyalty_phone"),
                 rs.getString("voucher_code_snapshot"),
                 rs.getBigDecimal("voucher_discount_amount"),
                 rs.getBigDecimal("subtotal_amount"),
@@ -89,6 +90,7 @@ public class InvoiceService {
             d.tableNumber(),
             d.staffId(),
             d.customerPhone(),
+            d.loyaltyPhone(),
             d.voucherCode(),
             d.voucherDiscountAmount(),
             d.subtotalAmount(),
@@ -105,7 +107,8 @@ public class InvoiceService {
     public InvoiceResponse getById(String id) {
         String sql = """
             SELECT i.id, i.invoice_code, i.order_id, i.staff_id,
-                   COALESCE(i.customer_phone, u.phone_number, vu.customer_phone, '') AS customer_phone,
+                   COALESCE(i.customer_phone, u.phone_number, '') AS customer_phone,
+                   COALESCE(i.loyalty_phone, '') AS loyalty_phone,
                    i.voucher_code_snapshot, i.voucher_discount_amount, i.subtotal_amount, i.discount_amount,
                    i.tax_amount, i.final_amount, i.loyalty_points_earned, i.status,
                    COALESCE(i.paid_at, i.created_at) AS paid_at,
@@ -114,7 +117,6 @@ public class InvoiceService {
             LEFT JOIN orders o ON i.order_id = o.id
             LEFT JOIN restaurant_tables t ON o.table_id = t.id
             LEFT JOIN users u ON i.customer_id = u.id
-            LEFT JOIN voucher_usages vu ON vu.invoice_id = i.id
             WHERE i.id = ?
         """;
 
@@ -129,6 +131,7 @@ public class InvoiceService {
                 rs.getString("table_number"),
                 rs.getString("staff_id"),
                 rs.getString("customer_phone"),
+                rs.getString("loyalty_phone"),
                 rs.getString("voucher_code_snapshot"),
                 rs.getBigDecimal("voucher_discount_amount"),
                 rs.getBigDecimal("subtotal_amount"),
@@ -155,6 +158,7 @@ public class InvoiceService {
             d.tableNumber(),
             d.staffId(),
             d.customerPhone(),
+            d.loyaltyPhone(),
             d.voucherCode(),
             d.voucherDiscountAmount(),
             d.subtotalAmount(),
@@ -213,6 +217,7 @@ public class InvoiceService {
         String tableNumber,
         String staffId,
         String customerPhone,
+        String loyaltyPhone,
         String voucherCode,
         BigDecimal voucherDiscountAmount,
         BigDecimal subtotalAmount,

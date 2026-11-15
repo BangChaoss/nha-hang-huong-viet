@@ -17,6 +17,7 @@ export interface InvoiceRecord {
   tableNumber: string;
   staffId: string | null;
   customerPhone: string | null;
+  loyaltyPhone?: string | null;
   voucherCode: string | null;
   voucherDiscountAmount: number;
   subtotalAmount: number;
