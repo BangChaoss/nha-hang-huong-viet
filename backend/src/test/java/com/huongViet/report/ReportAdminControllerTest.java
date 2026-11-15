@@ -65,7 +65,7 @@ class ReportAdminControllerTest {
                 BigDecimal.ZERO
             ),
             List.of(new RevenueTimelinePoint("12:00", BigDecimal.valueOf(500000), 2L)),
-            new ReservationStatsResponse(10L, 8L, 2L, 0L, 0L, 0L, 80.0, 0.0),
+            new ReservationStatsResponse(10L, 8L, 2L, 0L, 0L, 0L, 6L, 80.0, 0.0, 60.0),
             List.of(new DishSalesItemResponse("d1", "Phở Bò", "Món chính", 10L, BigDecimal.valueOf(500000), 50.0))
         );
 
@@ -82,6 +82,8 @@ class ReportAdminControllerTest {
             .andExpect(jsonPath("$.revenueSummary.totalInvoices").value(5))
             .andExpect(jsonPath("$.revenueSummary.netRevenue").value(1000000))
             .andExpect(jsonPath("$.reservationStats.totalBookings").value(10))
+            .andExpect(jsonPath("$.reservationStats.paidCount").value(6))
+            .andExpect(jsonPath("$.reservationStats.paidRate").value(60.0))
             .andExpect(jsonPath("$.topDishes[0].dishName").value("Phở Bò"));
     }
 
@@ -136,7 +138,7 @@ class ReportAdminControllerTest {
     @DisplayName("GET /api/admin/reports/reservations returns 200 and booking stats")
     void testGetReservations() throws Exception {
         ReservationStatsResponse stats = new ReservationStatsResponse(
-            20L, 15L, 3L, 2L, 0L, 0L, 75.0, 10.0
+            20L, 15L, 3L, 2L, 0L, 0L, 12L, 75.0, 10.0, 60.0
         );
 
         when(reportService.getReservationStats(any(), any(), any())).thenReturn(stats);
@@ -147,6 +149,8 @@ class ReportAdminControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.totalBookings").value(20))
             .andExpect(jsonPath("$.arrivedCount").value(15))
+            .andExpect(jsonPath("$.paidCount").value(12))
+            .andExpect(jsonPath("$.paidRate").value(60.0))
             .andExpect(jsonPath("$.completionRate").value(75.0));
     }
 

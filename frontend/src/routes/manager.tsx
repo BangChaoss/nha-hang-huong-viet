@@ -24,7 +24,8 @@ export const Route = createFileRoute("/manager")({
     ) {
       return { tab };
     }
-    return { tab: "overview" };
+    // Mặc định mở tab "Báo cáo thống kê" khi vào màn điều khiển.
+    return { tab: "reports" };
   },
   head: () => ({ meta: [{ title: "Bảng điều khiển Quản lý — Hương Việt" }] }),
   component: Page,
@@ -36,7 +37,7 @@ function Page() {
   const search = Route.useSearch();
   const navigate = useNavigate();
 
-  const activeTab: ManagerTab = search.tab ?? "overview";
+  const activeTab: ManagerTab = search.tab ?? "reports";
   const handleTabChange = (tab: ManagerTab) => {
     void navigate({
       to: "/manager",

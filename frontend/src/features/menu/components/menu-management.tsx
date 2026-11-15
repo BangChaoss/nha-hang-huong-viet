@@ -88,7 +88,6 @@ export function MenuManagement() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Quản trị</p>
           <h1 className="font-display text-3xl font-semibold">Quản lý Thực đơn</h1>
         </div>
       </div>

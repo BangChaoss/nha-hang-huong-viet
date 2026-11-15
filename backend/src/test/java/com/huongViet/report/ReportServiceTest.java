@@ -105,7 +105,7 @@ class ReportServiceTest {
             new RevenueTimelinePoint("12:00", BigDecimal.valueOf(500000), 2L)
         ));
         when(reportRepository.getReservationStats(any(), any())).thenReturn(new ReservationStatsResponse(
-            5L, 3L, 1L, 1L, 0L, 0L, 60.0, 20.0
+            5L, 3L, 1L, 1L, 0L, 0L, 2L, 60.0, 20.0, 40.0
         ));
         when(reportRepository.getDishSalesPerformance(any(), any(), any())).thenReturn(List.of(
             new DishSalesItemResponse("dish-1", "Phở Bò", "Món chính", 4L, BigDecimal.valueOf(320000), 64.0)

@@ -149,4 +149,28 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.status").value("PAID"))
                 .andExpect(jsonPath("$.amount").value(250000));
     }
+
+    @Test
+    @DisplayName("GET /api/payments/vnpay/orders/{id} đơn không tồn tại trả về 404")
+    void testGetOrderEndpoint_NotFound() throws Exception {
+        when(paymentService.getOrder("order-nonexist"))
+                .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "Không tìm thấy giao dịch"));
+
+        mockMvc.perform(get("/api/payments/vnpay/orders/order-nonexist"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /api/payments/vnpay/create - thiếu bàn trả về lỗi 400 Bad Request")
+    void testCreatePaymentEndpoint_MissingTable() throws Exception {
+        VnpayCreateRequest request = new VnpayCreateRequest(
+                "", new BigDecimal("100000"), null, null, null, false
+        );
+
+        mockMvc.perform(post("/api/payments/vnpay/create")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
 }

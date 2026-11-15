@@ -246,16 +246,29 @@ export function StaffBookingCard({
 
           <div className="flex items-center gap-2 ml-auto">
             {isPending && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onOpenConfirm(booking)}
-                disabled={isActionPending}
-                className="h-9 px-4 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
-              >
-                <CheckCircle2 className="h-4 w-4 mr-1.5" />
-                Xác nhận & Gán bàn
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onCancel(booking)}
+                  disabled={isActionPending}
+                  className="h-9 px-3 text-xs text-destructive hover:bg-destructive/10 border-destructive/20"
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Hủy
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => onOpenConfirm(booking)}
+                  disabled={isActionPending}
+                  className="h-9 px-4 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                  Xác nhận & Gán bàn
+                </Button>
+              </>
             )}
 
             {isConfirmed && (

@@ -12,20 +12,21 @@ import { BookingHistoryCard } from "./booking-history-card";
 import { CancelBookingDialog } from "./cancel-booking-dialog";
 import type { ReservationResponse } from "../types/reservation.types";
 
-export function BookingHistoryList() {
+interface BookingHistoryListProps {
+  onLeaveFeedback?: (invoiceId: string) => void;
+}
+
+export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps) {
   const { session } = useSession();
   const isAuthenticated = Boolean(session?.token);
 
-  // Authenticated query
   const { data: memberBookings, isLoading: isMemberLoading, refetch } = useBookingHistory();
 
-  // Guest lookup mutation
   const guestLookupMutation = useGuestLookup();
   const [lookupPhone, setLookupPhone] = React.useState("");
   const [lookupCode, setLookupCode] = React.useState("");
   const [guestResults, setGuestResults] = React.useState<ReservationResponse[] | null>(null);
 
-  // Cancel dialog state
   const [cancelTarget, setCancelTarget] = React.useState<ReservationResponse | null>(null);
   const [isCancelOpen, setIsCancelOpen] = React.useState<boolean>(false);
 
@@ -108,6 +109,7 @@ export function BookingHistoryList() {
                     key={booking.id}
                     booking={booking}
                     onCancelClick={handleOpenCancel}
+                    onLeaveFeedback={onLeaveFeedback}
                   />
                 ))}
               </div>
@@ -191,7 +193,6 @@ export function BookingHistoryList() {
             </div>
           </form>
 
-          {/* Guest Results */}
           {guestResults !== null && (
             <div className="space-y-4">
               <h4 className="text-sm font-semibold text-foreground">
@@ -200,13 +201,23 @@ export function BookingHistoryList() {
 
               {guestResults.length > 0 ? (
                 <div className="space-y-3">
-                  {guestResults.map((booking) => (
-                    <BookingHistoryCard
-                      key={booking.id}
-                      booking={booking}
-                      onCancelClick={handleOpenCancel}
-                    />
-                  ))}
+                  {guestResults.map((booking) => {
+                    // Cho phép hủy nếu:
+                    // 1. Đơn của khách vãng lai (không gắn tài khoản thành viên: !booking.customerId)
+                    // 2. HOẶC đơn thuộc về chính tài khoản đang đăng nhập
+                    const canCancelBooking = Boolean(
+                      !booking.customerId ||
+                      (isAuthenticated && session?.id && booking.customerId === session.id)
+                    );
+                    return (
+                      <BookingHistoryCard
+                        key={booking.id}
+                        booking={booking}
+                        onCancelClick={canCancelBooking ? handleOpenCancel : undefined}
+                        onLeaveFeedback={onLeaveFeedback}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
@@ -215,9 +226,6 @@ export function BookingHistoryList() {
                     Không tìm thấy thông tin đặt bàn nào khớp với số điện thoại{" "}
                     <strong>{lookupPhone}</strong> và mã <strong>{lookupCode}</strong>.
                   </p>
-                  <p className="text-xs mt-1 text-muted-foreground">
-                    Quý khách vui lòng kiểm tra lại thông tin hoặc liên hệ trực tiếp hotline nhà hàng để được hỗ trợ.
-                  </p>
                 </div>
               )}
             </div>
@@ -225,7 +233,6 @@ export function BookingHistoryList() {
         </TabsContent>
       </Tabs>
 
-      {/* Cancel Confirmation Dialog */}
       <CancelBookingDialog
         booking={cancelTarget}
         open={isCancelOpen}

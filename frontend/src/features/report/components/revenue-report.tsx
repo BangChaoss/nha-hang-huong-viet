@@ -397,6 +397,7 @@ export function RevenueReport() {
               </div>
               <dl className="space-y-2 text-sm">
                 <Row label="Đã đến" value={formatNumber(reservations.arrivedCount)} />
+                <Row label="Đã thanh toán" value={formatNumber(reservations.paidCount ?? 0)} />
                 <Row label="Đã xác nhận" value={formatNumber(reservations.confirmedCount)} />
                 <Row label="Đang chờ" value={formatNumber(reservations.pendingCount)} />
                 <Row label="Đã huỷ" value={formatNumber(reservations.cancelledCount)} />

@@ -21,6 +21,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -148,5 +149,45 @@ class VoucherControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.valid").value(true))
                 .andExpect(jsonPath("$.discountAmount").value(10000));
+    }
+
+    @Test
+    @DisplayName("POST /api/vouchers/redeem - gọi endpoint redeem trực tiếp trả về 400")
+    void testPublicRedeem() throws Exception {
+        VoucherValidationRequest req = new VoucherValidationRequest("PROMO", "0901234567", new BigDecimal("100000"));
+        when(voucherService.redeem(any(VoucherValidationRequest.class)))
+                .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "Vui lòng áp dụng voucher qua quy trình thanh toán"));
+
+        mockPublicMvc.perform(post("/api/vouchers/redeem")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/vouchers - mã voucher rỗng trả về 400 Bad Request")
+    void testCreateVoucher_InvalidInput() throws Exception {
+        VoucherRequest request = new VoucherRequest(
+                "", "Tiêu đề", "Mô tả", Voucher.DiscountType.PERCENTAGE,
+                new BigDecimal("10"), null, BigDecimal.ZERO,
+                LocalDateTime.now(), LocalDateTime.now().plusDays(10), 100, 1
+        );
+
+        mockAdminMvc.perform(post("/api/admin/vouchers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("DELETE /api/admin/vouchers/{id} - voucher không tồn tại trả về 404")
+    void testDeleteVoucher_NotFound() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Không tìm thấy voucher."))
+                .when(voucherService).delete("999");
+
+        mockAdminMvc.perform(delete("/api/admin/vouchers/999"))
+                .andExpect(status().isNotFound());
     }
 }

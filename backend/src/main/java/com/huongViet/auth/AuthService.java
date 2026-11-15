@@ -19,6 +19,11 @@ import java.util.UUID;
 
 @Service
 public class AuthService {
+    /** Báo khi tài khoản bị khóa trong lúc đang đăng nhập (JwtAuthFilter). */
+    public static final String ACCOUNT_LOCKED_MESSAGE =
+        "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên để được giúp đỡ.";
+    /** Báo khi đăng nhập bằng tài khoản đã bị khóa. */
+    public static final String LOGIN_LOCKED_MESSAGE = "Tài khoản của bạn đã bị khóa";
     private final UserRepository userRepository;
     private final PasswordResetTokenRepository tokenRepository;
     private final JwtService jwtService;
@@ -91,7 +96,13 @@ public class AuthService {
             ? userRepository.findByEmailAndDeletedAtIsNull(input.toLowerCase()).orElse(null)
             : userRepository.findByUsernameAndDeletedAtIsNull(input).orElse(null);
 
-        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
+        }
+        if ("LOCKED".equalsIgnoreCase(user.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, LOGIN_LOCKED_MESSAGE);
+        }
+        if (!"ACTIVE".equals(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Thông tin đăng nhập không hợp lệ.");
         }
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {

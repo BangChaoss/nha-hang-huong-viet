@@ -225,7 +225,7 @@ CREATE TABLE reservations (
 CREATE TABLE reservation_audits (
     id CHAR(36) NOT NULL,
     reservation_id CHAR(36) NOT NULL,
-    changed_by CHAR(36) NOT NULL,
+    changed_by CHAR(36) NULL,
     old_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     new_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     old_table_id CHAR(36) NULL,

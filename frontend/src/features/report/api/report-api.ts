@@ -33,6 +33,7 @@ export type ReservationStats = {
   cancelledCount: number;
   noShowCount: number;
   pendingCount: number;
+  paidCount: number;
   completionRate: number;
   cancellationRate: number;
 };

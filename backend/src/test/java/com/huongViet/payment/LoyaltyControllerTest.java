@@ -145,4 +145,26 @@ class LoyaltyControllerTest {
                 .andExpect(jsonPath("$.vouchers.length()").value(1))
                 .andExpect(jsonPath("$.vouchers[0].voucherCode").value("WELCOME"));
     }
+
+    @Test
+    @DisplayName("PUT /api/admin/loyalty/settings - cập nhật tỷ lệ tích điểm âm bị từ chối với 400 Bad Request")
+    void testUpdateLoyaltySettingsEndpoint_InvalidRate() throws Exception {
+        LoyaltyRateRequest req = new LoyaltyRateRequest(new BigDecimal("-5.000"));
+
+        mockSettingsMvc.perform(put("/api/admin/loyalty/settings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /api/payments/loyalty/{phone} - SĐT không hợp lệ trả về 400")
+    void testGetLoyaltyBalanceEndpoint_InvalidPhone() throws Exception {
+        when(paymentService.getLoyaltyBalance("invalid-phone"))
+                .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "Số điện thoại không hợp lệ"));
+
+        mockBalanceMvc.perform(get("/api/payments/loyalty/invalid-phone"))
+                .andExpect(status().isBadRequest());
+    }
 }

@@ -119,4 +119,18 @@ class LoyaltyProfileServiceTest {
         assertEquals(BigDecimal.ZERO, response.pointsBalance());
         assertTrue(response.vouchers().isEmpty());
     }
+
+    @Test
+    @DisplayName("Người dùng không có số điện thoại (phone = null): Trả về số dư 0 và SĐT rỗng")
+    void testGetProfile_UserWithoutPhoneNumber() {
+        User user = new User("user-no-phone", "nophone", "nophone@test.com", null, "hashed", UserRole.CUSTOMER);
+        when(accounts.findByCustomerPhone("")).thenReturn(Optional.empty());
+        when(vouchers.findAllByDeletedAtIsNullOrderByCreatedAtDesc()).thenReturn(List.of());
+
+        LoyaltyProfileResponse response = loyaltyProfileService.getProfile(user);
+
+        assertEquals("", response.phoneNumber());
+        assertEquals(BigDecimal.ZERO, response.pointsBalance());
+        assertTrue(response.vouchers().isEmpty());
+    }
 }

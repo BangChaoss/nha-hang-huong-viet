@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
+import { getDeviceId } from "@/lib/device-id";
 import type {
   AdminReservationQueryParams,
   AvailableTable,
@@ -13,11 +14,13 @@ import type {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getSession()?.token;
+  const deviceId = getDeviceId();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(deviceId ? { "X-Device-Id": deviceId } : {}),
       ...(init?.headers ?? {}),
     },
   });

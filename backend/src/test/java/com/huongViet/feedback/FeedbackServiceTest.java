@@ -31,6 +31,9 @@ class FeedbackServiceTest {
     private UserRepository userRepository;
 
     @Mock
+    private com.huongViet.reservation.ReservationRepository reservationRepository;
+
+    @Mock
     private JdbcTemplate jdbcTemplate;
 
     private FeedbackService feedbackService;
@@ -38,7 +41,7 @@ class FeedbackServiceTest {
 
     @BeforeEach
     void setUp() {
-        feedbackService = new FeedbackService(feedbackRepository, userRepository, jdbcTemplate);
+        feedbackService = new FeedbackService(feedbackRepository, userRepository, reservationRepository, jdbcTemplate);
         customer = new User("user-1", "nguyenvana", "vana@example.com", "0912345678", "hashedPassword", UserRole.CUSTOMER);
     }
 
@@ -74,10 +77,10 @@ class FeedbackServiceTest {
     }
 
     @Test
-    @DisplayName("Anti-spam: ném 429 TOO_MANY_REQUESTS khi gửi 2 review trong vòng dưới 60 giây")
+    @DisplayName("Anti-spam: ném 429 TOO_MANY_REQUESTS khi gửi 2 review trong vòng dưới 5 giây")
     void testAntiSpamCooldown() {
         Feedback recentFeedback = new Feedback("user-1", "nguyenvana", "0912345678", "inv-99", 4, "Ngon");
-        recentFeedback.setCreatedAt(LocalDateTime.now().minusSeconds(20)); // Vừa gửi 20s trước
+        recentFeedback.setCreatedAt(LocalDateTime.now().minusSeconds(2)); // Vừa gửi 2s trước (< 5s)
 
         when(feedbackRepository.findTopByCustomerIdAndDeletedAtIsNullOrderByCreatedAtDesc("user-1"))
             .thenReturn(Optional.of(recentFeedback));

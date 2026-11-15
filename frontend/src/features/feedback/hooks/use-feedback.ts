@@ -51,6 +51,8 @@ export function useSubmitFeedback() {
     mutationFn: feedbackApi.submit,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: feedbackKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
     },
   });
 }

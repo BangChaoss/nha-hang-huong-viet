@@ -10,6 +10,8 @@ public record InvoiceResponse(
     String orderId,
     String tableNumber,
     String staffId,
+    String customerPhone,
+    String loyaltyPhone,
     String voucherCode,
     BigDecimal voucherDiscountAmount,
     BigDecimal subtotalAmount,

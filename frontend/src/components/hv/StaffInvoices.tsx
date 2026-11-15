@@ -10,6 +10,7 @@ import {
   FileText,
   UtensilsCrossed,
   CheckCircle2,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +26,10 @@ import { formatVND } from "@/lib/restaurant-store";
 import { invoiceApi, type InvoiceRecord } from "@/lib/invoice-api";
 
 export function StaffInvoices() {
-  const [selectedDate, setSelectedDate] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10)
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [search, setSearch] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<InvoiceRecord | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
@@ -46,6 +48,8 @@ export function StaffInvoices() {
       (inv) =>
         inv.invoiceCode.toLowerCase().includes(q) ||
         inv.tableNumber.toLowerCase().includes(q) ||
+        (inv.customerPhone && inv.customerPhone.includes(q)) ||
+        (inv.loyaltyPhone && inv.loyaltyPhone.includes(q)) ||
         (inv.voucherCode && inv.voucherCode.toLowerCase().includes(q))
     );
   }, [query.data, search]);
@@ -58,8 +62,80 @@ export function StaffInvoices() {
     return { count, totalAmount, totalDiscount };
   }, [query.data]);
 
+  // HÀM IN BẢO ĐẢM HIỂN THỊ ĐẦY ĐỦ 100% QUA IFRAME
   const handlePrint = () => {
-    window.print();
+    if (!printRef.current) return;
+
+    // Lấy nội dung DOM của hóa đơn
+    const printContent = printRef.current.innerHTML;
+
+    // Tạo iframe ẩn
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+
+    // Kế thừa toàn bộ style/CSS Tailwind của trang để không bị vỡ giao diện
+    const pageStyles = Array.from(document.querySelectorAll("link[rel='stylesheet'], style"))
+      .map((el) => el.outerHTML)
+      .join("\n");
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Hoa_Don_${previewInvoice?.invoiceCode || "HuongViet"}</title>
+          ${pageStyles}
+          <style>
+            @page {
+              /* Dùng "80mm auto" cho máy in 80mm hoặc "58mm auto" cho máy in 58mm */
+              size: 80mm auto; 
+              margin: 2mm 3mm;
+            }
+            body {
+              background-color: #ffffff !important;
+              color: #000000 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            #printable-invoice {
+              box-shadow: none !important;
+              border: none !important;
+              width: 100% !important;
+              max-width: 72mm !important; /* Giới hạn chiều rộng để phù hợp khổ giấy */
+              padding: 0 !important;
+              margin: 0 auto !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContent}
+        </body>
+      </html>
+    `);
+    doc.close();
+
+    // Chờ iframe nạp xong style rồi kích hoạt cửa sổ in
+    iframe.contentWindow?.focus();
+    setTimeout(() => {
+      iframe.contentWindow?.print();
+      // Thu dọn iframe sau khi hoàn tất
+      setTimeout(() => {
+        document.body.removeChild(iframe);
+      }, 500);
+    }, 250);
   };
 
   return (
@@ -126,7 +202,7 @@ export function StaffInvoices() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="text"
-              placeholder="Tìm theo mã hóa đơn, số bàn..."
+              placeholder="Tìm theo mã hóa đơn, số bàn, SĐT tích điểm..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-8 text-xs h-9"
@@ -139,6 +215,14 @@ export function StaffInvoices() {
       <div className="surface-card overflow-x-auto p-4 border rounded-xl">
         {query.isLoading ? (
           <p className="py-12 text-center text-sm text-muted-foreground">Đang tải danh sách hóa đơn...</p>
+        ) : query.isError ? (
+          <div className="py-12 text-center text-destructive space-y-3">
+            <p className="text-sm font-medium">{query.error.message || "Không thể tải danh sách hóa đơn."}</p>
+            <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              Thử lại
+            </Button>
+          </div>
         ) : filteredInvoices.length === 0 ? (
           <div className="py-12 text-center text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto opacity-50" />
@@ -150,6 +234,7 @@ export function StaffInvoices() {
               <tr className="border-b text-left text-muted-foreground text-xs uppercase tracking-wider">
                 <th className="py-2.5 px-3">Mã Hóa Đơn</th>
                 <th className="py-2.5 px-3">Bàn</th>
+                <th className="py-2.5 px-3">Khách hàng / SĐT</th>
                 <th className="py-2.5 px-3">Giờ thanh toán</th>
                 <th className="py-2.5 px-3">Số món</th>
                 <th className="py-2.5 px-3 text-right">Giảm giá</th>
@@ -173,6 +258,30 @@ export function StaffInvoices() {
                   <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
                     <td className="py-3 px-3 font-mono font-bold text-primary">{inv.invoiceCode}</td>
                     <td className="py-3 px-3 font-medium">{inv.tableNumber}</td>
+                    <td className="py-3 px-3 text-xs font-mono">
+                      {inv.customerPhone ? (
+                        <div className="space-y-0.5">
+                          <span className="flex items-center gap-1 text-foreground">
+                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            {inv.customerPhone}
+                          </span>
+                          {inv.loyaltyPhone && inv.loyaltyPhone !== inv.customerPhone && (
+                            <span className="text-[10px] text-amber-700 block">
+                              Tích: {inv.loyaltyPhone}
+                            </span>
+                          )}
+                        </div>
+                      ) : inv.loyaltyPhone ? (
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground italic">Khách vãng lai</span>
+                          <span className="text-[10px] text-amber-700 block">
+                            Tích: {inv.loyaltyPhone}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground italic">Khách vãng lai</span>
+                      )}
+                    </td>
                     <td className="py-3 px-3 text-xs text-muted-foreground">{paidTime}</td>
                     <td className="py-3 px-3 tabular-nums">{itemCount} phần</td>
                     <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">
@@ -213,18 +322,20 @@ export function StaffInvoices() {
       <Dialog open={Boolean(previewInvoice)} onOpenChange={(open) => !open && setPreviewInvoice(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center justify-between text-base">
-              <span>Hóa đơn: {previewInvoice?.invoiceCode}</span>
+            <div className="flex items-center justify-between pr-6">
+              <DialogTitle className="text-base font-bold">
+                Hóa đơn: {previewInvoice?.invoiceCode}
+              </DialogTitle>
               <Button size="sm" onClick={handlePrint} className="gap-1.5 bg-primary hover:bg-primary/90">
                 <Printer className="h-4 w-4" />
                 In hóa đơn
               </Button>
-            </DialogTitle>
+            </div>
           </DialogHeader>
 
           {previewInvoice && (
-            <div className="py-2" id="printable-invoice" ref={printRef}>
-              <div className="rounded-lg border bg-white p-5 text-zinc-900 shadow-xs font-sans text-xs space-y-3 print:border-none print:shadow-none print:p-0">
+            <div className="py-2" ref={printRef}>
+              <div id="printable-invoice" className="rounded-lg border bg-white p-5 text-zinc-900 shadow-xs font-sans text-xs space-y-3 print:border-none print:shadow-none print:p-0">
                 {/* Header Bill */}
                 <div className="text-center space-y-1 border-b pb-3">
                   <div className="flex items-center justify-center gap-1.5 font-display text-xl font-bold tracking-wider text-zinc-950">
@@ -249,7 +360,14 @@ export function StaffInvoices() {
                   <p>
                     Giờ: {previewInvoice.paidAt ? new Date(previewInvoice.paidAt).toLocaleString("vi-VN") : "—"}
                   </p>
-                  <p className="text-right">Thu ngân: Staff</p>
+                  <p className="text-right">
+                    Khách: <strong className="text-zinc-900 font-mono">{previewInvoice.customerPhone || "Khách vãng lai"}</strong>
+                  </p>
+                  {previewInvoice.loyaltyPhone && (
+                    <p className="col-span-2 text-right text-[10px] text-amber-800">
+                      SĐT tích điểm: <strong className="font-mono">{previewInvoice.loyaltyPhone}</strong>
+                    </p>
+                  )}
                 </div>
 
                 {/* Bảng món */}
@@ -304,17 +422,16 @@ export function StaffInvoices() {
                   </div>
                 </div>
 
-                {/* Điểm thưởng */}
+                {/* Điểm thưởng & Số điện thoại nhận điểm */}
                 {previewInvoice.loyaltyPointsEarned > 0 && (
                   <div className="rounded bg-amber-50 p-2 text-center text-[10px] text-amber-900">
-                    ✨ Quý khách được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
+                    ✨ Quý khách ({previewInvoice.loyaltyPhone || previewInvoice.customerPhone || "SĐT thành viên"}) được tích luỹ <strong>+{previewInvoice.loyaltyPointsEarned.toLocaleString("vi-VN")} điểm</strong> thưởng.
                   </div>
                 )}
 
                 {/* Lời cảm ơn */}
                 <div className="text-center pt-2 space-y-0.5 text-[10px] text-zinc-400">
                   <p className="font-semibold text-zinc-600">Cảm ơn Quý khách & Hẹn gặp lại!</p>
-                  <p>Wifi: HuongViet_Restaurant · Pass: 88888888</p>
                 </div>
               </div>
             </div>
