@@ -153,9 +153,6 @@ export function StaffPOS() {
   return (
     <div className="space-y-8">
       <div className="space-y-4">
-        <div>
-          <BackButton />
-        </div>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sơ đồ bàn ăn</p>
