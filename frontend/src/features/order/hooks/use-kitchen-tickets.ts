@@ -105,12 +105,13 @@ function useKitchenSocket(handlers: TopicHandler[], enabled = true) {
  * Danh sách phiếu bếp (UC-16).
  * Backend trả về theo thứ tự FIFO (BR-35) — không sắp xếp lại ở client.
  */
-export function useKitchenTickets(status?: CookingStatus) {
+// Trong src/features/order/hooks/use-kitchen-tickets.ts
+export function useKitchenTickets(status?: CookingStatus, date?: string) {
   const queryClient = useQueryClient();
 
   const query = useQuery<KitchenTicketResponse[], Error>({
-    queryKey: ["kitchen-tickets", status ?? "ALL"],
-    queryFn: () => kitchenApi.listTickets(status),
+    queryKey: ["kitchen-tickets", status ?? "ALL", date ?? "ALL"],
+    queryFn: () => kitchenApi.listTickets(status, date),
     refetchInterval: 15000,
   });
 

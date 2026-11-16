@@ -26,6 +26,16 @@ export type VoucherPayload = Omit<
   "id" | "usedQuantity" | "active" | "createdAt" | "updatedAt"
 >;
 
+export type VoucherUsageRecord = {
+  id: string;
+  voucherId: string;
+  customerPhone: string;
+  invoiceId: string;
+  invoiceCode: string;
+  discountApplied: number;
+  usedAt: string | null;
+};
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -56,6 +66,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const voucherApi = {
   list: () => request<Voucher[]>("/api/admin/vouchers"),
+  getUsages: (id: string) => request<VoucherUsageRecord[]>(`/api/admin/vouchers/${id}/usages`),
   create: (payload: VoucherPayload) =>
     request<Voucher>("/api/admin/vouchers", {
       method: "POST",

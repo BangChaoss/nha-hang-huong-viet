@@ -57,6 +57,7 @@ class AuthServiceTest {
         assertEquals("newuser", resp.username());
         assertEquals("new@example.com", resp.email());
         assertEquals("CUSTOMER", resp.role());
+        assertEquals("0912345678", resp.phoneNumber());
         verify(userRepository).save(any(User.class));
     }
 
@@ -86,6 +87,7 @@ class AuthServiceTest {
         assertNotNull(resp);
         assertEquals("jwt-login-token", resp.token());
         assertEquals("testuser", resp.username());
+        assertEquals("0912345678", resp.phoneNumber());
     }
 
     @Test
@@ -99,6 +101,20 @@ class AuthServiceTest {
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> authService.login(req));
         assertEquals(HttpStatus.UNAUTHORIZED, ex.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("login should throw FORBIDDEN with locked account message when user is LOCKED")
+    void testLoginLockedUser() {
+        LoginRequest req = new LoginRequest("lockeduser", "anyPassword");
+        User user = new User("uid-2", "lockeduser", "locked@example.com", "0912345679", "hashedPw", UserRole.CUSTOMER);
+        user.setStatus("LOCKED");
+
+        when(userRepository.findByUsernameAndDeletedAtIsNull("lockeduser")).thenReturn(Optional.of(user));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> authService.login(req));
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+        assertEquals("Tài khoản của bạn đã bị khóa", ex.getReason());
     }
 
     @Test

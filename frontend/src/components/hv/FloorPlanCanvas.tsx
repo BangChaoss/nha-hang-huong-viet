@@ -1,15 +1,32 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Stage, Layer, Rect, Circle, Text, Group, Line } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
-import { ZoomIn, ZoomOut, RotateCcw, Save, Sparkles, Users, Grid } from "lucide-react";
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Users,
+  Grid,
+  Undo2,
+  Redo2,
+  RotateCw,
+  Shapes,
+  Maximize2,
+  Maximize,
+  AlertTriangle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   STATUS_COLORS,
   type FloorPlanLayoutResponse,
   type FloorPlanLayoutRequest,
   type TableStatus,
+  type FloorPlanShape,
 } from "@/lib/table-api";
 
 export type FloorPlanCanvasProps = {
@@ -18,12 +35,173 @@ export type FloorPlanCanvasProps = {
   onSelectTable?: (table: FloorPlanLayoutResponse | null) => void;
   onUpdateStatus?: (tableId: string, status: TableStatus) => Promise<void>;
   selectedTableId?: string | null;
+  selectedTableIds?: string[];
   readOnly?: boolean;
   isConnected?: boolean;
   canvasHeight?: number;
 };
 
-const GRID_STEP = 20;
+export type LocalTableLayout = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  shape: FloorPlanShape;
+};
+
+type GuideLine = {
+  points: number[];
+  orientation: "vertical" | "horizontal";
+  stroke?: string;
+};
+
+const SNAP_THRESHOLD = 10;
+const MAX_HISTORY = 50;
+
+/**
+ * Chuẩn hóa kích thước bàn theo số ghế tiêu chuẩn
+ * - 1–2 khách: 70 × 70px (Bán kính bàn tròn: 35px)
+ * - 3–4 khách: 90 × 90px (Bán kính bàn tròn: 45px)
+ * - 5+ khách:  140 × 90px (Bàn chữ nhật) hoặc đường kính 120px (Bàn tròn)
+ */
+export function getStandardDimensions(
+  capacity: number,
+  shape: FloorPlanShape,
+): { width: number; height: number } {
+  if (shape === "CIRCLE") {
+    const diameter = capacity <= 2 ? 70 : capacity <= 4 ? 90 : 120;
+    return { width: diameter, height: diameter };
+  }
+  if (capacity <= 2) return { width: 70, height: 70 };
+  if (capacity <= 4) return { width: 90, height: 90 };
+  return { width: 140, height: 90 };
+}
+
+export type ZoneBox = {
+  zoneName: string;
+  isVip: boolean;
+  boxX: number;
+  boxY: number;
+  boxWidth: number;
+  boxHeight: number;
+  tableCount: number;
+};
+
+/**
+ * Kiểm tra va chạm AABB (Axis-Aligned Bounding Box) giữa các bàn đang hiển thị
+ */
+export function computeCollisions(
+  layoutsMap: Record<string, LocalTableLayout>,
+  visibleIds: string[],
+): Set<string> {
+  const colliding = new Set<string>();
+  for (let i = 0; i < visibleIds.length; i++) {
+    const idA = visibleIds[i]!;
+    const a = layoutsMap[idA];
+    if (!a) continue;
+    for (let j = i + 1; j < visibleIds.length; j++) {
+      const idB = visibleIds[j]!;
+      const b = layoutsMap[idB];
+      if (!b) continue;
+
+      const overlap =
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y;
+
+      if (overlap) {
+        colliding.add(idA);
+        colliding.add(idB);
+      }
+    }
+  }
+  return colliding;
+}
+
+/**
+ * Tính toán bounding box của từng khu vực dựa trên tọa độ thực tế của các bàn
+ */
+export function computeZoneBoxes(
+  layoutsMap: Record<string, LocalTableLayout>,
+  visibleLayouts: FloorPlanLayoutResponse[],
+): ZoneBox[] {
+  const groups: Record<string, FloorPlanLayoutResponse[]> = {};
+  for (const item of visibleLayouts) {
+    const zoneName = item.zoneName || "Khu vực chung";
+    if (!groups[zoneName]) {
+      groups[zoneName] = [];
+    }
+    groups[zoneName].push(item);
+  }
+
+  const boxes: ZoneBox[] = [];
+  for (const [zoneName, zoneTables] of Object.entries(groups)) {
+    if (zoneTables.length === 0) continue;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const t of zoneTables) {
+      const layout = layoutsMap[t.tableId] ?? {
+        x: t.positionX,
+        y: t.positionY,
+        width: t.width || 90,
+        height: t.height || 90,
+      };
+      minX = Math.min(minX, layout.x);
+      minY = Math.min(minY, layout.y);
+      maxX = Math.max(maxX, layout.x + layout.width);
+      maxY = Math.max(maxY, layout.y + layout.height);
+    }
+
+    const padding = 24;
+    const headerHeight = 30;
+    const boxX = minX - padding;
+    const boxY = minY - padding - headerHeight;
+    const boxWidth = maxX - minX + padding * 2;
+    const boxHeight = maxY - minY + padding * 2 + headerHeight;
+    const isVip = Boolean(zoneTables[0]?.zoneIsVip);
+
+    boxes.push({
+      zoneName,
+      isVip,
+      boxX,
+      boxY,
+      boxWidth,
+      boxHeight,
+      tableCount: zoneTables.length,
+    });
+  }
+  return boxes;
+}
+
+/**
+ * Kiểm tra va chạm AABB giữa các khu vực (Zone Collision Detection)
+ */
+export function computeZoneCollisions(zoneBoxes: ZoneBox[]): Set<string> {
+  const colliding = new Set<string>();
+  for (let i = 0; i < zoneBoxes.length; i++) {
+    const a = zoneBoxes[i]!;
+    for (let j = i + 1; j < zoneBoxes.length; j++) {
+      const b = zoneBoxes[j]!;
+      const overlap =
+        a.boxX < b.boxX + b.boxWidth &&
+        a.boxX + a.boxWidth > b.boxX &&
+        a.boxY < b.boxY + b.boxHeight &&
+        a.boxY + a.boxHeight > b.boxY;
+
+      if (overlap) {
+        colliding.add(a.zoneName);
+        colliding.add(b.zoneName);
+      }
+    }
+  }
+  return colliding;
+}
 
 export function FloorPlanCanvas({
   layouts,
@@ -31,6 +209,7 @@ export function FloorPlanCanvas({
   onSelectTable,
   onUpdateStatus,
   selectedTableId,
+  selectedTableIds,
   readOnly = false,
   isConnected = false,
   canvasHeight,
@@ -43,16 +222,32 @@ export function FloorPlanCanvas({
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
-  // Tọa độ cục bộ của các bàn khi kéo thả (tableId -> { x, y })
-  const [localPositions, setLocalPositions] = useState<Record<string, { x: number; y: number }>>(
-    {},
-  );
+  // Tọa độ & hình dáng cục bộ của các bàn (tableId -> LocalTableLayout)
+  const [localLayouts, setLocalLayouts] = useState<Record<string, LocalTableLayout>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Lịch sử hoàn tác / làm lại (Undo / Redo stack)
+  const [history, setHistory] = useState<Record<string, LocalTableLayout>[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  // Đường gióng căn chỉnh từ tính (Magnetic Snapping Guidelines)
+  const [activeGuides, setActiveGuides] = useState<GuideLine[]>([]);
+
+  // Danh sách các bàn đang bị đè/trùng lặp vị trí (Collision warning)
+  const [collidingTableIds, setCollidingTableIds] = useState<Set<string>>(new Set());
+
+  // Danh sách các khu vực đang bị đè/trùng lặp ranh giới (Zone collision warning)
+  const [collidingZoneNames, setCollidingZoneNames] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  // Bàn tạm ẩn (MAINTENANCE) bị loại bỏ khỏi 2D canvas render
+  const visibleLayouts = useMemo(() => {
+    return layouts.filter((item) => item.status !== "MAINTENANCE");
+  }, [layouts]);
 
   // Lắng nghe kích thước khung chứa để canvas tự co giãn linh hoạt
   useEffect(() => {
@@ -61,33 +256,155 @@ export function FloorPlanCanvas({
       const entry = entries[0];
       if (entry) {
         setDimensions({
-          width: Math.max(entry.contentRect.width, 400),
-          height: 600,
+          width: Math.max(entry.contentRect.width, 360),
+          height: canvasHeight ?? 600,
         });
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [canvasHeight]);
 
-  // Đồng bộ localPositions khi `layouts` từ backend thay đổi
+  // Đồng bộ localLayouts và khởi tạo Undo/Redo stack khi `layouts` từ backend thay đổi
   useEffect(() => {
-    const initialPos: Record<string, { x: number; y: number }> = {};
+    const initialMap: Record<string, LocalTableLayout> = {};
     for (const item of layouts) {
-      initialPos[item.tableId] = {
+      initialMap[item.tableId] = {
         x: item.positionX,
         y: item.positionY,
+        width: item.width || 90,
+        height: item.height || 90,
+        rotation: item.rotation || 0,
+        shape: item.shape || "RECTANGLE",
       };
     }
-    setLocalPositions(initialPos);
+    setLocalLayouts(initialMap);
+    setHistory([initialMap]);
+    setHistoryIndex(0);
     setHasChanges(false);
+
+    // Kiểm tra va chạm ban đầu
+    const activeVisible = layouts.filter((l) => l.status !== "MAINTENANCE");
+    const collisions = computeCollisions(
+      initialMap,
+      activeVisible.map((l) => l.tableId),
+    );
+    setCollidingTableIds(collisions);
+
+    const initialBoxes = computeZoneBoxes(initialMap, activeVisible);
+    const initialZoneCollisions = computeZoneCollisions(initialBoxes);
+    setCollidingZoneNames(initialZoneCollisions);
   }, [layouts]);
+
+  // Ghi nhận trạng thái mới vào History Stack
+  const pushHistory = useCallback(
+    (newLayouts: Record<string, LocalTableLayout>) => {
+      setHistory((prev) => {
+        const nextStack = prev.slice(0, historyIndex + 1);
+        nextStack.push(newLayouts);
+        if (nextStack.length > MAX_HISTORY) {
+          nextStack.shift();
+        }
+        return nextStack;
+      });
+      setHistoryIndex((prev) => Math.min(prev + 1, MAX_HISTORY - 1));
+      setLocalLayouts(newLayouts);
+      setHasChanges(true);
+
+      const collisions = computeCollisions(
+        newLayouts,
+        visibleLayouts.map((l) => l.tableId),
+      );
+      setCollidingTableIds(collisions);
+
+      const zoneBoxes = computeZoneBoxes(newLayouts, visibleLayouts);
+      const zoneCollisions = computeZoneCollisions(zoneBoxes);
+      setCollidingZoneNames(zoneCollisions);
+    },
+    [historyIndex, visibleLayouts],
+  );
+
+  // Thao tác Undo
+  const handleUndo = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevIndex = historyIndex - 1;
+      const targetState = history[prevIndex];
+      if (targetState) {
+        setLocalLayouts(targetState);
+        setHistoryIndex(prevIndex);
+        setHasChanges(true);
+        const collisions = computeCollisions(
+          targetState,
+          visibleLayouts.map((l) => l.tableId),
+        );
+        setCollidingTableIds(collisions);
+
+        const zoneBoxes = computeZoneBoxes(targetState, visibleLayouts);
+        const zoneCollisions = computeZoneCollisions(zoneBoxes);
+        setCollidingZoneNames(zoneCollisions);
+        toast.info("Đã hoàn tác thao tác gần nhất.");
+      }
+    }
+  }, [history, historyIndex, visibleLayouts]);
+
+  // Thao tác Redo
+  const handleRedo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextIndex = historyIndex + 1;
+      const targetState = history[nextIndex];
+      if (targetState) {
+        setLocalLayouts(targetState);
+        setHistoryIndex(nextIndex);
+        setHasChanges(true);
+        const collisions = computeCollisions(
+          targetState,
+          visibleLayouts.map((l) => l.tableId),
+        );
+        setCollidingTableIds(collisions);
+
+        const zoneBoxes = computeZoneBoxes(targetState, visibleLayouts);
+        const zoneCollisions = computeZoneCollisions(zoneBoxes);
+        setCollidingZoneNames(zoneCollisions);
+        toast.info("Đã làm lại thao tác vừa hoàn tác.");
+      }
+    }
+  }, [history, historyIndex, visibleLayouts]);
+
+  // Phím tắt bàn phím toàn cục: Ctrl+Z (Undo) và Ctrl+Y / Ctrl+Shift+Z (Redo)
+  useEffect(() => {
+    if (readOnly) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        if (e.shiftKey) {
+          e.preventDefault();
+          handleRedo();
+        } else {
+          e.preventDefault();
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [readOnly, handleUndo, handleRedo]);
+
+  // Tính toán danh sách các hộp ranh giới khu vực (Zone Boxes)
+  const currentZoneBoxes = useMemo(() => {
+    return computeZoneBoxes(localLayouts, visibleLayouts);
+  }, [localLayouts, visibleLayouts]);
 
   const handleZoom = (direction: "in" | "out") => {
     setStageScale((prev) => {
       const step = 0.15;
       const next = direction === "in" ? prev + step : prev - step;
-      return Math.min(Math.max(next, 0.4), 2.5);
+      return Math.min(Math.max(next, 0.35), 2.5);
     });
   };
 
@@ -101,47 +418,385 @@ export function FloorPlanCanvas({
     const scaleBy = 1.05;
     const oldScale = stageScale;
     const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-    setStageScale(Math.min(Math.max(newScale, 0.4), 2.5));
+    setStageScale(Math.min(Math.max(newScale, 0.35), 2.5));
   };
 
-  const handleDragNodeEnd = (tableId: string, e: KonvaEventObject<DragEvent>) => {
-    // Grid snapping 20px
-    const rawX = e.target.x();
-    const rawY = e.target.y();
-    const snappedX = Math.round(rawX / GRID_STEP) * GRID_STEP;
-    const snappedY = Math.round(rawY / GRID_STEP) * GRID_STEP;
-
-    if (typeof e.target.to === "function") {
-      e.target.to({
-        x: snappedX,
-        y: snappedY,
-        duration: 0.1,
-      });
-    } else {
-      e.target.position({ x: snappedX, y: snappedY });
+  // Tính năng Auto-Fit Viewport Centering: Tự động căn chỉnh bao trọn tất cả bàn trong khung nhìn
+  const handleAutoFit = useCallback(() => {
+    if (visibleLayouts.length === 0) {
+      setStageScale(1);
+      setStagePos({ x: 0, y: 0 });
+      return;
     }
 
-    setLocalPositions((prev) => ({
-      ...prev,
-      [tableId]: { x: snappedX, y: snappedY },
-    }));
-    setHasChanges(true);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const item of visibleLayouts) {
+      const layout = localLayouts[item.tableId] ?? {
+        x: item.positionX,
+        y: item.positionY,
+        width: item.width || 90,
+        height: item.height || 90,
+      };
+      minX = Math.min(minX, layout.x);
+      minY = Math.min(minY, layout.y);
+      maxX = Math.max(maxX, layout.x + layout.width);
+      maxY = Math.max(maxY, layout.y + layout.height);
+    }
+
+    const padding = 70;
+    const contentWidth = Math.max(maxX - minX, 100);
+    const contentHeight = Math.max(maxY - minY, 100);
+
+    const availableWidth = Math.max(dimensions.width - padding * 2, 200);
+    const availableHeight = Math.max(dimensions.height - padding * 2, 200);
+
+    const scaleX = availableWidth / contentWidth;
+    const scaleY = availableHeight / contentHeight;
+    const targetScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.35), 1.6);
+
+    const targetPosX = (dimensions.width - contentWidth * targetScale) / 2 - minX * targetScale;
+    const targetPosY = (dimensions.height - contentHeight * targetScale) / 2 - minY * targetScale;
+
+    setStageScale(targetScale);
+    setStagePos({ x: targetPosX, y: targetPosY });
+  }, [visibleLayouts, localLayouts, dimensions]);
+
+  // Xử lý căn gióng từ tính (Magnetic Snapping) khi đang kéo bàn
+  const handleDragNodeMove = (activeId: string, e: KonvaEventObject<DragEvent>) => {
+    if (readOnly) return;
+    const rawX = e.target.x();
+    const rawY = e.target.y();
+    const activeLayout = localLayouts[activeId];
+    const w = activeLayout?.width ?? 90;
+    const h = activeLayout?.height ?? 90;
+
+    let snappedX = rawX;
+    let snappedY = rawY;
+    const newGuides: GuideLine[] = [];
+
+    let minDiffX = SNAP_THRESHOLD;
+    let minDiffY = SNAP_THRESHOLD;
+    let guideLineX: number | null = null;
+    let guideLineY: number | null = null;
+
+    // So sánh với toàn bộ các bàn khác đang hiển thị
+    for (const other of visibleLayouts) {
+      if (other.tableId === activeId) continue;
+      const o = localLayouts[other.tableId];
+      if (!o) continue;
+
+      const otherLeft = o.x;
+      const otherRight = o.x + o.width;
+      const otherCenterX = o.x + o.width / 2;
+
+      const otherTop = o.y;
+      const otherBottom = o.y + o.height;
+      const otherCenterY = o.y + o.height / 2;
+
+      // --- TRỤC NGANG (X-AXIS SNAPPING) ---
+      // 1. Cạnh trái trùng Cạnh trái
+      const dLeftLeft = Math.abs(rawX - otherLeft);
+      if (dLeftLeft < minDiffX) {
+        minDiffX = dLeftLeft;
+        snappedX = otherLeft;
+        guideLineX = otherLeft;
+      }
+      // 2. Cạnh phải trùng Cạnh phải
+      const dRightRight = Math.abs(rawX + w - otherRight);
+      if (dRightRight < minDiffX) {
+        minDiffX = dRightRight;
+        snappedX = otherRight - w;
+        guideLineX = otherRight;
+      }
+      // 3. Trục tâm trùng Trục tâm
+      const dCenterCenterX = Math.abs(rawX + w / 2 - otherCenterX);
+      if (dCenterCenterX < minDiffX) {
+        minDiffX = dCenterCenterX;
+        snappedX = otherCenterX - w / 2;
+        guideLineX = otherCenterX;
+      }
+      // 4. Cạnh trái giáp Cạnh phải
+      const dLeftRight = Math.abs(rawX - otherRight);
+      if (dLeftRight < minDiffX) {
+        minDiffX = dLeftRight;
+        snappedX = otherRight;
+        guideLineX = otherRight;
+      }
+      // 5. Cạnh phải giáp Cạnh trái
+      const dRightLeft = Math.abs(rawX + w - otherLeft);
+      if (dRightLeft < minDiffX) {
+        minDiffX = dRightLeft;
+        snappedX = otherLeft - w;
+        guideLineX = otherLeft;
+      }
+
+      // --- TRỤC DỌC (Y-AXIS SNAPPING) ---
+      // 1. Cạnh trên trùng Cạnh trên
+      const dTopTop = Math.abs(rawY - otherTop);
+      if (dTopTop < minDiffY) {
+        minDiffY = dTopTop;
+        snappedY = otherTop;
+        guideLineY = otherTop;
+      }
+      // 2. Cạnh dưới trùng Cạnh dưới
+      const dBottomBottom = Math.abs(rawY + h - otherBottom);
+      if (dBottomBottom < minDiffY) {
+        minDiffY = dBottomBottom;
+        snappedY = otherBottom - h;
+        guideLineY = otherBottom;
+      }
+      // 3. Trục tâm trùng Trục tâm
+      const dCenterCenterY = Math.abs(rawY + h / 2 - otherCenterY);
+      if (dCenterCenterY < minDiffY) {
+        minDiffY = dCenterCenterY;
+        snappedY = otherCenterY - h / 2;
+        guideLineY = otherCenterY;
+      }
+      // 4. Cạnh trên giáp Cạnh dưới
+      const dTopBottom = Math.abs(rawY - otherBottom);
+      if (dTopBottom < minDiffY) {
+        minDiffY = dTopBottom;
+        snappedY = otherBottom;
+        guideLineY = otherBottom;
+      }
+      // 5. Cạnh dưới giáp Cạnh trên
+      const dBottomTop = Math.abs(rawY + h - otherTop);
+      if (dBottomTop < minDiffY) {
+        minDiffY = dBottomTop;
+        snappedY = otherTop - h;
+        guideLineY = otherTop;
+      }
+    }
+
+    if (guideLineX !== null) {
+      newGuides.push({
+        points: [guideLineX, -2000, guideLineX, 4000],
+        orientation: "vertical",
+        stroke: "#06b6d4",
+      });
+    } else {
+      snappedX = Math.round(snappedX / 10) * 10;
+    }
+
+    if (guideLineY !== null) {
+      newGuides.push({
+        points: [-2000, guideLineY, 4000, guideLineY],
+        orientation: "horizontal",
+        stroke: "#06b6d4",
+      });
+    } else {
+      snappedY = Math.round(snappedY / 10) * 10;
+    }
+
+    setActiveGuides(newGuides);
+    e.target.position({ x: snappedX, y: snappedY });
+
+    // Kiểm tra va chạm theo thời gian thực khi đang kéo
+    if (activeLayout) {
+      const previewLayouts = {
+        ...localLayouts,
+        [activeId]: {
+          ...activeLayout,
+          x: snappedX,
+          y: snappedY,
+        },
+      };
+      const collisions = computeCollisions(
+        previewLayouts,
+        visibleLayouts.map((l) => l.tableId),
+      );
+      setCollidingTableIds(collisions);
+
+      const zoneBoxes = computeZoneBoxes(previewLayouts, visibleLayouts);
+      const zoneCollisions = computeZoneCollisions(zoneBoxes);
+      setCollidingZoneNames(zoneCollisions);
+    }
   };
 
+  // Hoàn tất kéo thả một bàn
+  const handleDragNodeEnd = (activeId: string, e: KonvaEventObject<DragEvent>) => {
+    setActiveGuides([]);
+    const activeLayout = localLayouts[activeId];
+    if (!activeLayout) return;
+
+    const finalX = Math.round(e.target.x());
+    const finalY = Math.round(e.target.y());
+
+    const updatedLayouts = {
+      ...localLayouts,
+      [activeId]: {
+        ...activeLayout,
+        x: finalX,
+        y: finalY,
+      },
+    };
+
+    const collisions = computeCollisions(
+      updatedLayouts,
+      visibleLayouts.map((l) => l.tableId),
+    );
+    setCollidingTableIds(collisions);
+
+    const zoneBoxes = computeZoneBoxes(updatedLayouts, visibleLayouts);
+    const zoneCollisions = computeZoneCollisions(zoneBoxes);
+    setCollidingZoneNames(zoneCollisions);
+
+    if (collisions.has(activeId)) {
+      toast.warning("Vị trí bàn này đang đè lên bàn khác. Vui lòng căn chỉnh tách ra.");
+    } else if (zoneCollisions.size > 0) {
+      toast.warning("Khu vực này đang bị đè lên khu vực khác. Vui lòng căn chỉnh tách ra.");
+    }
+
+    pushHistory(updatedLayouts);
+  };
+
+  // Contextual Action: Xoay 90 độ quanh tâm bàn
+  const handleRotate90 = (tableId: string) => {
+    const current = localLayouts[tableId];
+    if (!current) return;
+
+    const nextRotation = (current.rotation + 90) % 360;
+    const isSwappingDims = current.shape !== "CIRCLE";
+    const nextWidth = isSwappingDims ? current.height : current.width;
+    const nextHeight = isSwappingDims ? current.width : current.height;
+
+    // Giữ nguyên tọa độ tâm của bàn khi xoay
+    const centerX = current.x + current.width / 2;
+    const centerY = current.y + current.height / 2;
+    const nextX = Math.round(centerX - nextWidth / 2);
+    const nextY = Math.round(centerY - nextHeight / 2);
+
+    const updated = {
+      ...localLayouts,
+      [tableId]: {
+        ...current,
+        rotation: nextRotation,
+        width: nextWidth,
+        height: nextHeight,
+        x: nextX,
+        y: nextY,
+      },
+    };
+    pushHistory(updated);
+    toast.info(`Đã xoay bàn sang ${nextRotation}°`);
+  };
+
+  // Contextual Action: Chuyển đổi giữa bàn Tròn và Bàn Chữ nhật
+  const handleToggleShape = (tableId: string) => {
+    const current = localLayouts[tableId];
+    if (!current) return;
+
+    const nextShape: FloorPlanShape = current.shape === "CIRCLE" ? "RECTANGLE" : "CIRCLE";
+    const originalItem = layouts.find((l) => l.tableId === tableId);
+    const capacity = originalItem?.capacity ?? 4;
+    const dims = getStandardDimensions(capacity, nextShape);
+
+    const centerX = current.x + current.width / 2;
+    const centerY = current.y + current.height / 2;
+    const nextX = Math.round(centerX - dims.width / 2);
+    const nextY = Math.round(centerY - dims.height / 2);
+
+    const updated = {
+      ...localLayouts,
+      [tableId]: {
+        ...current,
+        shape: nextShape,
+        width: dims.width,
+        height: dims.height,
+        x: nextX,
+        y: nextY,
+      },
+    };
+    pushHistory(updated);
+    toast.info(`Đã chuyển sang ${nextShape === "CIRCLE" ? "Bàn tròn" : "Bàn chữ nhật"}`);
+  };
+
+  // Contextual Action: Chuẩn hóa kích thước bàn hiện tại
+  const handleStandardizeCurrent = (tableId: string) => {
+    const current = localLayouts[tableId];
+    if (!current) return;
+
+    const originalItem = layouts.find((l) => l.tableId === tableId);
+    const capacity = originalItem?.capacity ?? 4;
+    const dims = getStandardDimensions(capacity, current.shape);
+
+    const centerX = current.x + current.width / 2;
+    const centerY = current.y + current.height / 2;
+    const nextX = Math.round(centerX - dims.width / 2);
+    const nextY = Math.round(centerY - dims.height / 2);
+
+    const updated = {
+      ...localLayouts,
+      [tableId]: {
+        ...current,
+        width: dims.width,
+        height: dims.height,
+        x: nextX,
+        y: nextY,
+      },
+    };
+    pushHistory(updated);
+    toast.success(`Đã chuẩn hóa kích thước bàn: ${dims.width} × ${dims.height}px`);
+  };
+
+  // Thao tác hàng loạt: Chuẩn hóa kích thước cho toàn bộ bàn
+  const handleStandardizeAll = () => {
+    const updated: Record<string, LocalTableLayout> = {};
+    for (const item of layouts) {
+      const current = localLayouts[item.tableId] ?? {
+        x: item.positionX,
+        y: item.positionY,
+        width: item.width || 90,
+        height: item.height || 90,
+        rotation: item.rotation || 0,
+        shape: item.shape || "RECTANGLE",
+      };
+      const dims = getStandardDimensions(item.capacity, current.shape);
+      const centerX = current.x + current.width / 2;
+      const centerY = current.y + current.height / 2;
+
+      updated[item.tableId] = {
+        ...current,
+        width: dims.width,
+        height: dims.height,
+        x: Math.round(centerX - dims.width / 2),
+        y: Math.round(centerY - dims.height / 2),
+      };
+    }
+    pushHistory(updated);
+    toast.success(`Đã chuẩn hóa kích thước cho tất cả ${layouts.length} bàn.`);
+  };
+
+  // Lưu sơ đồ bàn xuống Backend
   const handleSave = async () => {
     if (!onSaveLayouts || !hasChanges) return;
+    if (collidingTableIds.size > 0 || collidingZoneNames.size > 0) {
+      toast.error("Không thể lưu sơ đồ khi đang có bàn hoặc khu vực bị đè/trùng lặp.");
+      return;
+    }
     setIsSaving(true);
     try {
       const requests: FloorPlanLayoutRequest[] = layouts.map((item) => {
-        const pos = localPositions[item.tableId] ?? { x: item.positionX, y: item.positionY };
+        const current = localLayouts[item.tableId] ?? {
+          x: item.positionX,
+          y: item.positionY,
+          width: item.width || 90,
+          height: item.height || 90,
+          rotation: item.rotation || 0,
+          shape: item.shape || "RECTANGLE",
+        };
         return {
           tableId: item.tableId,
-          positionX: pos.x,
-          positionY: pos.y,
-          width: item.width,
-          height: item.height,
-          rotation: item.rotation,
-          shape: item.shape,
+          positionX: Math.round(current.x),
+          positionY: Math.round(current.y),
+          width: Math.round(current.width),
+          height: Math.round(current.height),
+          rotation: current.rotation,
+          shape: current.shape,
         };
       });
       await onSaveLayouts(requests);
@@ -152,37 +807,49 @@ export function FloorPlanCanvas({
   };
 
   const selectedLayout = layouts.find((l) => l.tableId === selectedTableId) ?? null;
+  const selectedLocal = selectedTableId ? localLayouts[selectedTableId] : null;
+
+  // Tính toán tọa độ hiển thị thanh Floating Action Pill trực tiếp trên bàn được chọn
+  const pillPos = useMemo(() => {
+    if (!selectedLocal || readOnly || !selectedLayout) return null;
+    const screenX = (selectedLocal.x + selectedLocal.width / 2) * stageScale + stagePos.x;
+    const screenY = selectedLocal.y * stageScale + stagePos.y;
+    return {
+      left: screenX,
+      top: screenY - 14,
+    };
+  }, [selectedLocal, stageScale, stagePos, readOnly, selectedLayout]);
 
   if (!isMounted) {
     return (
-      <div className="flex h-[600px] w-full items-center justify-center rounded-2xl border bg-muted/20">
+      <div className="flex h-[400px] w-full items-center justify-center rounded-2xl border bg-muted/20">
         <p className="text-sm text-muted-foreground">Đang khởi tạo sơ đồ 2D...</p>
       </div>
     );
   }
 
-  // Tạo các đường lưới grid nét đứt
+  // Tạo các đường lưới grid nền nét đứt
   const gridLines = [];
   const width = dimensions.width / stageScale;
   const height = dimensions.height / stageScale;
   const gridStep = 40;
 
-  for (let x = 0; x <= width + 500; x += gridStep) {
+  for (let x = 0; x <= width + 800; x += gridStep) {
     gridLines.push(
       <Line
         key={`vx-${x}`}
-        points={[x, -500, x, height + 500]}
+        points={[x, -800, x, height + 800]}
         stroke="#e2e8f0"
         strokeWidth={0.5}
         dash={[4, 4]}
       />,
     );
   }
-  for (let y = 0; y <= height + 500; y += gridStep) {
+  for (let y = 0; y <= height + 800; y += gridStep) {
     gridLines.push(
       <Line
         key={`hy-${y}`}
-        points={[-500, y, width + 500, y]}
+        points={[-800, y, width + 800, y]}
         stroke="#e2e8f0"
         strokeWidth={0.5}
         dash={[4, 4]}
@@ -195,16 +862,18 @@ export function FloorPlanCanvas({
       {/* Thanh công cụ điều khiển sơ đồ */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3 shadow-xs">
         <div className="flex flex-wrap items-center gap-2">
+          {/* Trạng thái kết nối */}
           <div className="flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-medium">
             <span
               className={cn(
                 "h-2.5 w-2.5 rounded-full transition-colors",
-                isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500",
+                isConnected ? "bg-emerald-500 animate-pulse" : "bg-primary",
               )}
             />
-            <span>{isConnected ? "Live" : "Mất kết nối"}</span>
+            <span>{isConnected ? "Live 2D" : "Sơ đồ mặt bằng"}</span>
           </div>
 
+          {/* Phóng to / Thu nhỏ / Căn vừa màn hình */}
           <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
             <Button
               type="button"
@@ -234,32 +903,108 @@ export function FloorPlanCanvas({
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              onClick={handleAutoFit}
+              title="Căn vừa màn hình (Auto-Fit)"
+            >
+              <Maximize className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
               onClick={handleResetZoom}
-              title="Đặt lại góc nhìn"
+              title="Đặt lại góc nhìn 100%"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
           </div>
 
+          {/* Hoàn tác / Làm lại (Undo / Redo) */}
+          {!readOnly && (
+            <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                disabled={historyIndex <= 0}
+                onClick={handleUndo}
+                title="Hoàn tác (Ctrl+Z)"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                disabled={historyIndex >= history.length - 1}
+                onClick={handleRedo}
+                title="Làm lại (Ctrl+Y)"
+              >
+                <Redo2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+
+          {/* Nút Chuẩn hóa kích thước toàn bộ */}
+          {!readOnly && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={handleStandardizeAll}
+              title="Chuẩn hóa kích thước tất cả bàn theo số lượng ghế"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              <span className="hidden md:inline">Chuẩn hóa kích thước</span>
+            </Button>
+          )}
+
           <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground">
             <Grid className="h-3.5 w-3.5" />
-            <span>Hít lưới 20px · Rê nền để cuộn</span>
+            <span>Căn từ tính 10px · Rê nền để cuộn</span>
           </div>
         </div>
 
+        {/* Cảnh báo va chạm & Nút Lưu */}
         {!readOnly && (
           <div className="flex items-center gap-2">
-            {hasChanges && (
+            {collidingTableIds.size > 0 && (
+              <span className="text-xs font-semibold text-rose-600 flex items-center gap-1 animate-pulse">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Có {collidingTableIds.size} bàn bị đè
+              </span>
+            )}
+            {collidingZoneNames.size > 0 && (
+              <span className="text-xs font-semibold text-rose-600 flex items-center gap-1 animate-pulse">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Có {collidingZoneNames.size} khu vực bị đè
+              </span>
+            )}
+            {hasChanges && collidingTableIds.size === 0 && collidingZoneNames.size === 0 && (
               <span className="text-xs font-medium text-amber-600 animate-pulse">
-                Có thay đổi vị trí chưa lưu
+                Có thay đổi chưa lưu
               </span>
             )}
             <Button
               type="button"
               size="sm"
-              disabled={!hasChanges || isSaving}
+              disabled={
+                !hasChanges ||
+                isSaving ||
+                collidingTableIds.size > 0 ||
+                collidingZoneNames.size > 0
+              }
               onClick={() => void handleSave()}
-              className="h-8 gap-1.5"
+              className="h-8 gap-1.5 shadow-xs"
+              title={
+                collidingTableIds.size > 0 || collidingZoneNames.size > 0
+                  ? "Vui lòng tách các bàn hoặc khu vực bị đè trước khi lưu"
+                  : undefined
+              }
             >
               <Save className="h-3.5 w-3.5" />
               {isSaving ? "Đang lưu..." : "Lưu vị trí"}
@@ -268,12 +1013,66 @@ export function FloorPlanCanvas({
         )}
       </div>
 
-      {/* Vùng Canvas chính và bảng chi tiết */}
-      <div className="grid gap-4 lg:grid-cols-4">
+      {/* Vùng Canvas chính và bảng thông tin */}
+      <div className={cn("grid gap-4", readOnly ? "grid-cols-1" : "lg:grid-cols-4")}>
         <div
           ref={containerRef}
-          className="relative overflow-hidden rounded-2xl border bg-slate-50/50 shadow-inner lg:col-span-3"
+          className={cn(
+            "relative overflow-hidden rounded-2xl border bg-slate-50/50 shadow-inner select-none",
+            !readOnly && "lg:col-span-3",
+          )}
         >
+          {/* Contextual Floating Action Pill hiển thị trực tiếp trên bàn được chọn */}
+          {pillPos && !readOnly && selectedLayout && (
+            <div
+              className="pointer-events-auto absolute z-20 flex items-center gap-1.5 -translate-x-1/2 -translate-y-full rounded-full border border-border/80 bg-background/95 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all duration-150 animate-in fade-in zoom-in-95"
+              style={{
+                left: Math.max(90, Math.min(pillPos.left, dimensions.width - 90)),
+                top: Math.max(48, pillPos.top),
+              }}
+            >
+              <div className="flex items-center gap-1 pr-2 border-r text-xs font-bold text-foreground">
+                <span>{selectedLayout.tableNumber}</span>
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  ({selectedLayout.capacity} chỗ)
+                </span>
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full hover:bg-accent text-foreground"
+                onClick={() => handleRotate90(selectedLayout.tableId)}
+                title="Xoay bàn 90°"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full hover:bg-accent text-foreground"
+                onClick={() => handleToggleShape(selectedLayout.tableId)}
+                title="Đổi hình dạng (Tròn ↔ Chữ nhật)"
+              >
+                <Shapes className="h-3.5 w-3.5" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full hover:bg-accent text-foreground"
+                onClick={() => handleStandardizeCurrent(selectedLayout.tableId)}
+                title="Chuẩn hóa kích thước bàn này"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+
           <Stage
             width={dimensions.width}
             height={dimensions.height}
@@ -290,30 +1089,141 @@ export function FloorPlanCanvas({
             }}
           >
             <Layer>
-              {/* Lưới tọa độ ngầm */}
+              {/* Đường lưới nền */}
               {gridLines}
 
-              {/* Render danh sách bàn ăn */}
-              {layouts.map((item) => {
-                const pos = localPositions[item.tableId] ?? {
+              {/* Ranh giới & Nhãn khu vực (Zone Boundaries) */}
+              {currentZoneBoxes.map((zone) => {
+                const isColliding = collidingZoneNames.has(zone.zoneName);
+                const strokeColor = isColliding
+                  ? "#ef4444"
+                  : zone.isVip
+                    ? "#f59e0b"
+                    : "#94a3b8";
+                const strokeWidth = isColliding ? 2.5 : 1.5;
+                const fillColor = isColliding
+                  ? "rgba(239, 68, 68, 0.14)"
+                  : zone.isVip
+                    ? "rgba(254, 243, 199, 0.22)"
+                    : "rgba(241, 245, 249, 0.45)";
+                const badgeFill = isColliding ? "#fee2e2" : zone.isVip ? "#fef3c7" : "#e2e8f0";
+                const badgeStroke = isColliding ? "#ef4444" : zone.isVip ? "#f59e0b" : "#cbd5e1";
+                const textFill = isColliding ? "#b91c1c" : zone.isVip ? "#b45309" : "#334155";
+                const badgeLabel = `${zone.zoneName}${zone.isVip ? " ★ VIP" : ""} (${zone.tableCount} bàn)${isColliding ? " ⚠️ Đè khu vực!" : ""}`;
+                const badgeWidth = Math.max(badgeLabel.length * 8.5 + 40, 120);
+
+                return (
+                  <Group key={`zone-boundary-${zone.zoneName}`}>
+                    {/* Hộp ranh giới khu vực */}
+                    <Rect
+                      x={zone.boxX}
+                      y={zone.boxY}
+                      width={zone.boxWidth}
+                      height={zone.boxHeight}
+                      cornerRadius={16}
+                      stroke={strokeColor}
+                      strokeWidth={strokeWidth}
+                      dash={[6, 4]}
+                      fill={fillColor}
+                    />
+
+                    {/* Huy hiệu cảnh báo ở góc trên bên phải khu vực khi bị đè */}
+                    {isColliding && (
+                      <Group x={zone.boxX + zone.boxWidth - 14} y={zone.boxY - 4}>
+                        <Circle radius={10} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} />
+                        <Text
+                          text="!"
+                          x={-3}
+                          y={-7}
+                          fontSize={13}
+                          fontFamily="sans-serif"
+                          fontStyle="bold"
+                          fill="#ffffff"
+                        />
+                      </Group>
+                    )}
+
+                    {/* Thẻ tên khu vực */}
+                    <Group x={zone.boxX + 12} y={zone.boxY + 6}>
+                      <Rect
+                        width={badgeWidth}
+                        height={22}
+                        cornerRadius={6}
+                        fill={badgeFill}
+                        stroke={badgeStroke}
+                        strokeWidth={1}
+                      />
+                      <Text
+                        text={badgeLabel}
+                        x={8}
+                        y={5}
+                        fontSize={11}
+                        fontStyle="bold"
+                        fontFamily="sans-serif"
+                        fill={textFill}
+                      />
+                    </Group>
+                  </Group>
+                );
+              })}
+
+              {/* Đường gióng từ tính (Magnetic Snapping Guidelines) */}
+              {activeGuides.map((guide, idx) => (
+                <Line
+                  key={`guide-${idx}`}
+                  points={guide.points}
+                  stroke={guide.stroke ?? "#06b6d4"}
+                  strokeWidth={1.5}
+                  dash={[4, 4]}
+                />
+              ))}
+
+              {/* Danh sách các bàn ăn trên sơ đồ */}
+              {visibleLayouts.map((item) => {
+                const layout = localLayouts[item.tableId] ?? {
                   x: item.positionX,
                   y: item.positionY,
+                  width: item.width || 90,
+                  height: item.height || 90,
+                  rotation: item.rotation || 0,
+                  shape: item.shape || "RECTANGLE",
                 };
-                const isSelected = item.tableId === selectedTableId;
+
+                const isSingleSelected = item.tableId === selectedTableId;
+                const isMultiSelected = selectedTableIds
+                  ? selectedTableIds.includes(item.tableId)
+                  : false;
+                const isSelected = isSingleSelected || isMultiSelected;
+                const isColliding = collidingTableIds.has(item.tableId);
+
                 const statusMeta = STATUS_COLORS[item.status] ?? STATUS_COLORS.AVAILABLE;
-                const isCircle = item.shape === "CIRCLE";
-                const nodeWidth = item.width;
-                const nodeHeight = item.height;
+                const isCircle = layout.shape === "CIRCLE";
+                const nodeWidth = layout.width;
+                const nodeHeight = layout.height;
+
+                // Màu sắc viền & đổ bóng theo trạng thái va chạm / chọn lựa
+                const strokeColor = isColliding
+                  ? "#ef4444"
+                  : isSelected
+                    ? "#2563eb"
+                    : "#475569";
+                const strokeWidth = isColliding || isSelected ? 3.5 : 1.5;
+                const shadowColor = isColliding
+                  ? "rgba(239, 68, 68, 0.7)"
+                  : isSelected
+                    ? "rgba(37, 99, 235, 0.5)"
+                    : "rgba(0,0,0,0.2)";
+                const shadowBlur = isColliding ? 14 : isSelected ? 12 : 4;
 
                 return (
                   <Group
                     key={item.tableId}
-                    x={pos.x}
-                    y={pos.y}
-                    rotation={item.rotation}
+                    x={layout.x}
+                    y={layout.y}
                     draggable={!readOnly}
                     onClick={() => onSelectTable?.(item)}
                     onTap={() => onSelectTable?.(item)}
+                    onDragMove={(e) => handleDragNodeMove(item.tableId, e)}
                     onDragEnd={(e) => handleDragNodeEnd(item.tableId, e)}
                   >
                     {isCircle ? (
@@ -321,11 +1231,12 @@ export function FloorPlanCanvas({
                         radius={nodeWidth / 2}
                         x={nodeWidth / 2}
                         y={nodeHeight / 2}
-                        fill={statusMeta.bg}
-                        stroke={isSelected ? "#09090b" : "#475569"}
-                        strokeWidth={isSelected ? 3.5 : 1.5}
-                        shadowColor="rgba(0,0,0,0.2)"
-                        shadowBlur={isSelected ? 10 : 4}
+                        fill={isSelected ? "#2563eb" : statusMeta.bg}
+                        stroke={strokeColor}
+                        strokeWidth={strokeWidth}
+                        dash={isColliding ? [5, 4] : undefined}
+                        shadowColor={shadowColor}
+                        shadowBlur={shadowBlur}
                         shadowOffset={{ x: 2, y: 3 }}
                         shadowOpacity={0.3}
                       />
@@ -334,17 +1245,34 @@ export function FloorPlanCanvas({
                         width={nodeWidth}
                         height={nodeHeight}
                         cornerRadius={10}
-                        fill={statusMeta.bg}
-                        stroke={isSelected ? "#09090b" : "#475569"}
-                        strokeWidth={isSelected ? 3.5 : 1.5}
-                        shadowColor="rgba(0,0,0,0.2)"
-                        shadowBlur={isSelected ? 10 : 4}
+                        fill={isSelected ? "#2563eb" : statusMeta.bg}
+                        stroke={strokeColor}
+                        strokeWidth={strokeWidth}
+                        dash={isColliding ? [5, 4] : undefined}
+                        shadowColor={shadowColor}
+                        shadowBlur={shadowBlur}
                         shadowOffset={{ x: 2, y: 3 }}
                         shadowOpacity={0.3}
                       />
                     )}
 
-                    {/* Nhãn số bàn */}
+                    {/* Huy hiệu cảnh báo va chạm */}
+                    {isColliding && (
+                      <Group x={nodeWidth - 10} y={-4}>
+                        <Circle radius={9} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} />
+                        <Text
+                          text="!"
+                          x={-3}
+                          y={-6}
+                          fontSize={12}
+                          fontFamily="sans-serif"
+                          fontStyle="bold"
+                          fill="#ffffff"
+                        />
+                      </Group>
+                    )}
+
+                    {/* Số hiệu bàn */}
                     <Text
                       text={item.tableNumber ?? ""}
                       x={0}
@@ -354,10 +1282,10 @@ export function FloorPlanCanvas({
                       fontSize={15}
                       fontFamily="sans-serif"
                       fontStyle="bold"
-                      fill={statusMeta.text}
+                      fill="#ffffff"
                     />
 
-                    {/* Sức chứa và VIP */}
+                    {/* Sức chứa và biểu tượng VIP */}
                     <Text
                       text={`${item.capacity ?? 0}p${item.zoneIsVip ? " ★" : ""}`}
                       x={0}
@@ -366,7 +1294,7 @@ export function FloorPlanCanvas({
                       align="center"
                       fontSize={11}
                       fontFamily="sans-serif"
-                      fill={statusMeta.text}
+                      fill="#ffffff"
                     />
                   </Group>
                 );
@@ -376,108 +1304,145 @@ export function FloorPlanCanvas({
         </div>
 
         {/* Cột thông tin chi tiết bàn được chọn & Chú thích */}
-        <div className="space-y-4">
-          <div className="rounded-2xl border bg-card p-4 shadow-xs">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Bàn được chọn
-            </h3>
-            {selectedLayout ? (
-              <div className="mt-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-2xl font-bold font-display">
-                    {selectedLayout.tableNumber}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className={cn("font-semibold", STATUS_COLORS[selectedLayout.status]?.badgeCls)}
-                  >
-                    {STATUS_COLORS[selectedLayout.status]?.label}
-                  </Badge>
-                </div>
+        {!readOnly && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border bg-card p-4 shadow-xs">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                Bàn được chọn
+              </h3>
+              {selectedLayout ? (
+                <div className="mt-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-2xl font-bold font-display">
+                      {selectedLayout.tableNumber}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={cn("font-semibold", STATUS_COLORS[selectedLayout.status]?.badgeCls)}
+                    >
+                      {STATUS_COLORS[selectedLayout.status]?.label}
+                    </Badge>
+                  </div>
 
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                  <div className="flex items-center justify-between">
-                    <span>Khu vực:</span>
-                    <span className="font-medium text-foreground flex items-center gap-1">
-                      {selectedLayout.zoneName ?? "Chưa phân"}
-                      {selectedLayout.zoneIsVip && (
-                        <Sparkles className="h-3 w-3 text-amber-500 inline" />
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Sức chứa:</span>
-                    <span className="font-medium text-foreground flex items-center gap-1">
-                      <Users className="h-3 w-3" />
-                      {selectedLayout.capacity} khách
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Hình dạng:</span>
-                    <span className="font-medium text-foreground">
-                      {selectedLayout.shape === "CIRCLE" ? "Bàn tròn" : "Bàn chữ nhật"}
-                    </span>
-                  </div>
-                </div>
-
-                {!readOnly && onUpdateStatus && (
-                  <div className="pt-3 border-t space-y-2">
-                    <p className="text-xs font-medium text-foreground">Trạng thái phục vụ:</p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={selectedLayout.status !== "MAINTENANCE" ? "default" : "outline"}
-                        className={cn(
-                          "h-8 text-xs flex-1",
-                          selectedLayout.status !== "MAINTENANCE" && "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span>Khu vực:</span>
+                      <span className="font-medium text-foreground flex items-center gap-1">
+                        {selectedLayout.zoneName ?? "Chưa phân"}
+                        {selectedLayout.zoneIsVip && (
+                          <Sparkles className="h-3 w-3 text-amber-500 inline" />
                         )}
-                        disabled={selectedLayout.status === "AVAILABLE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
-                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "AVAILABLE")}
-                      >
-                        Đang sử dụng
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={selectedLayout.status === "MAINTENANCE" ? "destructive" : "outline"}
-                        className="h-8 text-xs flex-1"
-                        disabled={selectedLayout.status === "MAINTENANCE" || selectedLayout.status === "OCCUPIED" || selectedLayout.status === "RESERVED"}
-                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "MAINTENANCE")}
-                      >
-                        Tạm ẩn bàn
-                      </Button>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Sức chứa:</span>
+                      <span className="font-medium text-foreground flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        {selectedLayout.capacity} khách
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Hình dạng:</span>
+                      <span className="font-medium text-foreground">
+                        {selectedLocal?.shape === "CIRCLE" ? "Bàn tròn" : "Bàn chữ nhật"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Kích thước:</span>
+                      <span className="font-medium font-mono text-foreground">
+                        {selectedLocal?.width} × {selectedLocal?.height}px
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Góc xoay:</span>
+                      <span className="font-medium font-mono text-foreground">
+                        {selectedLocal?.rotation ?? 0}°
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
-                Nhấp chuột vào một bàn trên sơ đồ để xem thông tin chi tiết và thao tác.
-              </div>
-            )}
-          </div>
 
-          {/* Bảng chú thích trạng thái */}
-          <div className="rounded-2xl border bg-card p-4 shadow-xs space-y-2.5">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Chú thích trạng thái
-            </h3>
-            <div className="space-y-2 text-xs">
-              {(Object.keys(STATUS_COLORS) as TableStatus[]).map((st) => (
-                <div key={st} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn("h-3 w-3 rounded-full shadow-xs", STATUS_COLORS[st].dotCls)}
-                    />
-                    <span className="font-medium">{STATUS_COLORS[st].label}</span>
+                  {/* Các nút công cụ thao tác nhanh với bàn */}
+                  <div className="pt-3 border-t space-y-2">
+                    <p className="text-xs font-medium text-foreground">Công cụ điều chỉnh:</p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs px-1 gap-1"
+                        onClick={() => handleRotate90(selectedLayout.tableId)}
+                        title="Xoay bàn 90°"
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        Xoay 90°
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs px-1 gap-1"
+                        onClick={() => handleToggleShape(selectedLayout.tableId)}
+                        title="Đổi hình tròn / chữ nhật"
+                      >
+                        <Shapes className="h-3 w-3" />
+                        Đổi hình
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs px-1 gap-1"
+                        onClick={() => handleStandardizeCurrent(selectedLayout.tableId)}
+                        title="Chuẩn hóa kích thước bàn theo số ghế"
+                      >
+                        <Maximize2 className="h-3 w-3" />
+                        Chuẩn cỡ
+                      </Button>
+                    </div>
+
+                    {onUpdateStatus && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        className="w-full h-8 text-xs mt-1"
+                        onClick={() => void onUpdateStatus(selectedLayout.tableId, "MAINTENANCE")}
+                      >
+                        Tạm ẩn bàn khỏi sơ đồ
+                      </Button>
+                    )}
                   </div>
-                  <span className="text-[10px] text-muted-foreground font-mono">{st}</span>
                 </div>
-              ))}
+              ) : (
+                <div className="mt-4 rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
+                  Nhấp chuột vào một bàn trên sơ đồ để xem thông tin chi tiết và thao tác.
+                </div>
+              )}
+            </div>
+
+            {/* Bảng chú thích trạng thái */}
+            <div className="rounded-2xl border bg-card p-4 shadow-xs space-y-2.5">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Chú thích trạng thái
+              </h3>
+              <div className="space-y-2 text-xs">
+                {(Object.keys(STATUS_COLORS) as TableStatus[])
+                  .filter((st) => st !== "MAINTENANCE")
+                  .map((st) => (
+                    <div key={st} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn("h-3 w-3 rounded-full shadow-xs", STATUS_COLORS[st].dotCls)}
+                        />
+                        <span className="font-medium">{STATUS_COLORS[st].label}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">{st}</span>
+                    </div>
+                  ))}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

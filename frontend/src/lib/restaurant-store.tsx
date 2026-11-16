@@ -151,8 +151,8 @@ const initialDishes: Dish[] = [
   },
 ];
 
-const zoneOf = (i: number): Zone => (i <= 5 ? "Trong Nhà" : i <= 9 ? "Sân Vườn" : "Phòng VIP");
-const initialTables: Table[] = Array.from({ length: 12 }, (_, k) => {
+const zoneOf = (i: number): Zone => (i <= 8 ? "Trong Nhà" : i <= 16 ? "Sân Vườn" : "Phòng VIP");
+const initialTables: Table[] = Array.from({ length: 24 }, (_, k) => {
   const i = k + 1;
   const base: Table = {
     id: i,
@@ -343,6 +343,7 @@ type Store = {
     cashback: number,
     redeemed: number,
     method: string,
+    tableName?: string,
   ) => void;
   advanceTicket: (id: string) => void;
   toggleStock: (id: string) => void;
@@ -371,7 +372,12 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
     checkIn: (tableId) =>
       setTables((ts) => ts.map((t) => (t.id === tableId ? { ...t, status: "occupied" } : t))),
     sendToKitchen: (tableId, lines, note) => {
-      const table = tables.find((t) => t.id === tableId)!;
+      const table = tables.find((t) => t.id === tableId);
+      const tableName =
+        table?.name ??
+        (tableId >= 100000
+          ? `Bàn ${String(tableId - 100000 + 1).padStart(2, "0")}`
+          : `Bàn ${tableId}`);
       setTables((ts) =>
         ts.map((t) => {
           if (t.id !== tableId) return t;
@@ -388,7 +394,7 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
         ...tk,
         {
           id: crypto.randomUUID(),
-          table: table.name,
+          table: tableName,
           createdAt: Date.now(),
           items: lines,
           note,
@@ -396,33 +402,78 @@ export function RestaurantProvider({ children }: { children: ReactNode }) {
         },
       ]);
     },
-    completePayment: (tableId, total, cashback, redeemed, method) => {
-      const table = tables.find((t) => t.id === tableId)!;
-      setDishes((ds) =>
-        ds.map((d) => ({
-          ...d,
-          sold: d.sold + (table.order.find((o) => o.dishId === d.id)?.qty ?? 0),
-        })),
+    completePayment: (
+      tableId: number,
+      total: number,
+      cashback: number,
+      redeemed: number,
+      method: string,
+      customTableName?: string,
+    ) => {
+      const table = tables.find(
+        (t) =>
+          t.id === tableId ||
+          (customTableName &&
+            t.name.trim().toLocaleLowerCase("vi-VN") ===
+              customTableName.trim().toLocaleLowerCase("vi-VN")),
       );
+      if (table?.order?.length) {
+        setDishes((ds) =>
+          ds.map((d) => ({
+            ...d,
+            sold: d.sold + (table.order?.find((o) => o.dishId === d.id)?.qty ?? 0),
+          })),
+        );
+      }
+      const resolvedTableName =
+        customTableName ??
+        table?.name ??
+        (tableId >= 100000
+          ? `Bàn ${String(tableId - 100000 + 1).padStart(2, "0")}`
+          : `Bàn ${tableId}`);
+
       setTx((x) => [
         ...x,
         {
           id: crypto.randomUUID(),
-          table: table.name,
+          table: resolvedTableName,
           total,
           points: cashback,
           method,
           at: Date.now(),
         },
       ]);
-      setLoyalty((l) => l - redeemed + cashback);
-      setTables((ts) =>
-        ts.map((t) =>
-          t.id === tableId
+      setLoyalty((l) => (typeof l === "number" ? l : 0) - (Number(redeemed) || 0) + (Number(cashback) || 0));
+      setTables((ts) => {
+        const hasTable = ts.some(
+          (t) =>
+            t.id === tableId ||
+            (resolvedTableName &&
+              t.name.trim().toLocaleLowerCase("vi-VN") ===
+                resolvedTableName.trim().toLocaleLowerCase("vi-VN")),
+        );
+        if (!hasTable) {
+          return [
+            ...ts,
+            {
+              id: tableId,
+              name: resolvedTableName,
+              zone: zoneOf(tableId >= 100000 ? tableId - 100000 + 1 : tableId),
+              seats: 4,
+              status: "available",
+              order: [],
+            },
+          ];
+        }
+        return ts.map((t) =>
+          t.id === tableId ||
+          (resolvedTableName &&
+            t.name.trim().toLocaleLowerCase("vi-VN") ===
+              resolvedTableName.trim().toLocaleLowerCase("vi-VN"))
             ? { ...t, status: "available", order: [], guest: undefined, time: undefined }
             : t,
-        ),
-      );
+        );
+      });
     },
     advanceTicket: (id) =>
       setTickets((tk) =>

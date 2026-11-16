@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth-session";
 
-export type TableStatus = "AVAILABLE" | "RESERVED" | "OCCUPIED" | "CLEANING" | "MAINTENANCE";
+export type TableStatus = "AVAILABLE" | "RESERVED" | "OCCUPIED" | "MAINTENANCE";
 
 export type FloorPlanShape = "RECTANGLE" | "CIRCLE";
 
@@ -48,6 +48,7 @@ export type FloorPlanLayoutResponse = {
   tableNumber: string;
   capacity: number;
   status: TableStatus;
+  zoneId?: string | null;
   zoneName: string | null;
   zoneIsVip: boolean | null;
 };
@@ -94,13 +95,6 @@ export const STATUS_COLORS: Record<
     label: "Đang ăn",
     badgeCls: "bg-rose-500/15 text-rose-700 border-rose-500/30",
     dotCls: "bg-rose-500",
-  },
-  CLEANING: {
-    bg: "#38bdf8",
-    text: "#ffffff",
-    label: "Dọn dẹp",
-    badgeCls: "bg-sky-500/15 text-sky-700 border-sky-500/30",
-    dotCls: "bg-sky-400",
   },
   MAINTENANCE: {
     bg: "#94a3b8",
@@ -177,7 +171,7 @@ export const tableApi = {
       body: JSON.stringify(payload),
     }),
   updateStatus: (id: string, status: TableStatus) =>
-    request<TableResponse>(`/api/admin/tables/${id}/status`, {
+    request<TableResponse>(`/api/tables/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),

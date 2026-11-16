@@ -57,6 +57,11 @@ class OrderServiceTest {
 
     @Mock
     private com.huongViet.voucher.VoucherService voucherService;
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    @Mock
+    private com.huongViet.reservation.ReservationRepository reservationRepository;
+
 
     private OrderService orderService;
 
@@ -76,7 +81,9 @@ class OrderServiceTest {
             messagingTemplate,
             loyaltyAccounts,
             loyaltySettings,
-            voucherService
+            voucherService,
+            jdbcTemplate,
+            reservationRepository
         );
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
@@ -87,6 +94,8 @@ class OrderServiceTest {
 
         unavailableDish = new MenuItem("menu-2", "cat-1", "Gà chiên mật ong", "Gà chiên",
             new BigDecimal("89000"), null, false);
+
+        org.mockito.Mockito.lenient().when(tableRepository.findById("table-1")).thenReturn(Optional.of(occupiedTable));
     }
 
     private CreateOrderRequest request(Boolean submit, String... menuItemIds) {
@@ -94,6 +103,13 @@ class OrderServiceTest {
             .map(id -> new OrderItemRequest(id, 1, "Ít cay"))
             .toList();
         return new CreateOrderRequest("table-1", OrderType.DINE_IN, items, submit);
+    }
+
+    private OrderItem item(String id, String orderId, MenuItem menu, int quantity, CookingStatus status) {
+        OrderItem item = new OrderItem(id, orderId, menu.getId(), quantity, menu.getCurrentPrice(), null);
+        item.setMenuItem(menu);
+        item.setCookingStatus(status);
+        return item;
     }
 
     @Test
@@ -160,6 +176,8 @@ class OrderServiceTest {
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc(anyString()))
+            .thenAnswer(inv -> List.of(item("item-1", "order-1", pho, 1, CookingStatus.QUEUED)));
         when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(inv -> inv.getArgument(0));
 
         OrderResponse response = orderService.create(request(true, "menu-1"), "staff-1");
@@ -188,6 +206,8 @@ class OrderServiceTest {
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc(anyString()))
+            .thenAnswer(inv -> List.of(item("item-1", "order-1", pho, 1, CookingStatus.QUEUED)));
 
         OrderResponse response = orderService.create(request(false, "menu-1"), "staff-1");
 
@@ -396,7 +416,7 @@ class OrderServiceTest {
             () -> orderService.cancelItem("order-1", "item-1", new CancelOrderItemRequest("Khách đổi món"), "staff-1"));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("đang nấu"));
+        assertTrue(ex.getReason().contains("chờ chế biến"));
         verify(orderItemRepository, never()).save(any(OrderItem.class));
         verify(kitchenTicketRepository, never()).save(any(KitchenTicket.class));
     }

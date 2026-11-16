@@ -10,18 +10,41 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Centralized exception handler for all REST controllers across the application.
- */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * Bắt lỗi sai kiểu dữ liệu tham số trên URL/RequestParam (ví dụ truyền chuỗi sai định dạng vào LocalDate).
+     * Trả về HTTP 400 Bad Request thay vì để rơi vào lỗi 500 Unhandled.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String paramName = ex.getName();
+        String targetType = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "hợp lệ";
+        Object receivedValue = ex.getValue();
+
+        String message = String.format(
+            "Tham số '%s' nhận giá trị '%s' không đúng định dạng yêu cầu (%s). Ví dụ định dạng đúng của ngày là yyyy-MM-dd (2026-11-12).",
+            paramName, receivedValue, targetType
+        );
+
+        logger.warn("Parameter Type Mismatch [{}]: value='{}', requiredType='{}'", paramName, receivedValue, targetType);
+
+        ErrorResponse response = ErrorResponse.of(
+            HttpStatus.BAD_REQUEST.value(),
+            HttpStatus.BAD_REQUEST.getReasonPhrase(),
+            message
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    }
 
     /**
      * Handles custom business exceptions thrown via ResponseStatusException.

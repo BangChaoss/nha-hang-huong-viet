@@ -21,6 +21,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
@@ -62,13 +63,16 @@ public class SecurityConfig {
                 .requestMatchers("/api/vouchers/validate", "/api/vouchers/redeem").permitAll()
                 // UC-14: thực đơn là công khai, khách chưa đăng nhập vẫn xem được
                 .requestMatchers("/api/menu/**").permitAll()
+                // UC19/UC20: Đánh giá
+                .requestMatchers(HttpMethod.GET, "/api/feedbacks/public").permitAll()
+                .requestMatchers("/api/feedbacks/**").authenticated()
                 // UC-15, UC-17: gọi món và xem chi tiết order — nhân viên phục vụ
                 .requestMatchers("/api/orders/**").hasAnyAuthority(
                     "STAFF", "ROLE_STAFF", "CHEF", "ROLE_CHEF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
-                // UC-16: màn hình bếp chỉ để xem — đầu bếp không được đổi trạng thái phiếu.
+                // UC-16: Nhân viên điều phối, Quản lý và Quản trị viên được cập nhật trạng thái phiếu bếp
                 .requestMatchers(HttpMethod.PATCH, "/api/kitchen/tickets/*/status").hasAnyAuthority(
-                    "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
                 // UC-16: hàng đợi phiếu bếp cho bếp, phục vụ và quản lý cùng theo dõi
                 .requestMatchers("/api/kitchen/**").hasAnyAuthority(
@@ -85,10 +89,15 @@ public class SecurityConfig {
                 .requestMatchers("/api/admin/**").hasAnyAuthority(
                     "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
                 )
+                // Hóa đơn thanh toán cho Nhân viên, Quản lý và Admin
+                .requestMatchers("/api/invoices/**").hasAnyAuthority(
+                    "STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN"
+                )
+                
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(reservationRateLimiterFilter, JwtAuthFilter.class);
+            .addFilterAfter(reservationRateLimiterFilter, JwtAuthFilter.class);
 
         return http.build();
     }
@@ -99,6 +108,8 @@ public class SecurityConfig {
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
+        // Cho phép JS đọc header báo tài khoản bị khóa.
+        config.setExposedHeaders(List.of(JwtAuthFilter.ACCOUNT_STATUS_HEADER));
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

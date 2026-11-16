@@ -195,6 +195,7 @@ CREATE TABLE reservations (
     guest_phone VARCHAR(20) NOT NULL,
     guest_email VARCHAR(100) NULL,
     table_id CHAR(36) NULL,
+    merged_table_ids VARCHAR(500) NULL,
     zone_id CHAR(36) NULL,
     party_size INT NOT NULL,
     reservation_date DATE NOT NULL,
@@ -224,7 +225,7 @@ CREATE TABLE reservations (
 CREATE TABLE reservation_audits (
     id CHAR(36) NOT NULL,
     reservation_id CHAR(36) NOT NULL,
-    changed_by CHAR(36) NOT NULL,
+    changed_by CHAR(36) NULL,
     old_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     new_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     old_table_id CHAR(36) NULL,

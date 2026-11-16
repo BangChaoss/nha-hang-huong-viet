@@ -172,6 +172,21 @@ describe("reservationApi", () => {
     );
   });
 
+  it("listAdminBookings() should query /api/admin/reservations with scope, date, and status", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue([]),
+    } as unknown as Response);
+
+    await reservationApi.listAdminBookings({ scope: "upcoming", status: "PENDING_HOLD" });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/admin\/reservations\?scope=upcoming&status=PENDING_HOLD/),
+      expect.any(Object),
+    );
+  });
+
   it("getAvailableTables() should query /api/admin/reservations/:id/available-tables", async () => {
     const mockTables = [
       { id: "tbl-1", tableNumber: "T1", capacity: 4, status: "AVAILABLE", zoneName: "Sân Vườn" },

@@ -1,8 +1,10 @@
-﻿import * as React from "react";
+import * as React from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { Utensils, Users, PhoneCall, AlertTriangle, Loader2, Clock } from "lucide-react";
 import { useSession } from "@/lib/auth-session";
+import { profileApi } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +28,13 @@ interface BookFormProps {
 
 export function BookForm({ onDone, initialValues }: BookFormProps) {
   const { session } = useSession();
+  const profileQuery = useQuery({
+    queryKey: ["account", "profile"],
+    queryFn: profileApi.get,
+    enabled: Boolean(session?.token),
+  });
+  const userPhone = session?.phoneNumber || profileQuery.data?.phoneNumber || "";
+
   const [createdReservation, setCreatedReservation] = React.useState<ReservationResponse | null>(
     null,
   );
@@ -34,7 +43,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     resolver: zodResolver(createReservationSchema),
     defaultValues: {
       guestName: initialValues?.guestName ?? session?.username ?? "",
-      guestPhone: initialValues?.guestPhone ?? "",
+      guestPhone: initialValues?.guestPhone ?? userPhone ?? "",
       guestEmail: initialValues?.guestEmail ?? session?.email ?? "",
       reservationDate: initialValues?.reservationDate ?? "",
       reservationTime: initialValues?.reservationTime ?? "",
@@ -51,9 +60,16 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     control,
     watch,
     setValue,
+    getValues,
     reset,
     formState: { errors },
   } = form;
+
+  React.useEffect(() => {
+    if (userPhone && !getValues("guestPhone")) {
+      setValue("guestPhone", userPhone, { shouldValidate: false });
+    }
+  }, [userPhone, getValues, setValue]);
 
   const watchedDate = watch("reservationDate");
   const watchedPartySize = watch("partySize");
@@ -93,7 +109,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
     setCreatedReservation(null);
     reset({
       guestName: session?.username ?? "",
-      guestPhone: "",
+      guestPhone: userPhone || "",
       guestEmail: session?.email ?? "",
       reservationDate: "",
       reservationTime: "",
@@ -109,7 +125,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
       <BookingConfirmation
         reservation={createdReservation}
         onReset={handleResetForm}
-        onViewHistory={onDone}
+        {...(onDone != null ? { onViewHistory: onDone } : {})}
       />
     );
   }
@@ -198,7 +214,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-200"
           >
             <PhoneCall className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="font-semibold">Quy định đoàn khách lớn</AlertTitle>
+            <AlertTitle className="font-semibold">Quy định đoàn khách lớn (BR-17)</AlertTitle>
             <AlertDescription className="text-xs mt-1 leading-relaxed">
               Đoàn trên 15 khách vui lòng liên hệ trực tiếp hotline <strong>1900 8888</strong> để
               được đặt tiệc (Event Booking) và nhận tư vấn thực đơn riêng biệt từ Quản lý nhà hàng.
@@ -228,7 +244,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
           selectedTime={watchedTime}
           onSelectZone={(zoneId) => setValue("zoneId", zoneId, { shouldValidate: true })}
           onSelectTime={(time) => setValue("reservationTime", time, { shouldValidate: true })}
-          availabilityData={availabilityData}
+          {...(availabilityData != null ? { availabilityData } : {})}
           isLoading={isCheckingAvailability}
           partySize={watchedPartySize}
         />
@@ -269,7 +285,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
             </Label>
             <Input
               id="guestPhone"
-              placeholder="0912345678 hoặc +84..."
+              placeholder={userPhone || "0912345678 hoặc +84..."}
               {...register("guestPhone")}
             />
             {errors.guestPhone && (
@@ -294,7 +310,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
           {/* Yêu cầu đặc biệt */}
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="specialRequests">
-              Yêu cầu đặc biệt (Ăn kiêng, dị ứng, ghế trẻ em, sinh nhật...)
+              Yêu cầu đặc biệt (Bàn gần cửa, ghế trẻ em, sinh nhật...)
             </Label>
             <Textarea
               id="specialRequests"
@@ -311,13 +327,7 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
         </div>
       </section>
 
-      {/* THÔNG BÁO THỜI GIAN PHỤC VỤ TIÊU CHUẨN */}
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
-        <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-        <span className="leading-relaxed font-medium">
-          Thời gian phục vụ tiêu chuẩn cho bàn của quý khách là 2 tiếng kể từ giờ đặt. Trường hợp muốn ngồi lâu hơn, vui lòng liên hệ trước với nhà hàng.
-        </span>
-      </div>
+      
 
       {/* NÚT GỬI ĐƠN */}
       <div className="border-t pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">

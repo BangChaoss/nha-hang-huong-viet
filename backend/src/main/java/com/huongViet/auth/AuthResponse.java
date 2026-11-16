@@ -6,7 +6,8 @@ public record AuthResponse(
     String id,
     String username,
     String email,
-    String role
+    String role,
+    String phoneNumber
 ) {
     public static AuthResponse from(User user, String token, String refreshToken) {
         return new AuthResponse(
@@ -15,7 +16,8 @@ public record AuthResponse(
             user.getId(),
             user.getUsername(),
             user.getEmail(),
-            user.getRole().name()
+            user.getRole().name(),
+            user.getPhoneNumber()
         );
     }
 

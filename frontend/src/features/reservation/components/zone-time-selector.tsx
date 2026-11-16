@@ -135,7 +135,7 @@ export function ZoneTimeSelector({
               </h4>
             </div>
             <span className="text-xs text-muted-foreground">
-              (Ca trưa: 11:00–13:30 · Ca tối: 17:30–20:30)
+              (Khung giờ phục vụ: 11:00 – 21:00)
             </span>
           </div>
 

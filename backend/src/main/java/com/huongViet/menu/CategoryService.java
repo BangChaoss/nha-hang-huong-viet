@@ -39,6 +39,7 @@ public class CategoryService {
         this.messagingTemplate = messagingTemplate;
     }
 
+    /** Liệt kê danh mục chưa bị xóa theo thứ tự hiển thị, kèm số món đang hoạt động. */
     public List<CategoryResponse> listAll() {
         return categoryRepository.findAllByDeletedAtIsNullOrderByDisplayOrderAsc()
             .stream()
@@ -46,11 +47,16 @@ public class CategoryService {
             .toList();
     }
 
+    /** Lấy một danh mục đang hoạt động cùng số món hiện có. */
     public CategoryResponse getById(String id) {
         Category category = findOrThrow(id);
         return CategoryResponse.from(category, countActiveMenuItems(category.getId()));
     }
 
+    /**
+     * Tạo danh mục sau khi chuẩn hóa tên và kiểm tra trùng lặp.
+     * Phát thông báo để các client làm mới cấu trúc thực đơn.
+     */
     @Transactional
     public CategoryResponse create(CategoryRequest request) {
         String trimmedName = request.categoryName().trim();
@@ -71,6 +77,10 @@ public class CategoryService {
         return CategoryResponse.from(saved, 0);
     }
 
+    /**
+     * Cập nhật tên và thứ tự hiển thị của danh mục đang hoạt động.
+     * Tên không được trùng với danh mục khác chưa bị xóa.
+     */
     @Transactional
     public CategoryResponse update(String id, CategoryRequest request) {
         Category category = findOrThrow(id);
@@ -121,6 +131,7 @@ public class CategoryService {
         return new MenuOverviewResponse(categories);
     }
 
+    /** Tạo dữ liệu hiển thị cho một danh mục và các món chưa bị xóa của nó. */
     private MenuCategoryResponse toMenuCategory(Category category) {
         List<MenuItemResponse> items = menuItemRepository
             .findAllByCategoryIdAndDeletedAtIsNullOrderByItemNameAsc(category.getId())

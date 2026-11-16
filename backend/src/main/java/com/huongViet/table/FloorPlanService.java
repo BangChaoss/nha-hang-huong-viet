@@ -1,5 +1,7 @@
 package com.huongViet.table;
 
+import com.huongViet.reservation.Reservation;
+import com.huongViet.reservation.ReservationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -8,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -20,13 +24,19 @@ public class FloorPlanService {
 
     private final FloorPlanLayoutRepository layoutRepository;
     private final TableRepository tableRepository;
+    private final TableService tableService;
+    private final ReservationRepository reservationRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     public FloorPlanService(FloorPlanLayoutRepository layoutRepository,
                             TableRepository tableRepository,
+                            TableService tableService,
+                            ReservationRepository reservationRepository,
                             SimpMessagingTemplate messagingTemplate) {
         this.layoutRepository = layoutRepository;
         this.tableRepository = tableRepository;
+        this.tableService = tableService;
+        this.reservationRepository = reservationRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
@@ -34,9 +44,16 @@ public class FloorPlanService {
         List<FloorPlanLayout> layouts = layoutRepository.findAll();
         List<FloorPlanLayoutResponse> responses = new ArrayList<>();
 
+        LocalDate today = LocalDate.now();
+        LocalTime nowTime = LocalTime.now();
+        List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
+
         for (FloorPlanLayout layout : layouts) {
             tableRepository.findByIdActiveWithZone(layout.getTableId())
-                .ifPresent(table -> responses.add(FloorPlanLayoutResponse.from(layout, table)));
+                .ifPresent(table -> {
+                    TableStatus dynamicStatus = tableService.calculateDynamicStatus(table, todayReservations, nowTime);
+                    responses.add(FloorPlanLayoutResponse.from(layout, table, dynamicStatus));
+                });
         }
 
         return responses;
@@ -45,6 +62,10 @@ public class FloorPlanService {
     @Transactional
     public List<FloorPlanLayoutResponse> saveAll(List<FloorPlanLayoutRequest> requests) {
         List<FloorPlanLayoutResponse> responses = new ArrayList<>();
+
+        LocalDate today = LocalDate.now();
+        LocalTime nowTime = LocalTime.now();
+        List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
 
         for (FloorPlanLayoutRequest request : requests) {
             RestaurantTable table = tableRepository.findByIdActiveWithZone(request.tableId())
@@ -73,7 +94,8 @@ public class FloorPlanService {
             layout.setShape(request.shape());
 
             FloorPlanLayout saved = layoutRepository.save(layout);
-            responses.add(FloorPlanLayoutResponse.from(saved, table));
+            TableStatus dynamicStatus = tableService.calculateDynamicStatus(table, todayReservations, nowTime);
+            responses.add(FloorPlanLayoutResponse.from(saved, table, dynamicStatus));
         }
 
         logger.info("Saved batch floor plan layout positions: count={}", responses.size());

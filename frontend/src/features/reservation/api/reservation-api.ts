@@ -1,6 +1,8 @@
 import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
+import { getDeviceId } from "@/lib/device-id";
 import type {
+  AdminReservationQueryParams,
   AvailableTable,
   CreateReservationRequest,
   ReservationResponse,
@@ -12,11 +14,13 @@ import type {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getSession()?.token;
+  const deviceId = getDeviceId();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(deviceId ? { "X-Device-Id": deviceId } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -61,11 +65,13 @@ export const reservationApi = {
   getMyBookings: (): Promise<ReservationResponse[]> =>
     request<ReservationResponse[]>("/api/reservations/my-bookings"),
 
-  guestLookup: (phone: string, code: string): Promise<ReservationResponse[]> => {
+  guestLookup: (phone: string, code?: string): Promise<ReservationResponse[]> => {
     const params = new URLSearchParams({
       phone: phone.trim(),
-      code: code.trim(),
     });
+    if (code && code.trim()) {
+      params.append('code', code.trim());
+    }
     return request<ReservationResponse[]>(
       `/api/reservations/guest-lookup?${params.toString()}`,
     );
@@ -79,6 +85,17 @@ export const reservationApi = {
     }),
 
   // === UC09, UC10, UC13: Staff/Admin APIs ===
+  listAdminBookings: (params: AdminReservationQueryParams = {}): Promise<ReservationResponse[]> => {
+    const q = new URLSearchParams();
+    if (params.date) q.append("date", params.date);
+    if (params.scope) q.append("scope", params.scope);
+    if (params.status) q.append("status", params.status);
+    const queryString = q.toString();
+    return request<ReservationResponse[]>(
+      `/api/admin/reservations${queryString ? `?${queryString}` : ""}`,
+    );
+  },
+
   listByDate: (date: string, status?: ReservationStatus): Promise<ReservationResponse[]> => {
     const params = new URLSearchParams({ date });
     if (status) {

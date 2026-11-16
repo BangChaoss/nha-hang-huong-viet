@@ -30,10 +30,11 @@ export function BookingConfirmation({
   const [copied, setCopied] = React.useState(false);
 
   const bookingCode = reservation.id.substring(0, 8).toUpperCase();
+  const fullBookingCode = `HV-${bookingCode}`;
 
   const handleCopyCode = async () => {
     try {
-      await navigator.clipboard.writeText(bookingCode);
+      await navigator.clipboard.writeText(fullBookingCode);
       setCopied(true);
       toast.success("Đã sao chép mã đặt bàn!");
       setTimeout(() => setCopied(false), 2000);

@@ -43,8 +43,8 @@ function LoginPage() {
     setLoading(true);
     try {
       const u = await login({ usernameOrEmail: f.usernameOrEmail.trim(), password: f.password });
-      // Điều hướng theo role do effect phía trên xử lý khi `user` thay đổi.
       toast.success(`Chào mừng ${u.username} quay lại!`);
+      void navigate({ to: getHomeForRole(u.role), replace: true });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {

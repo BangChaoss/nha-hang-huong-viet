@@ -11,6 +11,7 @@ import { API_BASE } from "@/lib/table-api";
 import { resolveImageUrl } from "@/lib/image-url";
 import { BookForm } from "@/features/reservation/components/book-form";
 import { BookingHistoryList } from "@/features/reservation/components/booking-history-list";
+import { CustomerFeedback } from "@/features/feedback/components/customer-feedback";
 import { useMenu } from "@/features/menu/hooks/use-menu";
 import { MenuDetailDialog } from "@/features/menu/components/menu-detail-dialog";
 import type {
@@ -23,6 +24,13 @@ const ALL_CATEGORIES = "all";
 
 export function CustomerPortal() {
   const [tab, setTab] = useState("menu");
+  const [targetInvoiceId, setTargetInvoiceId] = useState<string | undefined>(undefined);
+
+  const handleNavigateToReview = (invoiceId: string) => {
+    setTargetInvoiceId(invoiceId);
+    setTab("reviews");
+  };
+
   return (
     <Tabs value={tab} onValueChange={setTab} className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -36,6 +44,7 @@ export function CustomerPortal() {
           <TabsTrigger value="menu">Thực Đơn</TabsTrigger>
           <TabsTrigger value="book">Đặt Bàn Trước</TabsTrigger>
           <TabsTrigger value="history">Lịch Sử Đặt Bàn</TabsTrigger>
+          <TabsTrigger value="reviews">Đánh Giá</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="menu">
@@ -45,7 +54,10 @@ export function CustomerPortal() {
         <BookForm onDone={() => setTab("history")} />
       </TabsContent>
       <TabsContent value="history">
-        <BookingHistoryList />
+        <BookingHistoryList onLeaveFeedback={handleNavigateToReview} />
+      </TabsContent>
+      <TabsContent value="reviews">
+        <CustomerFeedback initialInvoiceId={targetInvoiceId} />
       </TabsContent>
     </Tabs>
   );
@@ -184,10 +196,6 @@ function Menu() {
   );
 }
 
-/**
- * BR-30 / BR-50: cập nhật tình trạng còn món ngay trong cache React Query
- * khi nhận được thông báo WebSocket từ nhà hàng.
- */
 function useMenuAvailabilitySubscription() {
   const queryClient = useQueryClient();
   const clientRef = useRef<Client | null>(null);
@@ -216,7 +224,7 @@ function useMenuAvailabilitySubscription() {
           const SockJSClass = SockJSModule.default;
           sockJsFactory = () => new SockJSClass(`${API_BASE}/ws`) as unknown as WebSocket;
         } catch {
-          // Nếu SockJS không tải được, client vẫn hoạt động qua native brokerURL
+          // Bỏ qua lỗi fallback
         }
 
         if (isDisposed) return;
@@ -249,7 +257,7 @@ function useMenuAvailabilitySubscription() {
                   };
                 });
               } catch {
-                // Bỏ qua nếu message payload lỗi định dạng
+                // Bỏ qua lỗi format
               }
             });
           },
@@ -258,7 +266,7 @@ function useMenuAvailabilitySubscription() {
         clientRef.current = client;
         client.activate();
       } catch {
-        // Không kết nối được WebSocket thì thực đơn vẫn hiển thị từ REST API
+        // Fallback
       }
     };
 
@@ -272,7 +280,7 @@ function useMenuAvailabilitySubscription() {
         try {
           void client.deactivate();
         } catch {
-          // Bỏ qua lỗi ngắt kết nối khi unmount
+          // Bỏ qua lỗi unmount
         }
       }
     };

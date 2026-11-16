@@ -550,7 +550,7 @@ export function TableManagement() {
                 <TableBody>
                   {filteredTables.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                         Không tìm thấy bàn nào phù hợp tiêu chí.
                       </TableCell>
                     </TableRow>
@@ -584,7 +584,26 @@ export function TableManagement() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-2.5">
+                            {tbl.status === "MAINTENANCE" ? (
+                              <Badge variant="outline" className="bg-slate-500/10 text-slate-600 border-slate-500/20 text-xs">
+                                Tạm ẩn
+                              </Badge>
+                            ) : tbl.status === "OCCUPIED" ? (
+                              <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-xs">
+                                Đang phục vụ
+                              </Badge>
+                            ) : tbl.status === "RESERVED" ? (
+                              <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs">
+                                Đã đặt trước
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs">
+                                Sẵn sàng
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
                               <Switch
                                 checked={tbl.status !== "MAINTENANCE"}
                                 disabled={isLocked}
@@ -593,24 +612,8 @@ export function TableManagement() {
                                   void handleUpdateStatus(tbl.id, newStatus);
                                 }}
                               />
-                              <span className="text-xs font-medium">
-                                {tbl.status === "MAINTENANCE" ? (
-                                  <Badge variant="outline" className="bg-slate-500/10 text-slate-600 border-slate-500/20 text-xs">
-                                    Tạm ẩn
-                                  </Badge>
-                                ) : tbl.status === "OCCUPIED" ? (
-                                  <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-xs">
-                                    Đang phục vụ
-                                  </Badge>
-                                ) : tbl.status === "RESERVED" ? (
-                                  <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs">
-                                    Đã đặt trước
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs">
-                                    Đang sử dụng
-                                  </Badge>
-                                )}
+                              <span className="text-xs text-muted-foreground">
+                                {tbl.status !== "MAINTENANCE" ? "Hiển thị" : "Đã ẩn"}
                               </span>
                             </div>
                           </TableCell>

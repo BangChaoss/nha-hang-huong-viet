@@ -74,6 +74,12 @@ public class ProfileService {
         return UserProfileResponse.from(saved);
     }
 
+    /**
+     * Xử lý đổi mật khẩu cho người dùng hiện tại:
+     * 1. Kiểm tra xác thực và các ràng buộc mật khẩu (mật khẩu cũ chính xác, mật khẩu mới khớp xác nhận, không trùng mật khẩu cũ).
+     * 2. Mã hóa mật khẩu mới (BCrypt) và cập nhật vào cơ sở dữ liệu.
+     * 3. Thu hồi (revoke) toàn bộ refresh token hiện hành để buộc đăng xuất trên các thiết bị khác nhằm đảm bảo an toàn bảo mật.
+     */
     @Transactional
     public void changePassword(User currentUser, ChangePasswordRequest request) {
         if (currentUser == null) {
@@ -96,6 +102,7 @@ public class ProfileService {
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
 
+        // Thu hồi toàn bộ refresh token đã cấp trước đó để hủy các phiên đăng nhập cũ trên mọi thiết bị
         if (refreshTokenService != null) {
             refreshTokenService.revokeAllForUser(user.getId());
         }

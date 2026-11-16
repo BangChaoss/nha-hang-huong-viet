@@ -33,14 +33,22 @@ public class ReservationAdminController {
     }
 
     /**
-     * GET /api/admin/reservations?date=YYYY-MM-DD&status=...
-     * UC09: List reservations for a given date with optional status filter (defaults to today).
+     * GET /api/admin/reservations?date=YYYY-MM-DD&status=...&scope=upcoming|pending|date
+     * UC09: List reservations for a given date or scope with optional status filter (defaults to today).
      */
     @GetMapping
-    public ResponseEntity<List<ReservationResponse>> listByDate(
+    public ResponseEntity<List<ReservationResponse>> listReservations(
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+        @RequestParam(required = false) String scope,
         @RequestParam(required = false) ReservationStatus status
     ) {
+        if ("pending".equalsIgnoreCase(scope)) {
+            return ResponseEntity.ok(reservationService.listAllPending());
+        }
+        if ("upcoming".equalsIgnoreCase(scope)) {
+            LocalDate startDate = (date != null) ? date : LocalDate.now();
+            return ResponseEntity.ok(reservationService.listUpcoming(startDate, status));
+        }
         LocalDate queryDate = (date != null) ? date : LocalDate.now();
         return ResponseEntity.ok(reservationService.listByDate(queryDate, status));
     }

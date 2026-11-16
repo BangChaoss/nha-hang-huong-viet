@@ -11,6 +11,7 @@ interface StaffBookingRowProps {
   onCheckIn: (booking: ReservationResponse) => void;
   onCancel: (booking: ReservationResponse) => void;
   isActionPending?: boolean;
+  showDate?: boolean;
 }
 
 export function StaffBookingRow({
@@ -19,6 +20,7 @@ export function StaffBookingRow({
   onCheckIn,
   onCancel,
   isActionPending = false,
+  showDate = false,
 }: StaffBookingRowProps) {
   const statusCfg =
     RESERVATION_STATUS_CONFIG[booking.status] || RESERVATION_STATUS_CONFIG.PENDING_HOLD;
@@ -26,6 +28,34 @@ export function StaffBookingRow({
   const timeFormatted = booking.reservationTime ? booking.reservationTime.substring(0, 5) : "";
   const isPending = booking.status === "PENDING_HOLD";
   const isConfirmed = booking.status === "CONFIRMED";
+
+  const checkInTiming = React.useMemo(() => {
+    if (!booking.reservationDate || !booking.reservationTime) {
+      return { allowed: true, reason: null, diffMinutes: 0 };
+    }
+    const [year, month, day] = booking.reservationDate.split("-").map(Number);
+    const [hours, minutes] = booking.reservationTime.split(":").map(Number);
+    const bookingDate = new Date(year ?? 2026, (month ?? 1) - 1, day ?? 1, hours ?? 0, minutes ?? 0, 0, 0);
+
+    const now = new Date();
+    const diffMinutes = (now.getTime() - bookingDate.getTime()) / (1000 * 60);
+
+    if (diffMinutes < -30) {
+      return {
+        allowed: false,
+        reason: "Chưa đến giờ check-in (trước tối đa 30p)",
+        diffMinutes,
+      };
+    }
+    if (diffMinutes > 30) {
+      return {
+        allowed: false,
+        reason: "Quá giờ nhận bàn (>30p)",
+        diffMinutes,
+      };
+    }
+    return { allowed: true, reason: null, diffMinutes };
+  }, [booking.reservationDate, booking.reservationTime]);
 
   return (
     <TableRow
@@ -80,9 +110,11 @@ export function StaffBookingRow({
           ) : (
             <span className="text-muted-foreground italic">Chưa gán bàn</span>
           )}
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
             {booking.zoneName || "Khu vực đang cập nhật"}
-            {booking.zoneIsVip ? " ⭐" : ""}
+            {booking.zoneIsVip && (
+              <span className="text-[10px] text-amber-600 font-semibold">(VIP)</span>
+            )}
           </span>
         </div>
       </TableCell>
@@ -116,32 +148,7 @@ export function StaffBookingRow({
       <TableCell className="text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-1.5">
           {isPending && (
-            <Button
-              type="button"
-              size="sm"
-              variant="default"
-              onClick={() => onOpenConfirm(booking)}
-              disabled={isActionPending}
-              className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-              Xác nhận & Gán bàn
-            </Button>
-          )}
-
-          {isConfirmed && (
-            <>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                onClick={() => onCheckIn(booking)}
-                disabled={isActionPending}
-                className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
-              >
-                <UserCheck className="h-3.5 w-3.5 mr-1" />
-                Check-in
-              </Button>
+            <div className="flex items-center justify-end gap-1.5">
               <Button
                 type="button"
                 size="sm"
@@ -153,7 +160,61 @@ export function StaffBookingRow({
                 <XCircle className="h-3.5 w-3.5 mr-1" />
                 Hủy
               </Button>
-            </>
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                onClick={() => onOpenConfirm(booking)}
+                disabled={isActionPending}
+                className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                Xác nhận & Gán bàn
+              </Button>
+            </div>
+          )}
+
+          {isConfirmed && (
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center justify-end gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  onClick={() => onCheckIn(booking)}
+                  disabled={isActionPending || !checkInTiming.allowed}
+                  title={checkInTiming.reason ?? "Xác nhận khách nhận bàn"}
+                  className={`h-7 text-xs ${
+                    checkInTiming.allowed
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "opacity-50 cursor-not-allowed bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <UserCheck className="h-3.5 w-3.5 mr-1" />
+                  Check-in
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onCancel(booking)}
+                  disabled={isActionPending}
+                  className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Hủy
+                </Button>
+              </div>
+              {!checkInTiming.allowed && (
+                <span
+                  className={`text-[10px] font-medium ${
+                    checkInTiming.diffMinutes > 30 ? "text-destructive" : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {checkInTiming.reason}
+                </span>
+              )}
+            </div>
           )}
 
           {!isPending && !isConfirmed && (

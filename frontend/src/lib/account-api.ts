@@ -1,5 +1,6 @@
 import { getSession, setSession, updateSession, type AuthSession } from "@/lib/auth-session";
 import type { AppRole } from "@/lib/role-routing";
+import { isAccountLockedResponse } from "@/lib/account-lock";
 
 export type UserStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
 export type StaffRole = Exclude<AppRole, "CUSTOMER">;
@@ -70,10 +71,19 @@ async function toApiError(response: Response): Promise<ApiError> {
   } catch {
     /* response may have no JSON body */
   }
-  if (response.status === 401) message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+  if (response.status === 401 && !isAccountLockedResponse(response)) {
+    message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+  }
   return new ApiError(message, response.status, fieldErrors);
 }
 
+/**
+ * Xin cặp token mới khi access token hết hạn (refresh token rotation):
+ * 1. Gửi refresh token hiện tại lên `/api/auth/refresh`.
+ * 2. Backend thu hồi refresh token cũ và trả về cặp token MỚI — mỗi refresh token chỉ dùng được một lần.
+ * 3. Lưu cả hai token mới vào phiên `hv.session` để các request sau dùng.
+ * Trả về false nếu không có refresh token, token đã bị thu hồi (vd. sau khi đổi mật khẩu) hoặc lỗi mạng.
+ */
 async function tryRefresh(session: AuthSession): Promise<boolean> {
   if (!session.refreshToken) return false;
   try {
@@ -91,6 +101,11 @@ async function tryRefresh(session: AuthSession): Promise<boolean> {
   }
 }
 
+/**
+ * Gọi API cần đăng nhập, tự gắn header `Authorization: Bearer <access token>`.
+ * Khi nhận 401 (access token hết hạn/không hợp lệ): thử refresh một lần rồi gọi lại request;
+ * `retried` chặn vòng lặp vô hạn. Nếu refresh thất bại thì xoá phiên → người dùng phải đăng nhập lại.
+ */
 async function authRequest<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
   const session = getSession();
   const response = await fetch(`${API_BASE}${path}`, {
@@ -101,7 +116,8 @@ async function authRequest<T>(path: string, init: RequestInit = {}, retried = fa
       ...(init.headers ?? {}),
     },
   });
-  if (response.status === 401 && session && !retried) {
+  // Tài khoản bị khóa: không refresh, không xoá phiên — chỉ báo lỗi (thông báo do AuthProvider hiển thị).
+  if (response.status === 401 && session && !retried && !isAccountLockedResponse(response)) {
     if (await tryRefresh(session)) return authRequest<T>(path, init, true);
     setSession(null);
   }
@@ -140,9 +156,12 @@ export const profileApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     });
-    updateSession({ username: updated.username, email: updated.email });
+    updateSession({ username: updated.username, email: updated.email, phoneNumber: updated.phoneNumber });
     return updated;
   },
+  // Sau khi đổi mật khẩu, backend thu hồi toàn bộ refresh token của user (kể cả thiết bị này).
+  // Access token hiện tại vẫn dùng được đến khi hết hạn; lần refresh kế tiếp sẽ thất bại
+  // và authRequest xoá phiên → các thiết bị đều phải đăng nhập lại bằng mật khẩu mới.
   changePassword: (payload: ChangePasswordPayload) =>
     authRequest<{ message: string }>("/api/account/change-password", {
       method: "PUT",

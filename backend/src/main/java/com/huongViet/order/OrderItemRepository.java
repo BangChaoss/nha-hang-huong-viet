@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
+/** Repository truy vấn các món trong đơn hàng. */
 @Repository
 public interface OrderItemRepository extends JpaRepository<OrderItem, String> {
 

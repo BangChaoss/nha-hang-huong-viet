@@ -195,6 +195,7 @@ CREATE TABLE reservations (
     guest_phone VARCHAR(20) NOT NULL,
     guest_email VARCHAR(100) NULL,
     table_id CHAR(36) NULL,
+    merged_table_ids VARCHAR(500) NULL,
     zone_id CHAR(36) NULL,
     party_size INT NOT NULL,
     reservation_date DATE NOT NULL,
@@ -224,7 +225,7 @@ CREATE TABLE reservations (
 CREATE TABLE reservation_audits (
     id CHAR(36) NOT NULL,
     reservation_id CHAR(36) NOT NULL,
-    changed_by CHAR(36) NOT NULL,
+    changed_by CHAR(36) NULL,
     old_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     new_status ENUM('PENDING_HOLD', 'PENDING_DEPOSIT', 'CONFIRMED', 'ARRIVED', 'CANCELLED', 'NO_SHOW') NOT NULL,
     old_table_id CHAR(36) NULL,
@@ -373,7 +374,7 @@ CREATE TABLE kitchen_tickets (
     id CHAR(36) NOT NULL,
     order_item_id CHAR(36) NOT NULL,
     order_id CHAR(36) NULL,
-    table_number VARCHAR(20) NOT NULL,
+    table_number VARCHAR(100) NOT NULL,
     item_name VARCHAR(100) NOT NULL,
     quantity INT NOT NULL,
     note VARCHAR(255) NULL,
@@ -452,6 +453,8 @@ CREATE TABLE invoices (
     order_id CHAR(36) NOT NULL,
     customer_id CHAR(36) NULL,
     staff_id CHAR(36) NOT NULL,
+    customer_phone VARCHAR(20) DEFAULT NULL,
+    loyalty_phone VARCHAR(20) DEFAULT NULL,
     voucher_id CHAR(36) NULL,
     voucher_code_snapshot VARCHAR(50) NULL,
     voucher_discount_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
@@ -484,7 +487,7 @@ CREATE TABLE invoices (
 -- ==============================================================================
 CREATE TABLE invoice_items (
     id CHAR(36) NOT NULL,
-    invoice_id CHAR(36) NOT NULL,
+    invoice_id CHAR(36) NULL,
     dish_id CHAR(36) NOT NULL,
     dish_name_snapshot VARCHAR(100) NOT NULL,
     unit_price_snapshot DECIMAL(12, 2) NOT NULL,
@@ -658,6 +661,7 @@ CREATE TABLE loyalty_settings (
     id VARCHAR(36) NOT NULL,
     earn_rate_percent DECIMAL(7, 3) NOT NULL DEFAULT 5.000,
     updated_at DATETIME NOT NULL,
+    point_to_vnd_rate DECIMAL(12, 3) NOT NULL DEFAULT 1.000,
 
     PRIMARY KEY (id),
 
@@ -675,11 +679,15 @@ CREATE TABLE loyalty_settings (
 -- ==============================================================================
 CREATE TABLE payment_orders (
     id VARCHAR(36) NOT NULL,
-    customer_phone VARCHAR(20) NOT NULL,
+	customer_phone VARCHAR(20) NOT NULL,
     subtotal DECIMAL(14, 2) NOT NULL,
     discount_amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     amount DECIMAL(14, 2) NOT NULL,
+    voucher_id VARCHAR(36) NULL,
     voucher_code VARCHAR(50) NULL,
+    table_id VARCHAR(36) NULL,
+    order_ids TEXT NULL,
+    points_redeemed DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) NOT NULL,
     vnp_transaction_no VARCHAR(100) NULL,
     vnp_response_code VARCHAR(10) NULL,
@@ -690,7 +698,8 @@ CREATE TABLE payment_orders (
     PRIMARY KEY (id),
     KEY idx_payment_orders_txn (vnp_transaction_no),
     KEY idx_payment_orders_phone (customer_phone),
-    KEY idx_payment_orders_status (status)
+    KEY idx_payment_orders_status (status),
+    KEY idx_payment_orders_table_status (table_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

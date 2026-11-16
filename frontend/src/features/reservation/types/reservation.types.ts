@@ -3,6 +3,8 @@ export type ReservationStatus =
   | "PENDING_DEPOSIT"
   | "CONFIRMED"
   | "ARRIVED"
+  | "PAID"
+  | "REVIEWED"
   | "CANCELLED"
   | "NO_SHOW";
 
@@ -19,6 +21,7 @@ export interface CreateReservationRequest {
 
 export interface ReservationResponse {
   id: string;
+  customerId?: string | null;
   guestName: string;
   guestPhone: string;
   guestEmail?: string | null;
@@ -32,6 +35,7 @@ export interface ReservationResponse {
   zoneIsVip?: boolean | null;
   tableId?: string | null;
   tableNumber?: string | null;
+  mergedTableIds?: string | null;
   depositAmount: number;
   cancellationReason?: string | null;
   createdAt: string;
@@ -39,12 +43,20 @@ export interface ReservationResponse {
 
 export interface CancelReservationRequest {
   reason?: string;
+  phone?: string;
 }
 
 export interface UpdateReservationStatusRequest {
   status: ReservationStatus;
   tableId?: string;
+  tableIds?: string[];
   reason?: string;
+}
+
+export interface AdminReservationQueryParams {
+  date?: string;
+  scope?: "upcoming" | "pending" | "date";
+  status?: ReservationStatus;
 }
 
 export interface AvailableTable {
@@ -99,6 +111,14 @@ export const RESERVATION_STATUS_CONFIG: Record<
   ARRIVED: {
     label: "Đã đến nhận bàn",
     badgeCls: "bg-blue-500/15 text-blue-700 border-blue-500/30 dark:text-blue-400",
+  },
+  PAID: {
+    label: "Đã thanh toán",
+    badgeCls: "bg-teal-500/15 text-teal-700 border-teal-500/30 dark:text-teal-400",
+  },
+  REVIEWED: {
+    label: "Đã đánh giá",
+    badgeCls: "bg-purple-500/15 text-purple-700 border-purple-500/30 dark:text-purple-400",
   },
   CANCELLED: {
     label: "Đã hủy",

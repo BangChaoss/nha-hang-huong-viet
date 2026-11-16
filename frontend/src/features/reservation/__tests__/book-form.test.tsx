@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { setSession } from "@/lib/auth-session";
+import { profileApi } from "@/lib/account-api";
 import { BookForm } from "../components/book-form";
 import { createReservationSchema } from "../utils/reservation-validators";
 
@@ -64,6 +66,9 @@ describe("BookForm & Reservation Validators", () => {
   });
 
   describe("BookForm Component Rendering", () => {
+    afterEach(() => {
+      setSession(null);
+    });
     it("renders form elements and steps correctly", () => {
       renderWithClient(<BookForm />);
 
@@ -93,6 +98,46 @@ describe("BookForm & Reservation Validators", () => {
       await waitFor(() => {
         expect(screen.getByText(/Quy định đoàn khách lớn \(BR-17\)/i)).toBeInTheDocument();
         expect(screen.getByText(/1900 8888/)).toBeInTheDocument();
+      });
+    });
+
+    it("uses default phone placeholder when user is not logged in", () => {
+      setSession(null);
+      renderWithClient(<BookForm />);
+
+      const phoneInput = screen.getByLabelText(/Số điện thoại liên hệ/i) as HTMLInputElement;
+      expect(phoneInput.placeholder).toBe("0912345678 hoặc +84...");
+      expect(phoneInput.value).toBe("");
+    });
+
+    it("uses user phone number as placeholder and prefilled value when logged in", async () => {
+      vi.spyOn(profileApi, "get").mockResolvedValue({
+        id: "cust-1",
+        username: "Nguyễn Khách Hàng",
+        email: "khach@example.com",
+        phoneNumber: "0909123456",
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        createdAt: null,
+        updatedAt: null,
+      });
+
+      setSession({
+        token: "fake-jwt",
+        refreshToken: null,
+        id: "cust-1",
+        username: "Nguyễn Khách Hàng",
+        email: "khach@example.com",
+        role: "CUSTOMER",
+        phoneNumber: "0909123456",
+      });
+
+      renderWithClient(<BookForm />);
+
+      const phoneInput = screen.getByLabelText(/Số điện thoại liên hệ/i) as HTMLInputElement;
+      await waitFor(() => {
+        expect(phoneInput.placeholder).toBe("0909123456");
+        expect(phoneInput.value).toBe("0909123456");
       });
     });
   });

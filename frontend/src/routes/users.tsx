@@ -1,13 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { AccountLayout } from "@/components/hv/AccountLayout";
-import { StaffManagement } from "@/components/hv/StaffManagement";
-import { isUserManager } from "@/lib/auth-session";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/users")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/manager",
+      search: { tab: "permissions" },
+    });
+  },
   head: () => ({ meta: [{ title: "Quản lý nhân sự — Hương Việt" }] }),
-  component: () => (
-    <AccountLayout allow={(s) => isUserManager(s.role)}>
-      {(session) => <StaffManagement actor={session} />}
-    </AccountLayout>
-  ),
+  component: () => null,
 });
+
