@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
    Trash2, Eye, Loader2, BarChart3, MessagesSquare,ArrowLeft, UtensilsCrossed,} from "lucide-react";
 import { toast } from "sonner";
-import { formatVND, useRestaurant } from "@/lib/restaurant-store";
+import { formatVND } from "@/lib/restaurant-store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -134,9 +134,6 @@ export function ManagerDashboard({
         toast.error(error instanceof Error ? error.message : "Không tải được cấu hình tích điểm."),
       );
   }, []);
-
-  const { dishes } = useRestaurant();
-  const top = [...dishes].sort((a, b) => b.sold - a.sold).slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -705,27 +702,7 @@ export function ManagerDashboard({
         </section>
       )}
 
-      {activeTab === "overview" && (
-        <>
-          <MenuManagement />
-          <div>
-            <div className="surface-card p-5">
-              <h2 className="text-2xl font-medium">Top 5 Món Bán Chạy</h2>
-              <ol className="mt-4 space-y-3">
-                {top.map((d, i) => (
-                  <li key={d.id} className="flex items-center gap-3">
-                    <span className="font-display w-6 text-2xl text-primary">{i + 1}</span>
-                    <span className="flex-1 text-sm">{d.name}</span>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {d.sold} phần
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-        </>
-      )}
+      {activeTab === "overview" && <MenuManagement hideHeader />}
     </div>
   );
 }
