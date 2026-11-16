@@ -81,17 +81,19 @@ const SORT_OPTIONS: { value: MenuItemSortKey; label: string }[] = [
  * Màn hình quản lý thực đơn cho Manager/Admin.
  * STT 74 (quản lý danh mục), STT 75 (quản lý món ăn), STT 76 (bật/tắt tình trạng món).
  */
-export function MenuManagement() {
+export function MenuManagement({ hideHeader = false }: { hideHeader?: boolean } = {}) {
   useMenuRefreshSubscription();
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Quản trị</p>
-          <h1 className="font-display text-3xl font-semibold">Quản lý Thực đơn</h1>
+      {!hideHeader && (
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Quản trị</p>
+            <h1 className="font-display text-3xl font-semibold">Quản lý Thực đơn</h1>
+          </div>
         </div>
-      </div>
+      )}
 
       <Tabs defaultValue="categories" className="space-y-6">
         <TabsList>

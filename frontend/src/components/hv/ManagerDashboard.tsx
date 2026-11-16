@@ -1,9 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import {Banknote, Users, CheckCircle2, Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
-   Trash2, Eye, Loader2, BarChart3, MessagesSquare,ArrowLeft,} from "lucide-react";
+import {Award, ShieldCheck, TicketPercent, Plus, LayoutGrid,
+   Trash2, Eye, Loader2, BarChart3, MessagesSquare,ArrowLeft,UtensilsCrossed,} from "lucide-react";
 import { toast } from "sonner";
-import { formatVND, useRestaurant } from "@/lib/restaurant-store";
+import { formatVND } from "@/lib/restaurant-store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,15 +21,6 @@ import { FeedbackManagement } from "@/features/feedback/components/feedback-mana
 import { BackButton } from "@/components/hv/BackButton";
 import { StaffManagement } from "@/components/hv/StaffManagement";
 import { useSession } from "@/lib/auth-session";
-
-const week = [
-  { d: "T2", v: 18.2 },
-  { d: "T3", v: 21.5 },
-  { d: "T4", v: 19.8 },
-  { d: "T5", v: 24.1 },
-  { d: "T6", v: 31.4 },
-  { d: "T7", v: 38.9 },
-];
 
 export type ManagerTab =
   "overview" | "reports" | "feedback" | "permissions" | "vouchers" | "loyalty" | "tables";
@@ -145,19 +135,6 @@ export function ManagerDashboard({
       );
   }, []);
 
-  const { transactions, dishes, tables } = useRestaurant();
-  const revenue = transactions.reduce((s, t) => s + t.total, 0);
-  const points = transactions.reduce((s, t) => s + t.points, 0);
-  const served = transactions.length + tables.filter((t) => t.status === "occupied").length;
-  const data = [...week, { d: "CN", v: +(revenue / 1e6).toFixed(1) }];
-  const top = [...dishes].sort((a, b) => b.sold - a.sold).slice(0, 5);
-  const kpis = [
-    { l: "Doanh thu hôm nay", v: formatVND(revenue), i: Banknote },
-    { l: "Tổng số bàn phục vụ", v: String(served), i: Users },
-    { l: "Đơn hoàn tất", v: String(transactions.length), i: CheckCircle2 },
-    { l: "Điểm tích luỹ đã phát", v: formatVND(points), i: Award },
-  ];
-
   return (
     <div className="space-y-6">
       <div className="space-y-4">
@@ -182,7 +159,8 @@ export function ManagerDashboard({
           variant={activeTab === "overview" ? "default" : "outline"}
           onClick={() => handleTabChange("overview")}
         >
-          Tổng quan
+          <UtensilsCrossed className="mr-2 h-4 w-4" />
+          Quản lý thực đơn
         </Button>
         <Button
           variant={activeTab === "reports" ? "default" : "outline"}
@@ -724,55 +702,7 @@ export function ManagerDashboard({
         </section>
       )}
 
-      {activeTab === "overview" && (
-        <>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {kpis.map((k) => (
-              <div key={k.l} className="surface-card p-5">
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-sm">{k.l}</span>
-                  <k.i className="h-4 w-4" />
-                </div>
-                <p className="mt-3 text-2xl font-semibold tabular-nums">{k.v}</p>
-              </div>
-            ))}
-          </div>
-          <div className="grid gap-5 lg:grid-cols-3">
-            <div className="surface-card p-5 lg:col-span-2">
-              <h2 className="text-2xl font-medium">Doanh thu 7 ngày (triệu đ)</h2>
-              <div className="mt-4 h-64">
-                <ResponsiveContainer>
-                  <BarChart data={data}>
-                    <CartesianGrid vertical={false} stroke="var(--border)" />
-                    <XAxis dataKey="d" tickLine={false} axisLine={false} fontSize={12} />
-                    <YAxis tickLine={false} axisLine={false} fontSize={12} width={30} />
-                    <Tooltip
-                      cursor={{ fill: "var(--muted)" }}
-                      formatter={(v: number) => [`${v} triệu đ`, "Doanh thu"]}
-                    />
-                    <Bar dataKey="v" fill="var(--primary)" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            <div className="surface-card p-5">
-              <h2 className="text-2xl font-medium">Top 5 Món Bán Chạy</h2>
-              <ol className="mt-4 space-y-3">
-                {top.map((d, i) => (
-                  <li key={d.id} className="flex items-center gap-3">
-                    <span className="font-display w-6 text-2xl text-primary">{i + 1}</span>
-                    <span className="flex-1 text-sm">{d.name}</span>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {d.sold} phần
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-          <MenuManagement />
-        </>
-      )}
+      {activeTab === "overview" && <MenuManagement hideHeader />}
     </div>
   );
 }
