@@ -44,12 +44,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** API của nghiệp vụ Order (UC-15, UC-17). */
 export const orderApi = {
+  /** Tạo đơn mới cho bàn, với các món và ghi chú được gửi trong payload. */
   create: (payload: CreateOrderRequest): Promise<OrderResponse> =>
     request<OrderResponse>("/api/orders", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
 
+  /** Lấy danh sách đơn, có thể lọc theo bàn và trạng thái. */
   list: (params?: { tableId?: string; status?: OrderStatus }): Promise<OrderResponse[]> => {
     const search = new URLSearchParams();
     if (params?.tableId) search.append("tableId", params.tableId);
@@ -58,8 +60,10 @@ export const orderApi = {
     return request<OrderResponse[]>(`/api/orders${queryString ? `?${queryString}` : ""}`);
   },
 
+  /** Lấy thông tin đơn theo mã đơn. */
   getById: (id: string): Promise<OrderResponse> => request<OrderResponse>(`/api/orders/${id}`),
 
+  /** Lấy đơn đang mở của bàn; trả về `null` nếu bàn chưa có đơn đang mở. */
   getActiveByTable: (tableId: string): Promise<OrderResponse | null> =>
     request<OrderResponse | null>(`/api/orders/table/${tableId}/active`),
 
