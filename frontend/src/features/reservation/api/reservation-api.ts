@@ -77,6 +77,15 @@ export const reservationApi = {
     );
   },
 
+  // === VIP Deposit API ===
+  createDepositPayment: (id: string): Promise<{ paymentUrl: string; txnRef?: string }> =>
+    request<{ paymentUrl: string; txnRef?: string }>(`/api/reservations/${id}/deposit`, {
+      method: "POST",
+    }),
+
+  getPublicBooking: (id: string): Promise<ReservationResponse> =>
+    request<ReservationResponse>(`/api/reservations/${id}`),
+
   // === UC12: Customer cancel API ===
   cancelBooking: (id: string, reason?: string, phone?: string): Promise<ReservationResponse> =>
     request<ReservationResponse>(`/api/reservations/${id}/cancel`, {

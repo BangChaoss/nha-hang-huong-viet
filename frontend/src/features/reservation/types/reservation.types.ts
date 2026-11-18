@@ -67,6 +67,7 @@ export interface AvailableTable {
   zoneId?: string | null;
   zoneName?: string | null;
   zoneIsVip?: boolean | null;
+  availableSeats?: number | null;
 }
 
 export interface TimeSlotAvailability {
