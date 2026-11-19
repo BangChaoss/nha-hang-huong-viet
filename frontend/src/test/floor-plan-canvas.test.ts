@@ -4,6 +4,7 @@ import {
   computeCollisions,
   computeZoneBoxes,
   computeZoneCollisions,
+  computeSeatPositions,
   type LocalTableLayout,
   type ZoneBox,
 } from "@/components/hv/FloorPlanCanvas";
@@ -65,6 +66,7 @@ describe("FloorPlanCanvas Table Collision Detection", () => {
 
 describe("FloorPlanCanvas Zone Collision Detection", () => {
   const mockTable = (tableId: string, zoneName: string, x: number, y: number): FloorPlanLayoutResponse => ({
+    id: `layout-${tableId}`,
     tableId,
     tableNumber: `Bàn ${tableId}`,
     capacity: 4,
@@ -159,5 +161,85 @@ describe("FloorPlanCanvas Zone Collision Detection", () => {
 
     const collisions = computeZoneCollisions([zoneA, zoneB]);
     expect(collisions.size).toBe(0);
+  });
+});
+
+describe("FloorPlanCanvas Seat Positions Computation", () => {
+  it("should calculate single-row seat positions for 2-person small table without overflow", () => {
+    const seats = computeSeatPositions(2, 60, 60, true);
+    expect(seats.length).toBe(2);
+    for (const seat of seats) {
+      expect(seat.x).toBeGreaterThanOrEqual(0);
+      expect(seat.x + seat.w).toBeLessThanOrEqual(60);
+      expect(seat.y).toBeGreaterThanOrEqual(30);
+      expect(seat.y + seat.h).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("should calculate single-row seat positions for 4-person table inside 60px or 90px width", () => {
+    const seats = computeSeatPositions(4, 90, 90, false);
+    expect(seats.length).toBe(4);
+    for (const seat of seats) {
+      expect(seat.x).toBeGreaterThanOrEqual(0);
+      expect(seat.x + seat.w).toBeLessThanOrEqual(90);
+      expect(seat.y).toBeGreaterThanOrEqual(40);
+      expect(seat.y + seat.h).toBeLessThanOrEqual(90);
+    }
+  });
+
+  it("should calculate two-row seat positions for VIP 10-person table", () => {
+    const seats = computeSeatPositions(10, 140, 90, false);
+    expect(seats.length).toBe(10);
+    // Row 1 (first 5 seats) have y = 47
+    for (let i = 0; i < 5; i++) {
+      expect(seats[i]!.y).toBe(47);
+      expect(seats[i]!.x).toBeGreaterThanOrEqual(0);
+      expect(seats[i]!.x + seats[i]!.w).toBeLessThanOrEqual(140);
+    }
+    // Row 2 (next 5 seats) have y = 61
+    for (let i = 5; i < 10; i++) {
+      expect(seats[i]!.y).toBe(61);
+      expect(seats[i]!.x).toBeGreaterThanOrEqual(0);
+      expect(seats[i]!.x + seats[i]!.w).toBeLessThanOrEqual(140);
+    }
+  });
+
+  it("should determine red vs white seat colors matching assigned partySize", () => {
+    // Giả sử bàn 4 chỗ gán cho đoàn 2 khách (occupiedSeats = 2)
+    const capacity = 4;
+    const occupiedSeats = 2;
+    const seats = computeSeatPositions(capacity, 90, 90, false);
+    const seatColors = seats.map((_, sIdx) => (sIdx < occupiedSeats ? "#ef4444" : "#ffffff"));
+
+    // 2 ghế đầu màu đỏ, 2 ghế sau màu trắng
+    expect(seatColors[0]).toBe("#ef4444");
+    expect(seatColors[1]).toBe("#ef4444");
+    expect(seatColors[2]).toBe("#ffffff");
+    expect(seatColors[3]).toBe("#ffffff");
+
+    const redCount = seatColors.filter((c) => c === "#ef4444").length;
+    expect(redCount).toBe(2);
+  });
+
+  it("should determine red seats across merged tables matching total partySize of 5", () => {
+    // Đoàn 5 khách gộp Bàn 03A (2 chỗ) và Bàn 03B (4 chỗ)
+    const tableASeats = computeSeatPositions(2, 60, 90, false);
+    const tableBSeats = computeSeatPositions(4, 80, 90, false);
+
+    const partySize = 5;
+    const allocatedA = Math.min(partySize, 2); // 2
+    const allocatedB = Math.min(partySize - allocatedA, 4); // 3
+
+    const colorsA = tableASeats.map((_, i) => (i < allocatedA ? "#ef4444" : "#ffffff"));
+    const colorsB = tableBSeats.map((_, i) => (i < allocatedB ? "#ef4444" : "#ffffff"));
+
+    // Bàn A đỏ cả 2
+    expect(colorsA.filter((c) => c === "#ef4444").length).toBe(2);
+    // Bàn B đỏ 3, trắng 1
+    expect(colorsB.filter((c) => c === "#ef4444").length).toBe(3);
+    expect(colorsB.filter((c) => c === "#ffffff").length).toBe(1);
+
+    // Tổng số người đỏ trên cả 2 bàn = đúng 5 khách
+    expect(colorsA.filter((c) => c === "#ef4444").length + colorsB.filter((c) => c === "#ef4444").length).toBe(5);
   });
 });

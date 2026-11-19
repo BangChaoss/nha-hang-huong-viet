@@ -52,6 +52,7 @@ export type FloorPlanLayoutResponse = {
   zoneId?: string | null;
   zoneName: string | null;
   zoneIsVip: boolean | null;
+  occupiedSeats?: number | null;
 };
 
 export type FloorPlanLayoutRequest = {
@@ -70,6 +71,7 @@ export type TableStatusMessage = {
   oldStatus: TableStatus;
   newStatus: TableStatus;
   zoneName: string | null;
+  occupiedSeats?: number | null;
 };
 
 export const STATUS_COLORS: Record<
