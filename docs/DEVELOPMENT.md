@@ -69,6 +69,11 @@ Các script migration đặt trong `backend/src/main/java/com/huongViet/database
 | `V20261023__loyalty_profile_and_points.sql` | Hồ sơ khách hàng và điểm thưởng |
 | `V20261024__order_note_and_kitchen_ticket.sql` | Ghi chú món, snapshot giá, liên kết order cho bếp |
 
+Với database đã có dữ liệu và không dùng Hibernate tự cập nhật schema, chạy
+`backend/migration/add-shared-table-orders.sql` một lần trước khi nâng cấp. Không
+nạp lại `database/schema.sql` lên database đang phục vụ. Đơn mở trước khi nâng
+cấp không có số khách; hãy thanh toán các đơn đó trước khi nhận khách ngồi ghép.
+
 ### 2.4. Cấu hình kết nối
 
 `backend/src/main/resources/application.properties` đọc biến môi trường, có giá trị mặc định

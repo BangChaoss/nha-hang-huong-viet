@@ -41,6 +41,8 @@ export type OrderResponse = {
   /** Phần tiền của các món đã huỷ — giữ lại để đối soát, không tính vào hoá đơn. */
   cancelledAmount: number;
   items: OrderItemResponse[];
+  partySize?: number | null;
+  seated?: boolean;
 };
 
 /** Một phiếu bếp (một dòng món được đẩy xuống bếp). */
@@ -55,6 +57,7 @@ export type KitchenTicketResponse = {
   status: CookingStatus;
   createdAt: string;
   completedAt: string | null;
+  additional?: boolean;
 };
 
 /** Dòng món gửi lên khi tạo đơn. */

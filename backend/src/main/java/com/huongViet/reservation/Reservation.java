@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Arrays;
 
 @Entity
 @Table(name = "reservations")
@@ -205,6 +206,17 @@ public class Reservation {
 
     public String getMergedTableIds() { return mergedTableIds; }
     public void setMergedTableIds(String mergedTableIds) { this.mergedTableIds = mergedTableIds; }
+
+    public boolean includesTable(String tableId) {
+        return tableId.equals(getTableId()) || (mergedTableIds != null &&
+            Arrays.stream(mergedTableIds.split(",")).map(String::trim).anyMatch(tableId::equals));
+    }
+
+    public boolean blocksSharedSeating(String tableId) {
+        boolean exclusive = status == ReservationStatus.ARRIVED ||
+            (status == ReservationStatus.CONFIRMED && mergedTableIds != null && mergedTableIds.contains(","));
+        return exclusive && includesTable(tableId);
+    }
 
     public Integer getPartySize() { return partySize; }
     public void setPartySize(Integer partySize) { this.partySize = partySize; }

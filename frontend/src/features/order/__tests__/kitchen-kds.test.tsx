@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { KitchenTicketResponse } from "../types/order.types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const tickets = [
@@ -29,13 +30,14 @@ const tickets = [
   },
 ];
 
+let currentTickets: KitchenTicketResponse[] = tickets;
 const mutate = vi.fn();
 
 // `vi.mock` được hoist lên trước import nên trạng thái đăng nhập phải khai báo qua vi.hoisted.
 const auth = vi.hoisted(() => ({ role: "MANAGER" as string | undefined }));
 
 vi.mock("@/features/order/hooks/use-kitchen-tickets", () => ({
-  useKitchenTickets: () => ({ data: tickets, isLoading: false, isError: false, error: null }),
+  useKitchenTickets: () => ({ data: currentTickets, isLoading: false, isError: false, error: null }),
 }));
 
 vi.mock("@/features/order/hooks/use-ticket-status", () => ({
@@ -63,6 +65,7 @@ function renderKds(readOnly?: boolean) {
 describe("KitchenKDS", () => {
   beforeEach(() => {
     auth.role = "MANAGER";
+    currentTickets = tickets;
     mutate.mockClear();
   });
 
@@ -120,6 +123,24 @@ describe("KitchenKDS", () => {
       { id: "ticket-2", status: "READY" },
       expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     );
+  });
+
+  it("gom cùng bàn và đơn nhưng giữ lượt của món gọi thêm sau bàn khác", () => {
+    currentTickets = [
+      tickets[0],
+      { ...tickets[1], orderId: "order-2", status: "QUEUED" },
+      { ...tickets[0], id: "ticket-3", itemName: "Nem", additional: true },
+      { ...tickets[0], id: "ticket-4", orderId: "order-3", itemName: "Bún" },
+    ];
+    renderKds();
+
+    const firstTable = within(screen.getByRole("region", { name: "Bàn 01" }));
+    const otherTable = within(screen.getByRole("region", { name: "Bàn 02" }));
+    expect(firstTable.getByRole("heading", { name: "Đơn #ORDER-1" })).toBeInTheDocument();
+    expect(firstTable.getByRole("heading", { name: "Đơn #ORDER-3" })).toBeInTheDocument();
+    expect(firstTable.getByText("Lượt 1 · Tiếp theo")).toBeInTheDocument();
+    expect(otherTable.getByText("Lượt 2")).toBeInTheDocument();
+    expect(firstTable.getByText("Lượt 3").closest("li")).toHaveTextContent("Gọi thêm");
   });
 
   it("không hiển thị nút cập nhật với vai trò không có quyền", () => {

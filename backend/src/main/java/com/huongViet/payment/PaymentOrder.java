@@ -7,14 +7,18 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "payment_orders", indexes = {
     @Index(name = "idx_payment_orders_txn", columnList = "vnp_transaction_no"),
-    @Index(name = "idx_payment_orders_phone", columnList = "customer_phone")
+    @Index(name = "idx_payment_orders_phone", columnList = "customer_phone"),
+    @Index(name = "idx_payment_orders_dining_pending", columnList = "dining_order_id,status,created_at")
 })
 public class PaymentOrder {
+    public static final int VNPAY_VALIDITY_MINUTES = 15;
     @Id
     @Column(name = "id", length = 36, nullable = false, columnDefinition = "varchar(36)")
     private String id;
     @Column(name = "table_id", length = 36)
     private String tableId;
+    @Column(name = "dining_order_id", length = 36)
+    private String diningOrderId;
     @Column(name = "customer_phone", nullable = false, length = 20)
     private String customerPhone;
     @Column(name = "subtotal", nullable = false, precision = 14, scale = 2)
@@ -53,11 +57,17 @@ public class PaymentOrder {
     }
     public PaymentOrder(String id, String tableId, String phone, BigDecimal subtotal, BigDecimal discount,
                         BigDecimal amount, String voucherCode, BigDecimal pointsUsed) {
-        this.id=id; this.tableId=tableId; this.customerPhone=phone; this.subtotal=subtotal; this.discountAmount=discount;
+        this(id, tableId, null, phone, subtotal, discount, amount, voucherCode, pointsUsed);
+    }
+    public PaymentOrder(String id, String tableId, String diningOrderId, String phone, BigDecimal subtotal,
+                        BigDecimal discount, BigDecimal amount, String voucherCode, BigDecimal pointsUsed) {
+        this.id=id; this.tableId=tableId; this.diningOrderId=diningOrderId; this.customerPhone=phone;
+        this.subtotal=subtotal; this.discountAmount=discount;
         this.amount=amount; this.voucherCode=voucherCode; this.status="PENDING"; this.pointsUsed=pointsUsed == null ? BigDecimal.ZERO : pointsUsed;
         this.pointsAwarded=BigDecimal.ZERO; this.createdAt=LocalDateTime.now();
     }
     public String getId(){return id;} public String getTableId(){return tableId;} public String getCustomerPhone(){return customerPhone;}
+    public String getDiningOrderId() { return diningOrderId; }
     public BigDecimal getSubtotal(){return subtotal;} public BigDecimal getDiscountAmount(){return discountAmount;}
     public BigDecimal getAmount(){return amount;} public String getVoucherCode(){return voucherCode;}
     public String getStatus(){return status;} public String getVnpTransactionNo(){return vnpTransactionNo;}

@@ -19,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import com.huongViet.table.TableStatusMessage;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -267,7 +268,7 @@ public class ReservationService {
             .toList();
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ReservationResponse updateStatus(String id, UpdateReservationStatusRequest request, String changedBy) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
@@ -388,8 +389,13 @@ public class ReservationService {
                 targetTableIds.add(reservation.getTableId());
             }
 
+            targetTableIds.sort(String::compareTo);
             for (String tId : targetTableIds) {
-                tableRepository.findByIdAndDeletedAtIsNull(tId).ifPresent(t -> {
+                tableRepository.lockActiveById(tId).ifPresent(t -> {
+                    if (tableRepository.hasSeatedGuests(tId)) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
+                    }
                     TableStatus oldTStatus = t.getStatus();
                     t.setStatus(TableStatus.OCCUPIED);
                     tableRepository.save(t);
@@ -518,11 +524,10 @@ public class ReservationService {
             targetTableIds.add(reservation.getTableId().trim());
         }
 
-        for (String tableId : targetTableIds) {
-            tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(t -> {
+        for (String tableId : targetTableIds.stream().sorted().toList()) {
+            tableRepository.lockActiveById(tableId).ifPresent(t -> {
                 TableStatus oldStatus = t.getStatus();
-                // Nếu bàn không bị bảo trì và chưa phải là AVAILABLE thì cập nhật về AVAILABLE
-                if (oldStatus != TableStatus.MAINTENANCE && oldStatus != TableStatus.AVAILABLE) {
+                if (oldStatus == TableStatus.RESERVED) {
                     t.setStatus(TableStatus.AVAILABLE);
                     tableRepository.save(t);
                     broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE);

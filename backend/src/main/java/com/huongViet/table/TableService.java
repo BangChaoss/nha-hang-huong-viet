@@ -1,5 +1,7 @@
 package com.huongViet.table;
 
+import com.huongViet.order.Order;
+import com.huongViet.order.OrderRepository;
 import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
 import com.huongViet.reservation.ReservationService;
@@ -34,17 +36,20 @@ public class TableService {
     private final FloorPlanLayoutRepository floorPlanLayoutRepository;
     private final ReservationRepository reservationRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final OrderRepository orderRepository;
 
     public TableService(TableRepository tableRepository,
                         ZoneRepository zoneRepository,
                         FloorPlanLayoutRepository floorPlanLayoutRepository,
                         ReservationRepository reservationRepository,
-                        SimpMessagingTemplate messagingTemplate) {
+                        SimpMessagingTemplate messagingTemplate,
+                        OrderRepository orderRepository) {
         this.tableRepository = tableRepository;
         this.zoneRepository = zoneRepository;
         this.floorPlanLayoutRepository = floorPlanLayoutRepository;
         this.reservationRepository = reservationRepository;
         this.messagingTemplate = messagingTemplate;
+        this.orderRepository = orderRepository;
     }
 
     public List<TableResponse> listAll() {
@@ -52,9 +57,11 @@ public class TableService {
         LocalTime nowTime = LocalTime.now();
         List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
 
+        Map<String, List<Order>> seated = orderRepository.findSeatedOrders().stream()
+            .collect(Collectors.groupingBy(Order::getTableId));
         return tableRepository.findAllActiveWithZone()
             .stream()
-            .map(table -> TableResponse.from(table, calculateDynamicStatus(table, todayReservations, nowTime)))
+            .map(table -> withSeats(table, todayReservations, nowTime, seated.getOrDefault(table.getId(), List.of())))
             .toList();
     }
 
@@ -63,7 +70,16 @@ public class TableService {
         LocalDate today = LocalDate.now();
         LocalTime nowTime = LocalTime.now();
         List<Reservation> todayReservations = reservationRepository.findActiveReservationsForDate(today);
-        return TableResponse.from(table, calculateDynamicStatus(table, todayReservations, nowTime));
+        return withSeats(table, todayReservations, nowTime, orderRepository.findSeatedOrdersByTableIds(List.of(id)));
+    }
+
+    private TableResponse withSeats(RestaurantTable table, List<Reservation> reservations, LocalTime now,
+                                    List<Order> seated) {
+        TableStatus status = calculateDynamicStatus(table, reservations, now);
+        boolean exclusive = reservations.stream().anyMatch(r -> r.blocksSharedSeating(table.getId()));
+        Integer free = !exclusive && (status == TableStatus.OCCUPIED || status == TableStatus.AVAILABLE)
+            ? Order.availableSeats(table.getCapacity(), seated) : null;
+        return TableResponse.from(table, status, free);
     }
 
     /**
@@ -186,7 +202,12 @@ public class TableService {
      */
     @Transactional
     public TableResponse updateStatus(String id, UpdateTableStatusRequest request) {
-        RestaurantTable table = findActiveWithZoneOrThrow(id);
+        RestaurantTable table = tableRepository.lockActiveById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
+        if (request.status() != TableStatus.OCCUPIED &&
+            orderRepository.findSeatedOrdersByTableIds(List.of(id)).stream().anyMatch(Order::isSeated)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Hãy trả chỗ cho các đơn còn khách trước khi đổi trạng thái bàn.");
+        }
         TableStatus oldStatus = table.getStatus();
         table.setStatus(request.status());
         RestaurantTable saved = tableRepository.save(table);

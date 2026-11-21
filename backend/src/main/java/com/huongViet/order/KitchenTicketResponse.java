@@ -13,8 +13,13 @@ public record KitchenTicketResponse(
     String note,
     CookingStatus status,
     String createdAt,
-    String completedAt
+    String completedAt,
+    boolean additional
 ) {
+    public KitchenTicketResponse(String id, String orderId, String orderItemId, String tableNumber, String itemName,
+                                 Integer quantity, String note, CookingStatus status, String createdAt, String completedAt) {
+        this(id, orderId, orderItemId, tableNumber, itemName, quantity, note, status, createdAt, completedAt, false);
+    }
     public static KitchenTicketResponse from(KitchenTicket ticket) {
         return new KitchenTicketResponse(
             ticket.getId(),
@@ -26,7 +31,8 @@ public record KitchenTicketResponse(
             ticket.getNote(),
             ticket.getStatus(),
             ticket.getCreatedAt() != null ? ticket.getCreatedAt().toString() : null,
-            ticket.getCompletedAt() != null ? ticket.getCompletedAt().toString() : null
+            ticket.getCompletedAt() != null ? ticket.getCompletedAt().toString() : null,
+            ticket.isAdditional()
         );
     }
 }

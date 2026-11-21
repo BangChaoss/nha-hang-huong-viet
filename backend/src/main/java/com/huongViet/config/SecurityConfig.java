@@ -47,7 +47,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/ws/**").permitAll()
-                .requestMatchers("/api/payments/vnpay/create", "/api/payments/vnpay/ipn", "/api/payments/vnpay/return", "/api/payments/vnpay/orders/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/payments/vnpay/create", "/api/orders/*/checkout-cash",
+                    "/api/orders/table/*/checkout-cash", "/api/orders/table/*/seated", "/api/orders/*/release-seats")
+                    .hasAnyAuthority("STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN")
+                .requestMatchers("/api/payments/vnpay/ipn", "/api/payments/vnpay/return", "/api/payments/vnpay/orders/**").permitAll()
                 // UC08: Public reservation endpoints
                 .requestMatchers(HttpMethod.POST, "/api/reservations").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reservations/availability").permitAll()

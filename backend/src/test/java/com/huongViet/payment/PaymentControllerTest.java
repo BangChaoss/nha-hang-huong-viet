@@ -19,6 +19,7 @@ import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -49,10 +50,10 @@ class PaymentControllerTest {
     @DisplayName("POST /api/payments/vnpay/create trả về 200 và URL thanh toán")
     void testCreatePaymentEndpoint() throws Exception {
         VnpayCreateRequest request = new VnpayCreateRequest(
-                "table-1", new BigDecimal("150000"), "0901234567", "SALE10", null, false
+                "table-1", new BigDecimal("150000"), "0901234567", "SALE10", null, false, "dining-1"
         );
 
-        when(paymentService.createPayment(any(VnpayCreateRequest.class), eq("192.168.1.1")))
+        when(paymentService.createPayment(eq(request), eq("192.168.1.1")))
                 .thenReturn(Map.of(
                         "orderId", "order-abc",
                         "paymentUrl", "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?orderId=order-abc"
@@ -165,12 +166,24 @@ class PaymentControllerTest {
     @DisplayName("POST /api/payments/vnpay/create - thiếu bàn trả về lỗi 400 Bad Request")
     void testCreatePaymentEndpoint_MissingTable() throws Exception {
         VnpayCreateRequest request = new VnpayCreateRequest(
-                "", new BigDecimal("100000"), null, null, null, false
+                "", new BigDecimal("100000"), null, null, null, false, "dining-1"
         );
 
         mockMvc.perform(post("/api/payments/vnpay/create")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void testCreatePaymentEndpoint_MissingDiningOrder() throws Exception {
+        mockMvc.perform(post("/api/payments/vnpay/create")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"tableId":"table-1","subtotal":100000}
+                            """))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(paymentService);
     }
 }

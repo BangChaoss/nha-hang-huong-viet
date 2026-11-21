@@ -60,6 +60,7 @@ class InvoiceControllerTest {
                 "Bàn 01",
                 "staff-1",
                 "0901234567",
+                "0901234567",
                 "GIAM10",
                 new BigDecimal("10000"),
                 new BigDecimal("100000"),

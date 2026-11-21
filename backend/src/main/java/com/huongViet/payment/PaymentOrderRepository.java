@@ -5,10 +5,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, String> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from PaymentOrder p where p.id = :id")
     Optional<PaymentOrder> lockById(@Param("id") String id);
+
+    boolean existsByDiningOrderIdAndStatusAndCreatedAtAfter(String diningOrderId, String status, LocalDateTime cutoff);
 }

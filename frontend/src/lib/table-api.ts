@@ -24,6 +24,7 @@ export type TableResponse = {
   zoneId: string;
   zoneName: string | null;
   zoneIsVip: boolean | null;
+  availableSeats?: number | null;
 };
 
 export type TableRequest = {

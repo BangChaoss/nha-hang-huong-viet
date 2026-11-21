@@ -1,6 +1,8 @@
 package com.huongViet.table;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -20,6 +22,17 @@ public interface TableRepository extends JpaRepository<RestaurantTable, String> 
     List<RestaurantTable> findAllByZoneIdAndDeletedAtIsNull(String zoneId);
 
     Optional<RestaurantTable> findByIdAndDeletedAtIsNull(String id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from RestaurantTable t where t.id = :id and t.deletedAt is null")
+    Optional<RestaurantTable> lockActiveById(@Param("id") String id);
+
+    @Query("""
+        select count(o) > 0 from Order o where o.tableId = :id and o.partySize is not null
+            and o.seatsReleasedAt is null and o.status in
+            (com.huongViet.order.OrderStatus.IN_PROGRESS, com.huongViet.order.OrderStatus.COMPLETED)
+        """)
+    boolean hasSeatedGuests(@Param("id") String id);
 
     boolean existsByTableNumberIgnoreCaseAndDeletedAtIsNull(String tableNumber);
 

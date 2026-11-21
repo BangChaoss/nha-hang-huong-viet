@@ -33,6 +33,7 @@ export type LoyaltyRate = {
 
 export type PaymentOrderStatus = {
   orderId: string;
+  diningOrderId?: string;
   status: "PENDING" | "PAID" | "FAILED";
   amount: number;
   phoneNumber: string;
@@ -49,6 +50,7 @@ export const paymentApi = {
     ),
   createVnpay: (payload: {
     tableId: string;
+    diningOrderId: string;
     subtotal: number;
     phoneNumber: string;
     voucherCode?: string;

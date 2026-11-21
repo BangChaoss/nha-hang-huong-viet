@@ -314,6 +314,8 @@ CREATE TABLE orders (
     version BIGINT NOT NULL DEFAULT 0,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     closed_at DATETIME(6) NULL,
+    party_size INT NULL,
+    seats_released_at DATETIME(6) NULL,
 
     PRIMARY KEY (id),
     KEY idx_orders_active_table (table_id, status),
@@ -379,6 +381,7 @@ CREATE TABLE kitchen_tickets (
     quantity INT NOT NULL,
     note VARCHAR(255) NULL,
     priority INT NOT NULL DEFAULT 1,
+    is_additional BOOLEAN NOT NULL DEFAULT FALSE,
     status ENUM('QUEUED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED') NOT NULL DEFAULT 'QUEUED',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     completed_at DATETIME(6) NULL,
@@ -686,6 +689,7 @@ CREATE TABLE payment_orders (
     voucher_id VARCHAR(36) NULL,
     voucher_code VARCHAR(50) NULL,
     table_id VARCHAR(36) NULL,
+    dining_order_id VARCHAR(36) NULL,
     order_ids TEXT NULL,
     points_redeemed DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) NOT NULL,
@@ -698,6 +702,7 @@ CREATE TABLE payment_orders (
     PRIMARY KEY (id),
     KEY idx_payment_orders_txn (vnp_transaction_no),
     KEY idx_payment_orders_phone (customer_phone),
+    KEY idx_payment_orders_dining_pending (dining_order_id, status, created_at),
     KEY idx_payment_orders_status (status),
     KEY idx_payment_orders_table_status (table_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

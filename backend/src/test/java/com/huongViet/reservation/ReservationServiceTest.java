@@ -76,6 +76,39 @@ class ReservationServiceTest {
     }
 
     @Test
+    void checkIn_DoesNotTakeOverTableWithSeatedGuests() {
+        LocalDateTime now = LocalDateTime.now();
+        Reservation reservation = new Reservation("booking", null, "Khách", "0900000000", null,
+            2, now.toLocalDate(), now.toLocalTime(), null);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservation.setTable(sampleTables.getFirst());
+        when(reservationRepository.findActiveByIdWithTableAndZone("booking")).thenReturn(Optional.of(reservation));
+        when(tableRepository.lockActiveById("tbl-1")).thenReturn(Optional.of(sampleTables.getFirst()));
+        when(tableRepository.hasSeatedGuests("tbl-1")).thenReturn(true);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> reservationService.updateStatus(
+            "booking", new UpdateReservationStatusRequest(ReservationStatus.ARRIVED, null, null), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(ReservationStatus.CONFIRMED, reservation.getStatus());
+        verify(tableRepository, never()).save(any());
+    }
+
+    @Test
+    void releaseAssignedTables_KeepsOccupiedTableInUse() {
+        RestaurantTable table = sampleTables.getFirst();
+        table.setStatus(com.huongViet.table.TableStatus.OCCUPIED);
+        Reservation reservation = new Reservation();
+        reservation.setTable(table);
+        when(tableRepository.lockActiveById("tbl-1")).thenReturn(Optional.of(table));
+
+        reservationService.releaseAssignedTables(reservation);
+
+        assertEquals(com.huongViet.table.TableStatus.OCCUPIED, table.getStatus());
+        verify(tableRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("1. createBooking_validRequest_returnsReservation - Đặt bàn thành công trả về PENDING_HOLD")
     void createBooking_validRequest_returnsReservation() {
         LocalDate tomorrow = LocalDate.now().plusDays(1);

@@ -16,6 +16,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * A dining order placed for one table (UC-15 Create Food Order).
@@ -54,6 +55,12 @@ public class Order {
 
     @Column(name = "closed_at")
     private LocalDateTime closedAt;
+
+    @Column(name = "party_size")
+    private Integer partySize;
+
+    @Column(name = "seats_released_at")
+    private LocalDateTime seatsReleasedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "table_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
@@ -120,6 +127,31 @@ public class Order {
 
     public void setClosedAt(LocalDateTime closedAt) {
         this.closedAt = closedAt;
+    }
+
+    public Integer getPartySize() {
+        return partySize;
+    }
+
+    public void setPartySize(int partySize) {
+        this.partySize = partySize;
+    }
+
+    public boolean isSeated() {
+        return partySize != null && seatsReleasedAt == null;
+    }
+
+    public static int availableSeats(int capacity, List<Order> seatedOrders) {
+        int used = 0;
+        for (Order order : seatedOrders) {
+            if (order.partySize == null) return 0;
+            used += order.partySize;
+        }
+        return Math.max(0, capacity - used);
+    }
+
+    public void releaseSeats() {
+        seatsReleasedAt = LocalDateTime.now();
     }
 
     public RestaurantTable getTable() {

@@ -22,6 +22,8 @@ public interface KitchenTicketRepository extends JpaRepository<KitchenTicket, St
 
     Optional<KitchenTicket> findByOrderItemId(String orderItemId);
 
+    boolean existsByOrderId(String orderId);
+
     @Query("""
         SELECT k FROM KitchenTicket k
         WHERE k.createdAt >= :start AND k.createdAt <= :end

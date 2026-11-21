@@ -2,6 +2,7 @@ package com.huongViet.order;
 
 import com.huongViet.menu.MenuItem;
 import com.huongViet.menu.MenuItemRepository;
+import com.huongViet.payment.PaymentOrderRepository;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableStatus;
@@ -65,6 +66,8 @@ class OrderServiceLifecycleTest {
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Mock
     private com.huongViet.reservation.ReservationRepository reservationRepository;
+    @Mock
+    private PaymentOrderRepository paymentOrderRepository;
 
     private OrderService orderService;
 
@@ -77,7 +80,7 @@ class OrderServiceLifecycleTest {
         orderService = new OrderService(
             orderRepository, orderItemRepository, kitchenTicketRepository, orderItemAuditRepository,
             menuItemRepository, tableRepository, messagingTemplate, loyaltyAccounts, loyaltySettings,
-            voucherService, jdbcTemplate, reservationRepository);
+            voucherService, jdbcTemplate, reservationRepository, paymentOrderRepository);
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
         occupiedTable.setStatus(TableStatus.OCCUPIED);
@@ -104,7 +107,7 @@ class OrderServiceLifecycleTest {
     }
 
     private void stubCreateHappyPath() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -188,7 +191,7 @@ class OrderServiceLifecycleTest {
     void addItem_ClosedOrder_ThrowsConflict() {
         Order order = openOrder();
         order.setStatus(OrderStatus.COMPLETED);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.addItem("order-1",
@@ -202,7 +205,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("addItem - không tìm thấy đơn trả về 404")
     void addItem_OrderNotFound_ThrowsNotFound() {
-        when(orderRepository.findById("order-x")).thenReturn(Optional.empty());
+        when(orderRepository.lockById("order-x")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.addItem("order-x",
@@ -215,7 +218,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("addItem - không tìm thấy món trả về 404")
     void addItem_MenuItemNotFound_ThrowsNotFound() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-x")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -229,7 +232,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("addItem - tạo phiếu bếp đúng số lượng/ghi chú và ghi nhật ký ADD_ITEM")
     void addItem_CreatesTicketAndAudit() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -256,7 +259,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("updateItem - món không thuộc đơn trả về 404")
     void updateItem_ItemOfAnotherOrder_ThrowsNotFound() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         OrderItem other = queuedItem();
         other.setOrderId("order-2");
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(other));
@@ -273,7 +276,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("updateItem - không tìm thấy món trả về 404")
     void updateItem_ItemNotFound_ThrowsNotFound() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-x")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -289,7 +292,7 @@ class OrderServiceLifecycleTest {
         OrderItem item = queuedItem();
         KitchenTicket ticket = new KitchenTicket("ticket-1", "item-1", "order-1",
             "Bàn 1", "Phở Bò", 2, "Ít cay");
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.of(ticket));
@@ -311,7 +314,7 @@ class OrderServiceLifecycleTest {
     @DisplayName("updateItem - note null giữ nguyên ghi chú cũ, chỉ đổi số lượng")
     void updateItem_NullNote_KeepsOldNote() {
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
@@ -327,7 +330,7 @@ class OrderServiceLifecycleTest {
     @DisplayName("updateItem - nhật ký ghi rõ số lượng cũ → mới")
     void updateItem_AuditRecordsQuantityChange() {
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
@@ -347,7 +350,7 @@ class OrderServiceLifecycleTest {
     @DisplayName("cancelItem - lý do rỗng dùng mặc định 'Khách đổi món'")
     void cancelItem_BlankReason_UsesDefaultReason() {
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
@@ -368,7 +371,7 @@ class OrderServiceLifecycleTest {
     @DisplayName("cancelItem - món chưa có phiếu bếp vẫn hủy được, không phát sự kiện bếp")
     void cancelItem_NoTicket_StillCancels() {
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
@@ -385,7 +388,7 @@ class OrderServiceLifecycleTest {
     @Test
     @DisplayName("cancelItem - món thuộc đơn khác trả về 404")
     void cancelItem_ItemOfAnotherOrder_ThrowsNotFound() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         OrderItem other = queuedItem();
         other.setOrderId("order-2");
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(other));
