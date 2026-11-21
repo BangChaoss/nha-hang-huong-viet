@@ -67,6 +67,18 @@ export const orderApi = {
   getActiveByTable: (tableId: string): Promise<OrderResponse | null> =>
     request<OrderResponse | null>(`/api/orders/table/${tableId}/active`),
 
+  seatedAtTable: (tableId: string) =>
+    request<OrderResponse[]>(`/api/orders/table/${encodeURIComponent(tableId)}/seated`),
+
+  openSeatedOrder: (tableId: string, partySize: number) =>
+    request<OrderResponse>(`/api/orders/table/${encodeURIComponent(tableId)}/seated`, {
+      method: "POST",
+      body: JSON.stringify({ partySize }),
+    }),
+
+  releaseSeats: (orderId: string) =>
+    request<void>(`/api/orders/${encodeURIComponent(orderId)}/release-seats`, { method: "POST" }),
+
   /** Thêm món vào một đơn đang mở (STT 84). */
   addItem: (orderId: string, payload: AddOrderItemRequest): Promise<OrderResponse> =>
     request<OrderResponse>(`/api/orders/${orderId}/items`, {
@@ -92,13 +104,15 @@ export const orderApi = {
       body: JSON.stringify({ reason }),
     }),
 
-  /** UC-18: thu ngân thanh toán tiền mặt cho đơn đang mở của bàn. */
+  /** UC-18: thanh toán tiền mặt cho đơn được chọn. */
   checkoutCash: (
-    tableId: string,
+    orderId: string,
     payload: {
       phoneNumber?: string | undefined;
       voucherCode?: string | undefined;
       usePoints: boolean;
+      pointsToUse?: number;
+      expectedTotal: number;
     },
   ) =>
     request<{
@@ -110,7 +124,7 @@ export const orderApi = {
       total: number;
       pointsAwarded: number;
       tableNumber: string;
-    }>(`/api/orders/table/${encodeURIComponent(tableId)}/checkout-cash`, {
+    }>(`/api/orders/${encodeURIComponent(orderId)}/checkout-cash`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

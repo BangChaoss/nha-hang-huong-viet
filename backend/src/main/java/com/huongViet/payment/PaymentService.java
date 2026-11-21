@@ -12,6 +12,7 @@ import com.huongViet.voucher.VoucherValidationResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -118,7 +119,13 @@ public class PaymentService {
             );
         }
 
-        BigDecimal subtotal = req.subtotal().setScale(2, RoundingMode.HALF_UP);
+        if (req.diningOrderId() == null || req.diningOrderId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vui lòng chọn đơn cần thanh toán.");
+        }
+        BigDecimal subtotal = orderService.prepareVnpayCheckout(req.diningOrderId(), req.tableId());
+        if (subtotal.compareTo(req.subtotal()) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn đã thay đổi. Vui lòng kiểm tra lại hóa đơn.");
+        }
         BigDecimal discount = ZERO;
 
         if (!voucherCode.isBlank()) {
@@ -174,6 +181,7 @@ public class PaymentService {
         PaymentOrder paymentOrder = new PaymentOrder(
                 orderId,
                 req.tableId(),
+                req.diningOrderId(),
                 phone,
                 subtotal,
                 discount,
@@ -199,10 +207,10 @@ public class PaymentService {
 
         ZoneId zone = ZoneId.of("Asia/Ho_Chi_Minh");
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
-        LocalDateTime now = LocalDateTime.now(zone);
+        LocalDateTime now = paymentOrder.getCreatedAt().atZone(ZoneId.systemDefault()).withZoneSameInstant(zone).toLocalDateTime();
 
         params.put("vnp_CreateDate", now.format(formatter));
-        params.put("vnp_ExpireDate", now.plusMinutes(15).format(formatter));
+        params.put("vnp_ExpireDate", now.plusMinutes(PaymentOrder.VNPAY_VALIDITY_MINUTES).format(formatter));
 
         String query = toQuery(params);
         String signature = hmacSha512(hashSecret, query);
@@ -229,7 +237,7 @@ public class PaymentService {
         return constantTimeEquals(expected, received);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public String processCallback(Map<String, String> params) {
         if (!verify(params)) {
             return "INVALID_SIGNATURE";
@@ -273,16 +281,15 @@ public class PaymentService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Giao dịch không được liên kết với bàn POS.");
         }
 
-        CashCheckoutResponse checkout = orderService.checkoutWithPaymentMethod(
-                order.getTableId(),
-                new CashCheckoutRequest(
-                        phone.isBlank() ? null : phone,
-                        order.getVoucherCode(),
-                        order.getPointsUsed() != null && order.getPointsUsed().compareTo(ZERO) > 0,
-                        order.getPointsUsed() // TRUYỀN ĐÚNG SỐ ĐIỂM ĐÃ KHÓA LÚC TẠO PAYMENT
-                ),
-                "VNPAY"
+        CashCheckoutRequest checkoutRequest = new CashCheckoutRequest(
+                phone.isBlank() ? null : phone,
+                order.getVoucherCode(),
+                order.getPointsUsed() != null && order.getPointsUsed().compareTo(ZERO) > 0,
+                order.getPointsUsed()
         );
+        CashCheckoutResponse checkout = order.getDiningOrderId() != null
+                ? orderService.checkoutVnpayOrder(order, checkoutRequest)
+                : orderService.checkoutWithPaymentMethod(order.getTableId(), checkoutRequest, "VNPAY");
 
         BigDecimal pointsAwarded = checkout.pointsAwarded() == null ? ZERO : checkout.pointsAwarded();
         order.markPointsDeducted();
@@ -345,6 +352,7 @@ public class PaymentService {
 
         return Map.of(
                 "orderId", paymentOrder.getId(),
+                "diningOrderId", paymentOrder.getDiningOrderId() == null ? "" : paymentOrder.getDiningOrderId(),
                 "tableId", paymentOrder.getTableId() == null ? "" : paymentOrder.getTableId(),
                 "status", paymentOrder.getStatus(),
                 "amount", paymentOrder.getAmount(),

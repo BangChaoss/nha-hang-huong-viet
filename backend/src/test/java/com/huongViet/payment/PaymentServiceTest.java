@@ -92,13 +92,17 @@ class PaymentServiceTest {
     @DisplayName("Tạo thanh toán VNPay (createPayment)")
     class CreatePaymentTests {
 
+        private void stubVerifiedSubtotal(String subtotal) {
+            when(orderService.prepareVnpayCheckout("dining-1", "table-1")).thenReturn(new BigDecimal(subtotal));
+        }
+
         @Test
         @DisplayName("Lỗi 503 khi chưa cấu hình TMN Code hoặc Hash Secret")
         void testCreatePayment_MissingConfig() {
             ReflectionTestUtils.setField(paymentService, "tmnCode", "");
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "0901234567", null, null, false
+                    "table-1", new BigDecimal("100000"), "0901234567", null, null, false, "dining-1"
             );
 
             ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -110,13 +114,13 @@ class PaymentServiceTest {
         @DisplayName("Lỗi 400 khi tổng tiền subtotal null hoặc <= 0")
         void testCreatePayment_InvalidSubtotal() {
             VnpayCreateRequest reqZero = new VnpayCreateRequest(
-                    "table-1", BigDecimal.ZERO, "0901234567", null, null, false
+                    "table-1", BigDecimal.ZERO, "0901234567", null, null, false, "dining-1"
             );
             assertThrows(ResponseStatusException.class,
                     () -> paymentService.createPayment(reqZero, "127.0.0.1"));
 
             VnpayCreateRequest reqNegative = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("-50000"), "0901234567", null, null, false
+                    "table-1", new BigDecimal("-50000"), "0901234567", null, null, false, "dining-1"
             );
             assertThrows(ResponseStatusException.class,
                     () -> paymentService.createPayment(reqNegative, "127.0.0.1"));
@@ -126,14 +130,14 @@ class PaymentServiceTest {
         @DisplayName("Lỗi 400 khi dùng voucher hoặc điểm mà không nhập số điện thoại")
         void testCreatePayment_MissingPhoneWhenUsingVoucherOrPoints() {
             VnpayCreateRequest reqVoucherNoPhone = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "", "SALE50", null, false
+                    "table-1", new BigDecimal("100000"), "", "SALE50", null, false, "dining-1"
             );
             ResponseStatusException ex1 = assertThrows(ResponseStatusException.class,
                     () -> paymentService.createPayment(reqVoucherNoPhone, "127.0.0.1"));
             assertEquals(HttpStatus.BAD_REQUEST, ex1.getStatusCode());
 
             VnpayCreateRequest reqPointsNoPhone = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), null, null, null, true
+                    "table-1", new BigDecimal("100000"), null, null, null, true, "dining-1"
             );
             ResponseStatusException ex2 = assertThrows(ResponseStatusException.class,
                     () -> paymentService.createPayment(reqPointsNoPhone, "127.0.0.1"));
@@ -143,11 +147,12 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Lỗi 400 khi voucher không hợp lệ")
         void testCreatePayment_InvalidVoucher() {
+            stubVerifiedSubtotal("100000.00");
             when(voucherService.validate(any(VoucherValidationRequest.class)))
                     .thenReturn(new VoucherValidationResponse(false, "Voucher hết hạn", BigDecimal.ZERO, "EXPIRED"));
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "0901234567", "EXPIRED", null, false
+                    "table-1", new BigDecimal("100000"), "0901234567", "EXPIRED", null, false, "dining-1"
             );
 
             ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -159,12 +164,13 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Lỗi 400 khi dùng điểm mà không tìm thấy ví điểm hoặc số dư âm")
         void testCreatePayment_LoyaltyAccountNotFoundOrNegative() {
+            stubVerifiedSubtotal("100000.00");
             stubDefaultSettings();
             when(loyaltyAccountRepository.findByCustomerPhone("0901234567"))
                     .thenReturn(Optional.empty());
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "0901234567", null, null, true
+                    "table-1", new BigDecimal("100000"), "0901234567", null, null, true, "dining-1"
             );
 
             ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -176,6 +182,7 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Dùng điểm: dùng tối đa số điểm nguyên còn lại nhưng không vượt quá số dư/sau giảm giá")
         void testCreatePayment_PointsCalculationAndRounding() {
+            stubVerifiedSubtotal("50000.00");
             stubDefaultSettings();
             LoyaltyAccount account = new LoyaltyAccount("acc-1", "0901234567");
             account.addPoints(new BigDecimal("250")); // Có 250 điểm
@@ -183,7 +190,7 @@ class PaymentServiceTest {
                     .thenReturn(Optional.of(account));
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("50000"), "0901234567", null, null, true
+                    "table-1", new BigDecimal("50000"), "0901234567", null, null, true, "dining-1"
             );
 
             Map<String, String> res = paymentService.createPayment(req, "127.0.0.1");
@@ -203,12 +210,13 @@ class PaymentServiceTest {
         @Test
         @DisplayName("Lỗi 400 khi số tiền thanh toán cuối cùng < 1.000 VND (VNPay MIN_PAYMENT)")
         void testCreatePayment_AmountLessThanMin() {
+            stubVerifiedSubtotal("100000.00");
             stubDefaultSettings();
             when(voucherService.validate(any(VoucherValidationRequest.class)))
                     .thenReturn(new VoucherValidationResponse(true, "Hợp lệ", new BigDecimal("99500"), "DISCOUNT"));
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "0901234567", "DISCOUNT", null, false
+                    "table-1", new BigDecimal("100000"), "0901234567", "DISCOUNT", null, false, "dining-1"
             );
 
             // Subtotal 100.000 - 99.500 = 500 VND < 1.000 VND
@@ -219,8 +227,23 @@ class PaymentServiceTest {
         }
 
         @Test
+        void testCreatePayment_SubtotalMismatchRejectsPayment() {
+            stubVerifiedSubtotal("121000.00");
+            VnpayCreateRequest req = new VnpayCreateRequest(
+                    "table-1", new BigDecimal("100000"), null, null, null, false, "dining-1"
+            );
+
+            ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                    () -> paymentService.createPayment(req, "127.0.0.1"));
+
+            assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
         @DisplayName("Tạo thanh toán thành công: Lưu PaymentOrder PENDING và sinh paymentUrl có hash chuẩn")
         void testCreatePayment_Success() {
+            stubVerifiedSubtotal("100000.00");
             stubDefaultSettings();
             when(voucherService.validate(any(VoucherValidationRequest.class)))
                     .thenReturn(new VoucherValidationResponse(true, "Hợp lệ", new BigDecimal("20000"), "SUMMER"));
@@ -231,7 +254,7 @@ class PaymentServiceTest {
                     .thenReturn(Optional.of(account));
 
             VnpayCreateRequest req = new VnpayCreateRequest(
-                    "table-1", new BigDecimal("100000"), "0901-234-567", "SUMMER", null, true
+                    "table-1", new BigDecimal("100000"), "0901-234-567", "SUMMER", null, true, "dining-1"
             );
 
             Map<String, String> res = paymentService.createPayment(req, "::1");
@@ -240,6 +263,7 @@ class PaymentServiceTest {
             String paymentUrl = res.get("paymentUrl");
             assertNotNull(paymentUrl);
             assertTrue(paymentUrl.startsWith("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?"));
+            assertTrue(paymentUrl.contains("vnp_Amount=7500000&"));
             assertTrue(paymentUrl.contains("vnp_TmnCode=" + TEST_TMN));
             assertTrue(paymentUrl.contains("vnp_SecureHash="));
             assertTrue(paymentUrl.contains("vnp_IpAddr=127.0.0.1")); // IPv6 ::1 normalized to 127.0.0.1
@@ -248,6 +272,7 @@ class PaymentServiceTest {
             verify(orderRepository).save(captor.capture());
             PaymentOrder saved = captor.getValue();
             assertEquals("PENDING", saved.getStatus());
+            assertEquals("dining-1", saved.getDiningOrderId());
             assertEquals("0901234567", saved.getCustomerPhone());
             assertEquals(new BigDecimal("100000.00"), saved.getSubtotal());
             assertEquals(new BigDecimal("20000"), saved.getDiscountAmount());
@@ -363,6 +388,8 @@ class PaymentServiceTest {
             ));
 
             assertEquals("INVALID_AMOUNT", paymentService.processCallback(params));
+            assertEquals("PENDING", order.getStatus());
+            verifyNoInteractions(orderService);
         }
 
         @Test
@@ -429,10 +456,10 @@ class PaymentServiceTest {
         }
 
         @Test
-        @DisplayName("Callback thành công: Gọi orderService.checkoutCash, đánh dấu PAID và lưu điểm thưởng")
-        void testProcessCallback_Success() {
+        @DisplayName("Callback thành công: thanh toán đúng đơn liên kết, đánh dấu PAID và lưu điểm thưởng")
+        void testProcessCallback_SettlesLinkedDiningOrder() {
             PaymentOrder order = new PaymentOrder(
-                    "order-1", "table-10", "0901234567",
+                    "order-1", "table-10", "dining-10", "0901234567",
                     new BigDecimal("100000"), BigDecimal.ZERO, new BigDecimal("100000"), "VOUCHER10", new BigDecimal("500")
             );
             when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
@@ -447,8 +474,9 @@ class PaymentServiceTest {
                     new BigDecimal("5000"),   // Điểm thưởng
                     "Bàn 10"                  // Số bàn
             );
-            when(orderService.checkoutWithPaymentMethod(eq("table-10"), any(CashCheckoutRequest.class), eq("VNPAY")))
-                    .thenReturn(checkoutResponse);
+            CashCheckoutRequest expectedRequest = new CashCheckoutRequest(
+                    "0901234567", "VOUCHER10", true, new BigDecimal("500"));
+            when(orderService.checkoutVnpayOrder(order, expectedRequest)).thenReturn(checkoutResponse);
 
             Map<String, String> params = createSignedParams(Map.of(
                     "vnp_TxnRef", "order-1",
@@ -460,6 +488,8 @@ class PaymentServiceTest {
 
             String result = paymentService.processCallback(params);
             assertEquals("00", result);
+            verify(orderService).checkoutVnpayOrder(order, expectedRequest);
+            verifyNoMoreInteractions(orderService);
             assertEquals("PAID", order.getStatus());
             assertEquals("VNPAY_TXN_777", order.getVnpTransactionNo());
             assertEquals(new BigDecimal("5000"), order.getPointsAwarded());

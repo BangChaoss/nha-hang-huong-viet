@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CalendarCheck, ChefHat, ShieldCheck, Store, UtensilsCrossed, X, Receipt } from "lucide-react";
+import { CalendarCheck, ChefHat, ShieldCheck, Store, UtensilsCrossed, Receipt } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { paymentApi, type PaymentOrderStatus } from "@/lib/payment-api";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 import { StaffPOS } from "@/components/hv/StaffPOS";
@@ -11,6 +12,7 @@ import { RoleGuard } from "@/components/hv/RoleGuard";
 import { useSession } from "@/lib/auth-session";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StaffInvoices } from "@/components/hv/StaffInvoices";
+import { orderCode } from "@/features/order/utils/order-code";
 
 export const Route = createFileRoute("/staff")({
   head: () => ({ meta: [{ title: "Nhân viên & Thu ngân — Hương Việt" }] }),
@@ -45,14 +47,16 @@ function Page() {
           status: order.status,
           message: success
             ? `Thanh toán thành công. Đã cộng ${Number(order.pointsAwarded || 0).toLocaleString("vi-VN")} điểm cho khách hàng (${order.phoneNumber || "không cung cấp số điện thoại"}).`
-            : "Giao dịch thất bại hoặc bị huỷ. Voucher chưa được ghi nhận và không cộng điểm.",
+            : order.status === "PENDING"
+              ? "Chưa chốt hóa đơn. Kiểm tra giao dịch trên VNPay trước khi thu tiền lại."
+              : "Giao dịch thất bại hoặc bị huỷ. Voucher chưa được ghi nhận và không cộng điểm.",
         });
       })
       .catch(() =>
         setPaymentResult({
           order: null,
           status,
-          message: "Giao dịch thất bại hoặc bị huỷ. Voucher chưa được ghi nhận và không cộng điểm.",
+          message: "Không tra cứu được kết quả VNPay. Kiểm tra giao dịch trước khi thu tiền lại.",
         })
       );
   }, []);
@@ -96,34 +100,22 @@ function Page() {
           </header>
 
           {paymentResult && (
-            <div
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-              role="presentation"
-            >
-              <section
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="payment-result-title"
-                className="w-full max-w-lg space-y-4 rounded-xl border bg-background p-6 shadow-xl"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <h2 id="payment-result-title" className="text-xl font-semibold">
-                    {paymentResult.status === "PAID"
-                      ? "Thanh toán thành công"
-                      : "Kết quả thanh toán VNPAY"}
-                  </h2>
-                  <button
-                    type="button"
-                    aria-label="Đóng thông báo"
-                    onClick={() => setPaymentResult(null)}
-                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-                <p className="text-sm">{paymentResult.message}</p>
+            <Dialog open onOpenChange={(open) => !open && setPaymentResult(null)}>
+              <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>
+                    {paymentResult.status === "PAID" ? "Thanh toán thành công" : "Kết quả thanh toán VNPay"}
+                  </DialogTitle>
+                  <DialogDescription>{paymentResult.message}</DialogDescription>
+                </DialogHeader>
                 {paymentResult.order && (
                   <dl className="space-y-2 text-sm">
+                    {paymentResult.order.diningOrderId && (
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted-foreground">Đơn tại bàn</dt>
+                        <dd>{orderCode(paymentResult.order.diningOrderId)}</dd>
+                      </div>
+                    )}
                     <div className="flex justify-between gap-4">
                       <dt className="text-muted-foreground">Mã giao dịch</dt>
                       <dd className="break-all text-right">
@@ -148,13 +140,13 @@ function Page() {
                   <button
                     type="button"
                     onClick={() => setPaymentResult(null)}
-                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+                    className="min-h-11 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     Đóng
                   </button>
                 </div>
-              </section>
-            </div>
+              </DialogContent>
+            </Dialog>
           )}
 
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">

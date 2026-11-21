@@ -8,6 +8,7 @@ import { useKitchenTickets } from "@/features/order/hooks/use-kitchen-tickets";
 import { useUpdateTicketStatus } from "@/features/order/hooks/use-ticket-status";
 import { isUserManager, useSession } from "@/lib/auth-session";
 import type { CookingStatus, KitchenTicketResponse } from "@/features/order/types/order.types";
+import { orderCode } from "@/features/order/utils/order-code";
 
 const cols: { s: CookingStatus; title: string }[] = [
   { s: "QUEUED", title: "Chờ Chế Biến" },
@@ -28,6 +29,21 @@ function getTodayString(): string {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+type PositionedTicket = { ticket: KitchenTicketResponse; position: number };
+
+function groupTickets(list: KitchenTicketResponse[]) {
+  const tables = new Map<string, Map<string, PositionedTicket[]>>();
+  list.forEach((ticket, index) => {
+    const orders = tables.get(ticket.tableNumber) ?? new Map<string, PositionedTicket[]>();
+    const orderId = ticket.orderId || ticket.id;
+    const items = orders.get(orderId) ?? [];
+    items.push({ ticket, position: index + 1 });
+    orders.set(orderId, items);
+    tables.set(ticket.tableNumber, orders);
+  });
+  return tables;
 }
 
 export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
@@ -73,14 +89,11 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Màn hình bếp · FIFO
-          </p>
           <h1 className="text-4xl font-semibold">Phiếu chế biến</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Gom theo bàn và đơn. Số lượt cho biết thứ tự gửi bếp của tất cả món đang chờ.</p>
           {!canUpdateStatus && (
             <p className="mt-2 rounded-md border border-muted-foreground/20 bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
-              Chế độ chỉ xem — đầu bếp theo dõi phiếu tại đây. Việc cập nhật trạng thái món do nhân viên phục vụ
-              hoặc quản lý thực hiện.
+              Chế độ chỉ xem. Nhân viên phục vụ hoặc quản lý cập nhật trạng thái món.
             </p>
           )}
         </div>
@@ -93,7 +106,7 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="h-7 w-36 border-none bg-transparent p-0 text-xs font-medium focus-visible:ring-0"
+              className="h-11 w-36 border-none bg-transparent p-1 text-sm font-medium"
               aria-label="Chọn ngày hiển thị phiếu bếp"
             />
           </div>
@@ -102,7 +115,7 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 text-xs"
+              className="min-h-11 text-xs"
               onClick={() => setSelectedDate(getTodayString())}
             >
               Hôm nay
@@ -112,25 +125,25 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 text-xs"
+            className="min-h-11 text-xs"
             onClick={() => void refetch()}
             disabled={isFetching}
           >
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1", isFetching && "animate-spin")} />
-            Làm mới
+            <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            {isFetching ? "Đang tải…" : "Làm mới"}
           </Button>
         </div>
       </div>
 
       {isError && (
-        <p className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
-          {error instanceof Error ? error.message : "Không tải được phiếu bếp."}
+        <p role="alert" className="rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-sm text-alert">
+          {error instanceof Error ? error.message : "Không tải được phiếu bếp."} Chọn Làm mới để thử lại.
         </p>
       )}
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">Đang tải phiếu bếp…</p>
-      ) : (
+        <p role="status" className="py-8 text-center text-sm text-muted-foreground">Đang tải phiếu bếp…</p>
+      ) : (!isError || tickets) && (
         <div className="grid gap-5 lg:grid-cols-3">
           {cols.map((c) => {
             // Backend đã trả về theo thứ tự FIFO (BR-35) — giữ nguyên thứ tự.
@@ -149,64 +162,62 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
                       Không có phiếu nào
                     </p>
                   )}
-                  {list.map((t, idx) => {
-                    const mins = elapsedMinutes(t.createdAt, now);
-                    const isOverdue = mins > 15;
-                    return (
-                      <div
-                        key={t.id}
-                        className={cn(
-                          "surface-card p-4",
-                          idx === 0 && c.s !== "READY" && "border-primary/50",
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-display text-2xl font-semibold">
-                            {t.tableNumber}
-                          </span>
-                          <span
-                            className={cn(
-                              "flex items-center gap-1 text-xs tabular-nums",
-                              isOverdue ? "font-semibold text-alert" : "text-muted-foreground",
-                            )}
-                          >
-                            <Clock className="h-3 w-3" />
-                            {new Date(t.createdAt).toLocaleTimeString("vi-VN", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}{" "}
-                            · {mins}′{isOverdue && " ⚠"}
-                          </span>
+                  {Array.from(groupTickets(list), ([tableNumber, orders]) => (
+                    <section key={tableNumber} aria-label={tableNumber} className="surface-card min-w-0 p-3 sm:p-4">
+                      <h3 className="wrap-anywhere font-display text-xl font-semibold">{tableNumber}</h3>
+                      {Array.from(orders, ([id, items]) => (
+                        <div key={id} className="mt-3 border-t pt-2">
+                          <h4 className="text-sm font-semibold">
+                            {items[0].ticket.orderId ? `Đơn ${orderCode(id)}` : "Phiếu không có mã đơn"}
+                          </h4>
+                          <ul className="divide-y">
+                            {items.map(({ ticket: t, position }) => {
+                              const mins = elapsedMinutes(t.createdAt, now);
+                              const waiting = c.s === "QUEUED";
+                              const next = waiting && position === 1;
+                              const action = waiting ? "Bắt đầu nấu" : "Báo món hoàn tất";
+                              return (
+                                <li key={t.id} className="space-y-2 py-2">
+                                  <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-xs tabular-nums">
+                                    {waiting && (
+                                      <span className={cn("font-medium", next ? "text-primary" : "text-muted-foreground")}>
+                                        Lượt {position}{next && " · Tiếp theo"}
+                                      </span>
+                                    )}
+                                    <span className={cn("flex flex-wrap items-center gap-1", mins > 15 ? "font-semibold text-alert" : "text-muted-foreground")}>
+                                      <Clock className="size-3" aria-hidden="true" />
+                                      <time dateTime={t.createdAt}>{new Date(t.createdAt).toLocaleTimeString("vi-VN", {
+                                        hour: "2-digit", minute: "2-digit",
+                                      })}</time>
+                                      · {mins} phút{mins > 15 && " · Chờ lâu"}
+                                    </span>
+                                  </div>
+                                  <p className="wrap-anywhere text-sm"><strong>{t.quantity}×</strong> {t.itemName}</p>
+                                  {t.additional && <p className="text-xs font-medium text-muted-foreground">Gọi thêm</p>}
+                                  {t.note && (
+                                    <p className="wrap-anywhere flex items-start gap-1.5 rounded-md border border-alert/30 bg-alert/5 px-2 py-1.5 text-xs text-alert">
+                                      <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /> {t.note}
+                                    </p>
+                                  )}
+                                  {canUpdateStatus && (waiting || c.s === "PREPARING") && (
+                                    <Button
+                                      variant={next ? "default" : "outline"}
+                                      className="min-h-11 w-full"
+                                      aria-label={`${action}: ${t.itemName}, ${tableNumber}${t.orderId ? `, đơn ${orderCode(t.orderId)}` : ""}`}
+                                      disabled={updateStatus.isPending}
+                                      onClick={() => advance(t, waiting ? "PREPARING" : "READY")}
+                                    >
+                                      {action}
+                                    </Button>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
-                        <ul className="mt-3 space-y-1 text-sm">
-                          <li className="flex gap-2">
-                            <span className="w-6 font-semibold tabular-nums">{t.quantity}×</span>
-                            {t.itemName}
-                          </li>
-                        </ul>
-                        {t.note && (
-                          <p className="mt-3 flex items-start gap-1.5 rounded-md border border-alert/30 bg-alert/5 px-2 py-1.5 text-xs font-bold uppercase text-alert">
-                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {t.note}
-                          </p>
-                        )}
-                        {canUpdateStatus && (c.s === "QUEUED" || c.s === "PREPARING") && (
-                          <Button
-                            size="sm"
-                            className={cn(
-                              "mt-4 w-full",
-                              c.s === "QUEUED"
-                                ? "bg-primary hover:bg-primary-hover"
-                                : "bg-moss text-moss-foreground hover:bg-moss/90",
-                            )}
-                            disabled={updateStatus.isPending}
-                            onClick={() => advance(t, c.s === "QUEUED" ? "PREPARING" : "READY")}
-                          >
-                            {c.s === "QUEUED" ? "Bắt đầu nấu" : "Báo món hoàn tất"}
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </section>
+                  ))}
                 </div>
               </div>
             );

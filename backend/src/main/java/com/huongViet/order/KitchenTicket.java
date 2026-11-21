@@ -53,6 +53,9 @@ public class KitchenTicket {
     @Column(nullable = false, length = 20)
     private CookingStatus status = CookingStatus.QUEUED;
 
+    @Column(name = "is_additional", nullable = false, columnDefinition = "boolean default false")
+    private boolean additional;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -133,6 +136,14 @@ public class KitchenTicket {
 
     public void setStatus(CookingStatus status) {
         this.status = status;
+    }
+
+    public boolean isAdditional() {
+        return additional;
+    }
+
+    public void setAdditional(boolean additional) {
+        this.additional = additional;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -14,6 +14,8 @@ import com.huongViet.payment.LoyaltyAccount;
 import com.huongViet.payment.LoyaltyAccountRepository;
 import com.huongViet.payment.LoyaltySettings;
 import com.huongViet.payment.LoyaltySettingsRepository;
+import com.huongViet.payment.PaymentOrder;
+import com.huongViet.payment.PaymentOrderRepository;
 import com.huongViet.voucher.VoucherService;
 import com.huongViet.voucher.VoucherValidationRequest;
 import com.huongViet.voucher.VoucherValidationResponse;
@@ -24,18 +26,18 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
 
 @Service
 @Transactional(readOnly = true)
@@ -56,6 +58,7 @@ public class OrderService {
     private final VoucherService voucherService;
     private final JdbcTemplate jdbcTemplate;
     private final ReservationRepository reservationRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
 
     public OrderService(OrderRepository orderRepository,
                         OrderItemRepository orderItemRepository,
@@ -68,7 +71,8 @@ public class OrderService {
                         LoyaltySettingsRepository loyaltySettings,
                         VoucherService voucherService,
                         JdbcTemplate jdbcTemplate,
-                        ReservationRepository reservationRepository) {
+                        ReservationRepository reservationRepository,
+                        PaymentOrderRepository paymentOrderRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.kitchenTicketRepository = kitchenTicketRepository;
@@ -81,6 +85,7 @@ public class OrderService {
         this.voucherService = voucherService;
         this.jdbcTemplate = jdbcTemplate;
         this.reservationRepository = reservationRepository;
+        this.paymentOrderRepository = paymentOrderRepository;
     }
 
     /**
@@ -95,7 +100,7 @@ public class OrderService {
         List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(today);
 
         for (Reservation r : activeReservations) {
-            if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+            if (r.getStatus() == ReservationStatus.ARRIVED) {
                 if (r.getMergedTableIds() != null && !r.getMergedTableIds().isBlank()) {
                     List<String> mergedIds = Arrays.stream(r.getMergedTableIds().split(","))
                             .map(String::trim)
@@ -103,7 +108,7 @@ public class OrderService {
                             .distinct()
                             .collect(Collectors.toList());
                     if (mergedIds.contains(tableId)) {
-                        return mergedIds;
+                        return mergedIds.stream().sorted().toList();
                     }
                 } else if (tableId.equals(r.getTableId())) {
                     return new ArrayList<>(Collections.singletonList(tableId));
@@ -135,9 +140,66 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse openSeatedOrder(String tableId, int partySize, String staffId) {
+        RestaurantTable table = lockTable(tableId);
+        if (table.getStatus() != TableStatus.OCCUPIED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Vui lòng mở bàn trước khi xếp khách.");
+        }
+        boolean exclusive = reservationRepository.findActiveReservationsForDate(LocalDate.now()).stream()
+            .anyMatch(reservation -> reservation.blocksSharedSeating(tableId));
+        if (exclusive) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn dành cho khách đặt trước không nhận khách ngồi ghép.");
+        }
+        int available = Order.availableSeats(table.getCapacity(), orderRepository.findSeatedOrdersByTableIds(List.of(tableId)));
+        if (partySize < 1 || partySize > available) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn còn " + available + " ghế trống.");
+        }
+        Order order = new Order(UUID.randomUUID().toString(), tableId, staffId, OrderType.DINE_IN);
+        order.setTable(table);
+        order.setPartySize(partySize);
+        return OrderResponse.from(orderRepository.save(order), List.of(), table.getTableNumber());
+    }
+
+    public List<OrderResponse> listSeatedOrders(String tableId) {
+        return orderRepository.findSeatedOrdersByTableIds(findRelatedTableIds(tableId)).stream()
+            .map(this::toResponse).toList();
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void releaseSeats(String orderId) {
+        RestaurantTable table = lockTableForOrder(orderId);
+        Order order = lockOrder(orderId);
+        if (order.getPartySize() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn này không theo dõi chỗ ngồi riêng.");
+        }
+        if (!order.isSeated()) return;
+        if (order.getStatus() == OrderStatus.IN_PROGRESS) {
+            if (payableItems(orderId).size() > 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Hãy thanh toán đơn trước khi trả chỗ.");
+            }
+            order.setStatus(OrderStatus.CANCELLED);
+            order.setClosedAt(LocalDateTime.now());
+        }
+        order.releaseSeats();
+        orderRepository.save(order);
+        boolean othersSeated = orderRepository.findSeatedOrdersByTableIds(List.of(table.getId())).stream()
+            .anyMatch(other -> !other.getId().equals(orderId));
+        if (!othersSeated && table.getStatus() == TableStatus.OCCUPIED) makeTableAvailable(table);
+    }
+
+    private RestaurantTable lockTable(String tableId) {
+        return tableRepository.lockActiveById(tableId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
+    }
+
+    private RestaurantTable lockTableForOrder(String orderId) {
+        return lockTable(orderRepository.findTableIdByOrderId(orderId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng.")));
+    }
+
+    @Transactional
     public OrderResponse create(CreateOrderRequest request, String staffId) {
-        RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(request.tableId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
+        RestaurantTable table = lockTable(request.tableId());
 
         if (table.getStatus() != TableStatus.OCCUPIED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -145,6 +207,9 @@ public class OrderService {
         }
 
         List<String> relatedTableIds = findRelatedTableIds(table.getId());
+        if (orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream().anyMatch(Order::isSeated)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Vui lòng chọn đơn cần thêm món hoặc mở đơn mới.");
+        }
         Order existingOrder = null;
         for (String relId : relatedTableIds) {
             var found = orderRepository.findFirstByTableIdAndStatusOrderByCreatedAtDesc(relId, OrderStatus.IN_PROGRESS);
@@ -168,7 +233,7 @@ public class OrderService {
 
         Order order;
         if (existingOrder != null) {
-            order = existingOrder;
+            order = findEditableOrder(existingOrder.getId());
         } else {
             OrderType orderType = request.orderType() != null ? request.orderType() : OrderType.DINE_IN;
             order = new Order(UUID.randomUUID().toString(), table.getId(), staffId, orderType);
@@ -202,23 +267,42 @@ public class OrderService {
                 OrderItem orderItem = savedItems.get(i);
                 MenuItem menuItem = menuItems.get(i);
 
-                KitchenTicket ticket = new KitchenTicket(
-                        UUID.randomUUID().toString(),
-                        orderItem.getId(),
-                        order.getId(),
-                        displayTableNumber,
-                        menuItem.getItemName(),
-                        orderItem.getQuantity(),
-                        orderItem.getNote()
-                );
-                ticket.setPriority(1);
-                ticket.setStatus(CookingStatus.QUEUED);
-                KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
-                publishTicketEvent(new KitchenTicketEvent("CREATED", KitchenTicketResponse.from(savedTicket)));
+                saveKitchenTicket(order, orderItem, menuItem, displayTableNumber, existingOrder != null);
             }
         }
 
         return toResponse(order);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CashCheckoutResponse checkoutOrderCash(String orderId, CashCheckoutRequest request, String staffId) {
+        return checkoutOrder(orderId, request, staffId, null);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CashCheckoutResponse checkoutVnpayOrder(PaymentOrder payment, CashCheckoutRequest request) {
+        return checkoutOrder(payment.getDiningOrderId(), request, null, payment);
+    }
+
+    @Transactional
+    public BigDecimal prepareVnpayCheckout(String orderId, String tableId) {
+        lockTable(tableId);
+        Order order = findEditableOrder(orderId);
+        if (!order.getTableId().equals(tableId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn không thuộc bàn đã chọn.");
+        }
+        BigDecimal subtotal = subtotal(payableItems(orderId));
+        return subtotal.add(vat(subtotal));
+    }
+
+    private CashCheckoutResponse checkoutOrder(String orderId, CashCheckoutRequest request, String staffId,
+                                               PaymentOrder payment) {
+        RestaurantTable table = lockTableForOrder(orderId);
+        Order order = payment == null ? findEditableOrder(orderId) : findOpenOrderOrThrow(orderId);
+        List<String> relatedTableIds = order.getPartySize() == null ? findRelatedTableIds(table.getId()) : List.of(table.getId());
+        boolean releaseLegacyTable = order.getPartySize() == null &&
+            orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream().noneMatch(o -> !o.getId().equals(orderId));
+        return settle(table, relatedTableIds, List.of(order), request, staffId, releaseLegacyTable, false, payment);
     }
 
     @Transactional
@@ -238,14 +322,11 @@ public class OrderService {
 
     @Transactional
     public CashCheckoutResponse checkoutWithPaymentMethod(String tableId, CashCheckoutRequest request, String paymentMethod, String staffId) {
-        RestaurantTable table = tableRepository.findByIdAndDeletedAtIsNull(tableId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
-
-        if (request == null) {
-            request = new CashCheckoutRequest(null, null, false);
-        }
-
+        RestaurantTable table = lockTable(tableId);
         List<String> relatedTableIds = findRelatedTableIds(tableId);
+        if (orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream().anyMatch(Order::isSeated)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn có chỗ ngồi ghép, vui lòng thanh toán theo từng đơn.");
+        }
 
         List<Order> openOrders = new ArrayList<>();
         for (String relId : relatedTableIds) {
@@ -263,18 +344,36 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Bàn chưa có món đã gửi bếp để thanh toán.");
         }
 
-        BigDecimal subtotal = BigDecimal.ZERO;
-        for (Order order : openOrders) {
-            for (OrderItem item : orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId())) {
-                if (item.getCookingStatus() != CookingStatus.CANCELLED) {
-                    BigDecimal unitPrice = item.getUnitPriceSnapshot() != null ? item.getUnitPriceSnapshot() : BigDecimal.ZERO;
-                    int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
-                    subtotal = subtotal.add(unitPrice.multiply(BigDecimal.valueOf(quantity)));
-                }
-            }
+        openOrders.forEach(order -> assertNoPendingVnpay(order.getId()));
+        return settle(table, relatedTableIds, openOrders, request, staffId, true, true, null);
+    }
+
+    private List<OrderItem> payableItems(String orderId) {
+        return orderItemRepository.findByOrderIdOrderByCreatedAtAsc(orderId).stream()
+            .filter(item -> item.getCookingStatus() != CookingStatus.CANCELLED).toList();
+    }
+
+    private BigDecimal subtotal(List<OrderItem> items) {
+        return items.stream().map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
+            .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal vat(BigDecimal subtotal) {
+        return subtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private CashCheckoutResponse settle(RestaurantTable table, List<String> relatedTableIds, List<Order> openOrders,
+                                         CashCheckoutRequest request, String staffId, boolean releaseLegacyTable,
+                                         boolean legacyTableCheckout, PaymentOrder payment) {
+        if (request == null) request = new CashCheckoutRequest(null, null, false);
+        String tableId = table.getId();
+        String displayTableNumber = relatedTableIds.size() > 1 ? resolveDisplayTableNumber(tableId) : table.getTableNumber();
+        List<OrderItem> billItems = openOrders.stream().flatMap(o -> payableItems(o.getId()).stream()).toList();
+        if (!legacyTableCheckout && billItems.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn chưa có món để thanh toán.");
         }
-        subtotal = subtotal.setScale(2, RoundingMode.HALF_UP);
-        BigDecimal vat = subtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal subtotal = subtotal(billItems);
+        BigDecimal vat = vat(subtotal);
         BigDecimal beforeDiscount = subtotal.add(vat);
 
         String phone = request.phoneNumber() == null ? "" : request.phoneNumber().replaceAll("[\\s()-]", "").trim();
@@ -322,6 +421,14 @@ public class OrderService {
         }
 
         BigDecimal total = afterDiscount.subtract(pointsDiscountAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        if (request.expectedTotal() != null && request.expectedTotal().compareTo(total) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Số tiền đã thay đổi. Vui lòng kiểm tra lại hóa đơn.");
+        }
+        if (payment != null && (beforeDiscount.compareTo(payment.getSubtotal()) != 0 ||
+            discount.compareTo(payment.getDiscountAmount()) != 0 ||
+            pointsRedeemed.compareTo(payment.getPointsUsed()) != 0 || total.compareTo(payment.getAmount()) != 0)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Hóa đơn không còn khớp với giao dịch VNPay; cần đối soát.");
+        }
 
         BigDecimal pointsAwarded = BigDecimal.ZERO;
         if (!phone.isBlank()) {
@@ -337,32 +444,18 @@ public class OrderService {
             if (!ids.isEmpty()) voucherId = ids.get(0);
         }
 
-        LocalDate today = LocalDate.now();
-        List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(today);
-        Set<String> relatedSet = new HashSet<>(relatedTableIds);
+        List<Reservation> activeReservations = releaseLegacyTable
+            ? reservationRepository.findActiveReservationsForDate(LocalDate.now()) : List.of();
         Reservation matchingReservation = null;
-
         for (Reservation r : activeReservations) {
-            boolean matchesPrimary = r.getTableId() != null && relatedSet.contains(r.getTableId());
-            boolean matchesMerged = false;
-            if (r.getMergedTableIds() != null && !r.getMergedTableIds().isBlank()) {
-                List<String> mergedList = Arrays.stream(r.getMergedTableIds().split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .collect(Collectors.toList());
-                matchesMerged = mergedList.stream().anyMatch(relatedSet::contains);
-            }
-
-            if (matchesPrimary || matchesMerged) {
-                if (matchingReservation == null) {
-                    matchingReservation = r;
-                }
-                // Chuyển trạng thái đơn bàn sang PAID (Đã thanh toán)
-                if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
-                    r.setStatus(ReservationStatus.PAID);
-                }
+            if (relatedTableIds.stream().noneMatch(r::includesTable)) continue;
+            if (!legacyTableCheckout && r.getStatus() != ReservationStatus.ARRIVED) continue;
+            if (matchingReservation == null) matchingReservation = r;
+            if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                r.setStatus(ReservationStatus.PAID);
                 reservationRepository.save(r);
             }
+            if (!legacyTableCheckout) break;
         }
 
         String actualCustomerId = null;
@@ -400,30 +493,34 @@ public class OrderService {
 
         for (Order order : openOrders) {
             order.setStatus(OrderStatus.COMPLETED);
-            order.setClosedAt(java.time.LocalDateTime.now());
+            order.setClosedAt(LocalDateTime.now());
             orderRepository.save(order);
         }
 
-        for (String relId : relatedTableIds) {
-            tableRepository.findByIdAndDeletedAtIsNull(relId).ifPresent(t -> {
-                TableStatus oldStatus = t.getStatus();
-                t.setStatus(TableStatus.AVAILABLE);
-                tableRepository.save(t);
-                try {
-                    String zoneName = t.getZone() != null ? t.getZone().getZoneName() : null;
-                    messagingTemplate.convertAndSend("/topic/table-status",
-                            new com.huongViet.table.TableStatusMessage(t.getId(), t.getTableNumber(), oldStatus, TableStatus.AVAILABLE, zoneName));
-                } catch (Exception ex) {
-                    logger.warn("Không thể broadcast giải phóng bàn {}: {}", t.getTableNumber(), ex.getMessage());
-                }
-            });
+        if (releaseLegacyTable) {
+            makeTableAvailable(table);
+            relatedTableIds.stream().filter(id -> !id.equals(tableId)).forEach(id ->
+                tableRepository.findByIdAndDeletedAtIsNull(id).filter(t -> t.getStatus() == TableStatus.OCCUPIED)
+                    .ifPresent(this::makeTableAvailable));
         }
-
-        String displayTableNumber = resolveDisplayTableNumber(tableId);
 
         return new CashCheckoutResponse(
                 tableId, subtotal, vat, discount, pointsRedeemed, total, pointsAwarded, displayTableNumber
         );
+    }
+
+    private void makeTableAvailable(RestaurantTable table) {
+        TableStatus oldStatus = table.getStatus();
+        table.setStatus(TableStatus.AVAILABLE);
+        tableRepository.save(table);
+        try {
+            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+            messagingTemplate.convertAndSend("/topic/table-status",
+                new com.huongViet.table.TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus,
+                    TableStatus.AVAILABLE, zoneName));
+        } catch (Exception ex) {
+            logger.warn("Không thể broadcast giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
+        }
     }
 
     private String createCheckoutInvoices(List<Order> orders, String customerId, String customerPhone,
@@ -542,26 +639,17 @@ public class OrderService {
 
     private OrderResponse toResponse(Order order) {
         List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
-        String displayTableNumber = resolveDisplayTableNumber(order.getTableId());
-        OrderResponse base = OrderResponse.from(order, items);
-        return new OrderResponse(
-                base.id(),
-                base.tableId(),
-                displayTableNumber,
-                base.staffId(),
-                base.orderType(),
-                base.status(),
-                base.createdAt(),
-                base.closedAt(),
-                base.subtotal(),
-                base.cancelledAmount(),
-                base.items()
-        );
+        return OrderResponse.from(order, items, displayTableNumber(order));
+    }
+
+    private String displayTableNumber(Order order) {
+        return order.getPartySize() != null && order.getTable() != null
+            ? order.getTable().getTableNumber() : resolveDisplayTableNumber(order.getTableId());
     }
 
     @Transactional
     public OrderResponse addItem(String orderId, AddOrderItemRequest request, String staffId) {
-        Order order = findOpenOrderOrThrow(orderId);
+        Order order = findEditableOrder(orderId);
 
         MenuItem menuItem = menuItemRepository.findByIdAndDeletedAtIsNull(request.menuItemId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy món ăn."));
@@ -585,13 +673,14 @@ public class OrderService {
         writeAudit(savedItem.getId(), staffId, "ADD_ITEM", 0, savedItem.getQuantity(),
                 CookingStatus.QUEUED, savedItem.getCookingStatus(), "Thêm món vào đơn");
 
-        createKitchenTicket(order, savedItem, menuItem);
+        boolean additional = kitchenTicketRepository.existsByOrderId(order.getId());
+        saveKitchenTicket(order, savedItem, menuItem, displayTableNumber(order), additional);
         return toResponse(order);
     }
 
     @Transactional
     public OrderResponse updateItem(String orderId, String itemId, UpdateOrderItemRequest request, String staffId) {
-        Order order = findOpenOrderOrThrow(orderId);
+        Order order = findEditableOrder(orderId);
         OrderItem item = findItemOfOrder(order, itemId);
         assertEditable(item);
 
@@ -616,7 +705,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse cancelItem(String orderId, String itemId, CancelOrderItemRequest request, String staffId) {
-        Order order = findOpenOrderOrThrow(orderId);
+        Order order = findEditableOrder(orderId);
         OrderItem item = findItemOfOrder(order, itemId);
         KitchenTicket ticket = kitchenTicketRepository.findByOrderItemId(itemId).orElse(null);
         assertCancellable(item, ticket);
@@ -666,9 +755,26 @@ public class OrderService {
         }
     }
 
+    private Order findEditableOrder(String orderId) {
+        Order order = findOpenOrderOrThrow(orderId);
+        assertNoPendingVnpay(orderId);
+        return order;
+    }
+
+    private void assertNoPendingVnpay(String orderId) {
+        if (paymentOrderRepository.existsByDiningOrderIdAndStatusAndCreatedAtAfter(
+            orderId, "PENDING", LocalDateTime.now().minusMinutes(PaymentOrder.VNPAY_VALIDITY_MINUTES))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn đang chờ kết quả thanh toán VNPay.");
+        }
+    }
+
+    private Order lockOrder(String orderId) {
+        return orderRepository.lockById(orderId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
+    }
+
     private Order findOpenOrderOrThrow(String orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng."));
+        Order order = lockOrder(orderId);
 
         if (order.getStatus() != OrderStatus.IN_PROGRESS) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn hàng đã đóng, không thể điều chỉnh.");
@@ -686,9 +792,8 @@ public class OrderService {
         return item;
     }
 
-    private void createKitchenTicket(Order order, OrderItem item, MenuItem menuItem) {
-        String displayTableNumber = resolveDisplayTableNumber(order.getTableId());
-
+    private void saveKitchenTicket(Order order, OrderItem item, MenuItem menuItem, String displayTableNumber,
+                                   boolean additional) {
         KitchenTicket ticket = new KitchenTicket(
                 UUID.randomUUID().toString(),
                 item.getId(),
@@ -698,6 +803,7 @@ public class OrderService {
                 item.getQuantity(),
                 item.getNote()
         );
+        ticket.setAdditional(additional);
         KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
         publishTicketEvent(new KitchenTicketEvent("CREATED", KitchenTicketResponse.from(savedTicket)));
     }

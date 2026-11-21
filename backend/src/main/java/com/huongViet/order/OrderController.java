@@ -2,6 +2,7 @@ package com.huongViet.order;
 
 import com.huongViet.auth.User;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,6 +27,32 @@ public class OrderController {
         String staffId = (currentUser != null) ? currentUser.getId() : null;
         OrderResponse created = orderService.create(request, staffId);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    public record SeatRequest(@Positive(message = "Số khách phải lớn hơn 0.") int partySize) {}
+
+    @PostMapping("/table/{tableId}/seated")
+    public ResponseEntity<OrderResponse> openSeatedOrder(@PathVariable String tableId,
+            @Valid @RequestBody SeatRequest request, @AuthenticationPrincipal User currentUser) {
+        String staffId = currentUser != null ? currentUser.getId() : null;
+        return ResponseEntity.status(HttpStatus.CREATED).body(orderService.openSeatedOrder(tableId, request.partySize(), staffId));
+    }
+
+    @GetMapping("/table/{tableId}/seated")
+    public List<OrderResponse> listSeatedOrders(@PathVariable String tableId) {
+        return orderService.listSeatedOrders(tableId);
+    }
+
+    @PostMapping("/{orderId}/release-seats")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void releaseSeats(@PathVariable String orderId) {
+        orderService.releaseSeats(orderId);
+    }
+
+    @PostMapping("/{orderId}/checkout-cash")
+    public CashCheckoutResponse checkoutOrderCash(@PathVariable String orderId,
+            @RequestBody(required = false) CashCheckoutRequest request, @AuthenticationPrincipal User currentUser) {
+        return orderService.checkoutOrderCash(orderId, request, currentUser != null ? currentUser.getId() : null);
     }
 
     @PostMapping("/table/{tableId}/checkout-cash")

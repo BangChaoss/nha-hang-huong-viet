@@ -2,6 +2,7 @@ package com.huongViet.order;
 
 import com.huongViet.menu.MenuItem;
 import com.huongViet.menu.MenuItemRepository;
+import com.huongViet.payment.PaymentOrderRepository;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
 import com.huongViet.table.TableStatus;
@@ -17,6 +18,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,7 +63,8 @@ class OrderServiceTest {
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Mock
     private com.huongViet.reservation.ReservationRepository reservationRepository;
-
+    @Mock
+    private PaymentOrderRepository paymentOrderRepository;
 
     private OrderService orderService;
 
@@ -83,7 +86,8 @@ class OrderServiceTest {
             loyaltySettings,
             voucherService,
             jdbcTemplate,
-            reservationRepository
+            reservationRepository,
+            paymentOrderRepository
         );
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
@@ -113,12 +117,41 @@ class OrderServiceTest {
     }
 
     @Test
+    void openSeatedOrder_CreatesDistinctOrdersAndRejectsOverflow() {
+        List<Order> seated = new ArrayList<>();
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(seated);
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            seated.add(order);
+            return order;
+        });
+
+        OrderResponse first = orderService.openSeatedOrder("table-1", 1, "staff-1");
+        OrderResponse second = orderService.openSeatedOrder("table-1", 2, "staff-1");
+
+        assertNotEquals(first.id(), second.id());
+        assertEquals("table-1", first.tableId());
+        assertEquals(first.tableId(), second.tableId());
+        assertEquals(1, first.partySize());
+        assertEquals(2, second.partySize());
+        assertTrue(first.seated());
+        assertTrue(second.seated());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.openSeatedOrder("table-1", 2, "staff-1"));
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals("Bàn còn 1 ghế trống.", ex.getReason());
+        verify(orderRepository, times(2)).save(any(Order.class));
+    }
+
+    @Test
     @DisplayName("create - ném lỗi 409 CONFLICT nếu bàn không ở trạng thái OCCUPIED")
     void create_TableNotOccupied_ThrowsConflict() {
         RestaurantTable availableTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
         availableTable.setStatus(TableStatus.AVAILABLE);
 
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(availableTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(availableTable));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.create(request(true, "menu-1"), "staff-1"));
@@ -131,7 +164,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("create - ném lỗi 404 nếu không tìm thấy bàn")
     void create_TableNotFound_ThrowsNotFound() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.empty());
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.create(request(true, "menu-1"), "staff-1"));
@@ -143,7 +176,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("create - ném lỗi 409 CONFLICT nếu món không còn sẵn và không tạo đơn")
     void create_DishUnavailable_ThrowsConflict() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-2")).thenReturn(Optional.of(unavailableDish));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -158,7 +191,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("create - ném lỗi 404 nếu không tìm thấy món ăn")
     void create_DishNotFound_ThrowsNotFound() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-x")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -172,7 +205,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("create với submit=true - tạo một phiếu bếp cho mỗi món và phát WebSocket")
     void create_SubmitTrue_CreatesKitchenTickets() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -202,7 +235,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("create với submit=false - chỉ tạo đơn, không tạo phiếu bếp và không phát WebSocket")
     void create_SubmitFalse_CreatesNoKitchenTicket() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -305,7 +338,7 @@ class OrderServiceTest {
     @DisplayName("addItem - them mon vao don dang mo, tao phieu bep va ghi nhat ky")
     void addItem_Success() {
         Order order = openOrder();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
         when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
@@ -324,7 +357,7 @@ class OrderServiceTest {
     @DisplayName("addItem - ném lỗi 409 nếu món đã hết hàng (BR-40)")
     void addItem_UnavailableDish_ThrowsConflict() {
         Order order = openOrder();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-2")).thenReturn(Optional.of(unavailableDish));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -339,7 +372,7 @@ class OrderServiceTest {
     void updateItem_Success() {
         Order order = openOrder();
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(item));
@@ -356,7 +389,7 @@ class OrderServiceTest {
         Order order = openOrder();
         OrderItem item = queuedItem();
         item.setCookingStatus(CookingStatus.READY);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -372,7 +405,7 @@ class OrderServiceTest {
         Order order = openOrder();
         OrderItem item = queuedItem();
         KitchenTicket ticket = new KitchenTicket("ticket-1", "item-1", "order-1", "Bàn 1", "Phở Bò", 2, null);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
         when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.of(ticket));
@@ -393,7 +426,7 @@ class OrderServiceTest {
         Order order = openOrder();
         OrderItem item = queuedItem();
         item.setCookingStatus(CookingStatus.SERVED);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -409,7 +442,7 @@ class OrderServiceTest {
         Order order = openOrder();
         OrderItem item = queuedItem();
         item.setCookingStatus(CookingStatus.PREPARING);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -428,7 +461,7 @@ class OrderServiceTest {
         OrderItem item = queuedItem();
         KitchenTicket ticket = new KitchenTicket("ticket-1", "item-1", "order-1", "Bàn 1", "Phở Bò", 2, null);
         ticket.setStatus(CookingStatus.PREPARING);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.of(ticket));
 
@@ -446,7 +479,7 @@ class OrderServiceTest {
         Order order = openOrder();
         OrderItem item = queuedItem();
         item.setCookingStatus(CookingStatus.CANCELLED);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -461,7 +494,7 @@ class OrderServiceTest {
     void cancelItem_QueuedItem_ExcludedFromSubtotal() {
         Order order = openOrder();
         OrderItem item = queuedItem();
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(item));
         when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
         when(kitchenTicketRepository.findByOrderItemId("item-1")).thenReturn(Optional.empty());
@@ -496,7 +529,7 @@ class OrderServiceTest {
     void updateItem_ClosedOrder_ThrowsConflict() {
         Order order = openOrder();
         order.setStatus(OrderStatus.COMPLETED);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.updateItem("order-1", "item-1", new UpdateOrderItemRequest(3, null), "staff-1"));

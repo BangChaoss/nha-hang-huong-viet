@@ -21,10 +21,23 @@ public record OrderResponse(
     String closedAt,
     BigDecimal subtotal,
     BigDecimal cancelledAmount,
-    List<OrderItemResponse> items
+    List<OrderItemResponse> items,
+    Integer partySize,
+    boolean seated
 ) {
+    public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
+                         OrderStatus status, String createdAt, String closedAt, BigDecimal subtotal,
+                         BigDecimal cancelledAmount, List<OrderItemResponse> items) {
+        this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
+            items, null, false);
+    }
+
     public static OrderResponse from(Order order, List<OrderItem> items) {
         String tableNumber = (order.getTable() != null) ? order.getTable().getTableNumber() : null;
+        return from(order, items, tableNumber);
+    }
+
+    public static OrderResponse from(Order order, List<OrderItem> items, String tableNumber) {
         List<OrderItemResponse> itemResponses = items != null
             ? items.stream().map(OrderItemResponse::from).toList()
             : List.of();
@@ -50,7 +63,9 @@ public record OrderResponse(
             order.getClosedAt() != null ? order.getClosedAt().toString() : null,
             subtotal,
             cancelledAmount,
-            itemResponses
+            itemResponses,
+            order.getPartySize(),
+            order.isSeated()
         );
     }
 }

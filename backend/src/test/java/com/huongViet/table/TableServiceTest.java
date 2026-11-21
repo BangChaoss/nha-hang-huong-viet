@@ -1,5 +1,10 @@
 package com.huongViet.table;
 
+import com.huongViet.order.Order;
+import com.huongViet.order.OrderRepository;
+import com.huongViet.order.OrderStatus;
+import com.huongViet.order.OrderType;
+import com.huongViet.reservation.ReservationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,8 +15,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.server.ResponseStatusException;
-import com.huongViet.reservation.ReservationRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -37,6 +42,9 @@ class TableServiceTest {
     @Mock
     private ReservationRepository reservationRepository;
 
+    @Mock
+    private OrderRepository orderRepository;
+
     private TableService tableService;
 
     private TableZone sampleZone;
@@ -49,7 +57,8 @@ class TableServiceTest {
             zoneRepository,
             floorPlanLayoutRepository,
             reservationRepository,
-            messagingTemplate
+            messagingTemplate,
+            orderRepository
         );
 
         sampleZone = new TableZone("zone-1", "Sảnh Trong Nhà", false);
@@ -137,7 +146,7 @@ class TableServiceTest {
     @DisplayName("updateStatus - cập nhật trạng thái bàn và broadcast WebSocket topic")
     void updateStatus_Success() {
         sampleTable.setStatus(TableStatus.AVAILABLE);
-        when(tableRepository.findByIdActiveWithZone("table-1")).thenReturn(Optional.of(sampleTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(sampleTable));
 
         UpdateTableStatusRequest request = new UpdateTableStatusRequest(TableStatus.MAINTENANCE);
         TableResponse response = tableService.updateStatus("table-1", request);
@@ -153,6 +162,23 @@ class TableServiceTest {
         assertEquals(TableStatus.AVAILABLE, broadcasted.oldStatus());
         assertEquals(TableStatus.MAINTENANCE, broadcasted.newStatus());
         assertEquals("Sảnh Trong Nhà", broadcasted.zoneName());
+    }
+
+    @Test
+    void updateStatus_PaidPartyStillSeated_RejectsMakingTableAvailable() {
+        sampleTable.setStatus(TableStatus.OCCUPIED);
+        Order order = new Order("order-1", "table-1", "staff-1", OrderType.DINE_IN);
+        order.setPartySize(2);
+        order.setStatus(OrderStatus.COMPLETED);
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(sampleTable));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(order));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> tableService.updateStatus("table-1", new UpdateTableStatusRequest(TableStatus.AVAILABLE)));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(TableStatus.OCCUPIED, sampleTable.getStatus());
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test

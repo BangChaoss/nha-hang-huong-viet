@@ -6,6 +6,8 @@ import com.huongViet.payment.LoyaltyAccount;
 import com.huongViet.payment.LoyaltyAccountRepository;
 import com.huongViet.payment.LoyaltySettings;
 import com.huongViet.payment.LoyaltySettingsRepository;
+import com.huongViet.payment.PaymentOrder;
+import com.huongViet.payment.PaymentOrderRepository;
 import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
 import com.huongViet.reservation.ReservationStatus;
@@ -34,16 +36,22 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -75,7 +83,9 @@ class OrderCheckoutServiceTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
     @Mock
-    private com.huongViet.reservation.ReservationRepository reservationRepository;
+    private ReservationRepository reservationRepository;
+    @Mock
+    private PaymentOrderRepository paymentOrderRepository;
 
     private OrderService orderService;
 
@@ -88,7 +98,7 @@ class OrderCheckoutServiceTest {
         orderService = new OrderService(
             orderRepository, orderItemRepository, kitchenTicketRepository, orderItemAuditRepository,
             menuItemRepository, tableRepository, messagingTemplate, loyaltyAccounts, loyaltySettings,
-            voucherService, jdbcTemplate, reservationRepository);
+            voucherService, jdbcTemplate, reservationRepository, paymentOrderRepository);
 
         occupiedTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
         occupiedTable.setStatus(TableStatus.OCCUPIED);
@@ -121,7 +131,7 @@ class OrderCheckoutServiceTest {
     }
 
     private void stubSingleOrder(LoyaltySettings loyaltySettingsValue) {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
@@ -129,10 +139,126 @@ class OrderCheckoutServiceTest {
         when(loyaltySettings.findById("default")).thenReturn(Optional.of(loyaltySettingsValue));
     }
 
+    private Order lockSeatedOrder(String id) {
+        Order order = openOrder(id);
+        order.setPartySize(2);
+        when(orderRepository.findTableIdByOrderId(id)).thenReturn(Optional.of("table-1"));
+        when(orderRepository.lockById(id)).thenReturn(Optional.of(order));
+        return order;
+    }
+
+    @Test
+    void checkoutAndRelease_LeaveOtherPartyUntouchedUntilItReleases() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order first = lockSeatedOrder("order-1");
+        Order second = lockSeatedOrder("order-2");
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1")))
+            .thenAnswer(invocation -> List.of(first, second).stream().filter(Order::isSeated).toList());
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
+            .thenReturn(List.of(item("item-1", "order-1", pho, 2, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+
+        CashCheckoutResponse bill = orderService.checkoutOrderCash("order-1", null, "staff-1");
+
+        assertEquals(new BigDecimal("121000.00"), bill.total());
+        assertEquals(OrderStatus.COMPLETED, first.getStatus());
+        assertTrue(first.isSeated());
+        verify(orderItemRepository, never()).findByOrderIdOrderByCreatedAtAsc("order-2");
+        ArgumentCaptor<Object[]> invoice = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbcTemplate).update(startsWith("INSERT INTO invoices ("), invoice.capture());
+        assertEquals("order-1", invoice.getValue()[2]);
+        verify(jdbcTemplate).update(startsWith("INSERT INTO invoice_items ("), any(Object[].class));
+        assertEquals(TableStatus.OCCUPIED, occupiedTable.getStatus());
+
+        orderService.releaseSeats("order-1");
+
+        assertFalse(first.isSeated());
+        assertEquals(OrderStatus.COMPLETED, first.getStatus());
+        assertEquals(OrderStatus.IN_PROGRESS, second.getStatus());
+        assertTrue(second.isSeated());
+        assertNull(second.getClosedAt());
+        assertEquals(TableStatus.OCCUPIED, occupiedTable.getStatus());
+        verify(orderRepository, never()).save(second);
+        verify(tableRepository, never()).save(occupiedTable);
+
+        orderService.releaseSeats("order-2");
+
+        assertEquals(OrderStatus.CANCELLED, second.getStatus());
+        assertFalse(second.isSeated());
+        assertEquals(TableStatus.AVAILABLE, occupiedTable.getStatus());
+        verify(tableRepository).save(occupiedTable);
+        verifyNoMoreInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void checkoutOrderCash_PendingVnpayBlocksSettlement() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order order = lockSeatedOrder("order-1");
+        when(paymentOrderRepository.existsByDiningOrderIdAndStatusAndCreatedAtAfter(eq("order-1"), eq("PENDING"), any()))
+            .thenReturn(true);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.checkoutOrderCash("order-1", null, "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(OrderStatus.IN_PROGRESS, order.getStatus());
+        assertTrue(order.isSeated());
+        verifyNoInteractions(orderItemRepository, jdbcTemplate);
+    }
+
+    @Test
+    void checkoutOrderCash_RejectsChangedTotalBeforeCreatingInvoice() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order order = lockSeatedOrder("order-1");
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
+            .thenReturn(List.of(item("item-1", "order-1", pho, 2, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.checkoutOrderCash("order-1",
+                new CashCheckoutRequest(null, null, false, null, new BigDecimal("60500.00")), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(OrderStatus.IN_PROGRESS, order.getStatus());
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void prepareVnpayCheckout_UsesOnlyPayableItemsAndAddsVat() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder("order-1")));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(
+            item("item-1", "order-1", pho, 2, CookingStatus.SERVED),
+            item("item-2", "order-1", bunCha, 1, CookingStatus.CANCELLED)));
+
+        assertEquals(new BigDecimal("121000.00"), orderService.prepareVnpayCheckout("order-1", "table-1"));
+    }
+
+    @Test
+    void checkoutVnpayOrder_ChangedBillIsNotInvoiced() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order order = lockSeatedOrder("order-1");
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
+            .thenReturn(List.of(item("item-1", "order-1", pho, 2, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+        BigDecimal originalTotal = new BigDecimal("60500.00");
+        PaymentOrder payment = new PaymentOrder("payment-1", "table-1", "order-1", null,
+            originalTotal, BigDecimal.ZERO, originalTotal, null, BigDecimal.ZERO);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.checkoutVnpayOrder(payment, null));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(OrderStatus.IN_PROGRESS, order.getStatus());
+        assertTrue(order.isSeated());
+        verify(orderRepository, never()).save(any());
+        verifyNoInteractions(jdbcTemplate);
+    }
+
     @Test
     @DisplayName("checkoutCash - bàn không tồn tại trả về 404")
     void checkout_TableNotFound_ThrowsNotFound() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.empty());
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
             () -> orderService.checkoutCash("table-1", new CashCheckoutRequest(null, null, false)));
@@ -143,7 +269,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - bàn chưa có đơn đang mở trả về 409")
     void checkout_NoOpenOrders_ThrowsConflict() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         // Đơn cũ đã hoàn tất nên không còn đơn nào để thanh toán.
         Order completed = openOrder("order-old");
         completed.setStatus(OrderStatus.COMPLETED);
@@ -185,7 +311,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - món đã hủy không được tính vào hóa đơn")
     void checkout_CancelledItems_ExcludedFromSubtotal() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(
@@ -293,7 +419,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - dùng voucher nhưng thiếu số điện thoại trả về 400")
     void checkout_VoucherWithoutPhone_ThrowsBadRequest() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
@@ -310,7 +436,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - voucher không hợp lệ trả về 400 kèm lý do từ VoucherService")
     void checkout_InvalidVoucher_ThrowsBadRequest() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
@@ -382,7 +508,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - chưa có cấu hình tích điểm thì tạo giá trị mặc định")
     void checkout_MissingLoyaltySettings_CreatesDefault() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
@@ -415,7 +541,7 @@ class OrderCheckoutServiceTest {
     @Test
     @DisplayName("checkoutCash - nhiều đơn đang mở của cùng bàn đều được đóng và cộng vào hóa đơn")
     void checkout_MultipleOpenOrders_ClosesAll() {
-        when(tableRepository.findByIdAndDeletedAtIsNull("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
         when(orderRepository.findByTableIdOrderByCreatedAtDesc("table-1"))
             .thenReturn(List.of(openOrder("order-1"), openOrder("order-2")));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))

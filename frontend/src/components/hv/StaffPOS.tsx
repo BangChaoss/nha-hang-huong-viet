@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus, Users, Clock, Phone, ChefHat, Receipt, Wrench, Trash2, UserCheck } from "lucide-react";
+import { Minus, Plus, Users, Clock, Phone, ChefHat, Wrench, Trash2, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -38,9 +38,7 @@ import { reservationApi } from "@/features/reservation/api/reservation-api";
 import type { ReservationResponse } from "@/features/reservation/types/reservation.types";
 import { useTableWebSocket } from "@/lib/use-table-websocket";
 import { menuApi } from "@/features/menu/api/menu-api";
-import { useActiveOrder } from "@/features/order/hooks/use-orders";
 import { useCreateOrder } from "@/features/order/hooks/use-create-order";
-import { BackButton } from "@/components/hv/BackButton";
 import { orderApi } from "@/features/order/api/order-api";
 import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
 import {
@@ -48,7 +46,8 @@ import {
   useCancelOrderItem,
   useUpdateOrderItem,
 } from "@/features/order/hooks/use-order-items";
-import { COOKING_STATUS_LABELS, type OrderItemResponse } from "@/features/order/types/order.types";
+import { COOKING_STATUS_LABELS, type OrderItemResponse, type OrderResponse } from "@/features/order/types/order.types";
+import { orderCode } from "@/features/order/utils/order-code";
 import { splitBillItems } from "@/features/order/utils/bill";
 
 /** Món được chọn tạm thời trước khi tạo đơn mới cho bàn. */
@@ -80,8 +79,8 @@ function localDateString(date = new Date()): string {
  */
 export function StaffPOS() {
   const queryClient = useQueryClient();
-  const [selectedTable, setSelectedTable] = useState<TableResponse | null>(null);
-  const [billingTable, setBillingTable] = useState<TableResponse | null>(null);
+  const [tableSelection, setSelectedTable] = useState<TableResponse | null>(null);
+  const [bill, setBill] = useState<{ table: TableResponse; order: OrderResponse } | null>(null);
 
   const zonesQuery = useQuery({
     queryKey: ["zones"],
@@ -128,6 +127,14 @@ export function StaffPOS() {
 
   const zones: ZoneResponse[] = zonesQuery.data ?? [];
   const tables: TableResponse[] = tablesQuery.data ?? [];
+  const selectedTable = tables.find((table) => table.id === tableSelection?.id) ?? tableSelection;
+  const selectedReservation = selectedTable ? findReservationForTable(selectedTable) : undefined;
+  const updateSelectedTable = (updated: TableResponse) => {
+    queryClient.setQueryData<TableResponse[]>(["tables"], (current) =>
+      current?.map((table) => (table.id === updated.id ? updated : table)),
+    );
+    setSelectedTable(updated);
+  };
 
   const tablesByZone = useMemo(() => {
     const map = new Map<string, TableResponse[]>();
@@ -213,8 +220,11 @@ export function StaffPOS() {
                       <span className="font-display text-2xl font-semibold">{item.tableNumber}</span>
                       {isMaintenance && <Wrench className="h-4 w-4 text-muted-foreground" />}
                     </div>
-                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <Users className="h-3 w-3" /> {item.capacity} ghế
+                    <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                      <Users className="h-3 w-3" aria-hidden="true" />
+                      {item.status === "OCCUPIED" && item.availableSeats != null
+                        ? `${item.availableSeats}/${item.capacity} ghế trống`
+                        : `${item.capacity} ghế`}
                     </p>
                     <span className={cn("mt-4 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium", statusClass)}>
                       {statusLabel}
@@ -236,29 +246,31 @@ export function StaffPOS() {
       {selectedTable?.status === "RESERVED" && (
         <ReservationDialog
           table={selectedTable}
-          reservation={findReservationForTable(selectedTable)}
+          reservation={selectedReservation}
           onClose={() => setSelectedTable(null)}
-          onTableUpdated={(updated) => setSelectedTable(updated)}
-          onCheckInSuccess={(updatedTable) => {
-            setSelectedTable(updatedTable);
-          }}
+          onTableUpdated={updateSelectedTable}
         />
       )}
 
       {selectedTable && selectedTable.status !== "RESERVED" && (
         <OrderDialog
+          key={selectedTable.id}
           table={selectedTable}
+          exclusive={selectedTable.availableSeats == null && !!selectedReservation}
           onClose={() => setSelectedTable(null)}
-          onTableUpdated={(updated) => setSelectedTable(updated)}
-          onBill={() => {
-            setBillingTable(selectedTable);
+          onTableUpdated={updateSelectedTable}
+          onBill={(order) => {
+            setBill({ table: selectedTable, order });
             setSelectedTable(null);
           }}
         />
       )}
 
-      {billingTable !== null && (
-        <BillingDialog table={billingTable} onClose={() => setBillingTable(null)} />
+      {bill && (
+        <BillingDialog table={bill.table} order={bill.order} onClose={() => {
+          setSelectedTable(bill.table);
+          setBill(null);
+        }} />
       )}
     </div>
   );
@@ -269,13 +281,11 @@ function ReservationDialog({
   reservation,
   onClose,
   onTableUpdated,
-  onCheckInSuccess,
 }: {
   table: TableResponse;
   reservation?: ReservationResponse | undefined;
   onClose: () => void;
   onTableUpdated?: (table: TableResponse) => void;
-  onCheckInSuccess?: (table: TableResponse) => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -305,8 +315,7 @@ function ReservationDialog({
       toast.success(`Check-in thành công! Bàn ${updatedTable.tableNumber} đã chuyển sang Đang phục vụ.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
-      if (onTableUpdated) onTableUpdated(updatedTable);
-      if (onCheckInSuccess) onCheckInSuccess(updatedTable);
+      onTableUpdated?.(updatedTable);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -367,19 +376,17 @@ function ReservationDialog({
   );
 }
 
-/**
- * Gọi món cho bàn đã chọn: món mới được giữ trong giỏ đến khi gửi bếp;
- * nếu bàn đã có đơn mở, món được thêm trực tiếp vào đơn đó.
- */
 function OrderDialog({
   table,
+  exclusive,
   onClose,
   onBill,
   onTableUpdated,
 }: {
   table: TableResponse;
+  exclusive: boolean;
   onClose: () => void;
-  onBill: () => void;
+  onBill: (order: OrderResponse) => void;
   onTableUpdated?: (table: TableResponse) => void;
 }) {
   const queryClient = useQueryClient();
@@ -392,7 +399,46 @@ function OrderDialog({
   });
   const dishes = menuQuery.data?.categories.flatMap((c) => c.items ?? []) ?? [];
 
-  const activeOrder = useActiveOrder(table.id);
+  const seatedKey = ["orders", "table", table.id, "seated"];
+  const seatedQuery = useQuery({
+    queryKey: seatedKey,
+    queryFn: () => orderApi.seatedAtTable(table.id),
+    refetchInterval: 5000,
+  });
+  const orders = seatedQuery.data ?? [];
+  const [selectedOrderId, setSelectedOrderId] = useState<string>();
+  const selectedOrder = selectedOrderId ? orders.find((order) => order.id === selectedOrderId)
+    : orders.length === 1 ? orders[0] : undefined;
+  const activeOrder = selectedOrder?.status === "IN_PROGRESS" ? selectedOrder : undefined;
+  const [partySize, setPartySize] = useState("1");
+  const occupiedSeats = orders.reduce((used, order) => used + (order.partySize ?? table.capacity), 0);
+  const freeSeats = Math.max(0, table.capacity - occupiedSeats);
+  const openOrder = useMutation({
+    mutationFn: () => orderApi.openSeatedOrder(table.id, Number(partySize)),
+    onSuccess: (order) => {
+      queryClient.setQueryData<OrderResponse[]>(seatedKey, (current) => [
+        ...(current ?? []).filter((other) => other.id !== order.id), order,
+      ]);
+      setSelectedOrderId(order.id);
+      setPartySize("1");
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+  });
+  const releaseSeats = useMutation({
+    mutationFn: orderApi.releaseSeats,
+    onSuccess: (_, orderId) => {
+      queryClient.setQueryData<OrderResponse[]>(seatedKey, (current) => current?.filter((order) => order.id !== orderId));
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      toast.success(`Đã trả chỗ cho đơn ${orderCode(orderId)}.`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const createOrder = useCreateOrder();
   const addItem = useAddOrderItem();
   const updateItem = useUpdateOrderItem();
@@ -414,8 +460,10 @@ function OrderDialog({
   });
 
   useKitchenCompleted((message) => {
-    if (message.tableId !== table.id) return;
-    toast.success(`${message.tableNumber}: ${message.itemName} đã xong, sẵn sàng phục vụ.`);
+    if (message.tableId !== table.id && !orders.some((order) => order.id === message.orderId)) return;
+    if (message.status === "READY") {
+      toast.success(`${message.tableNumber} / ${orderCode(message.orderId)}: ${message.itemName} đã sẵn sàng.`);
+    }
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
   });
 
@@ -435,13 +483,17 @@ function OrderDialog({
   const qty = (menuItemId: string) => cart.find((l) => l.menuItemId === menuItemId)?.quantity ?? 0;
   const dishName = (menuItemId: string) => dishes.find((d) => d.id === menuItemId)?.itemName ?? "";
   const isOccupied = table.status === "OCCUPIED";
-  const canSubmit = isOccupied && cart.length > 0 && !createOrder.isPending;
-
-  const orderId = activeOrder.data?.id;
+  const orderId = activeOrder?.id;
   const hasOpenOrder = Boolean(orderId);
+  const legacyCart = exclusive && seatedQuery.isSuccess && orders.length === 0;
+  const showMenu = isOccupied && seatedQuery.isSuccess && (hasOpenOrder || legacyCart);
+  const canSubmit = showMenu && legacyCart && cart.length > 0 && !createOrder.isPending;
+  const hasPayableItems = activeOrder?.items.some((item) => item.cookingStatus !== "CANCELLED");
+  const parsedPartySize = Number(partySize);
+  const canOpenOrder = isOccupied && !exclusive && seatedQuery.isSuccess && freeSeats > 0 && !openOrder.isPending;
 
   const orderedQty = (menuItemId: string) =>
-    activeOrder.data?.items
+    activeOrder?.items
       .filter((i) => i.menuItemId === menuItemId && i.cookingStatus !== "CANCELLED")
       .reduce((sum, i) => sum + i.quantity, 0) ?? 0;
 
@@ -488,12 +540,10 @@ function OrderDialog({
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-3xl">
-            {activeOrder.data?.tableNumber || table.tableNumber} · Gọi món
+            {selectedOrder?.tableNumber || table.tableNumber} · Gọi món
           </DialogTitle>
           <DialogDescription>
-            {activeOrder.data?.tableNumber && activeOrder.data.tableNumber.includes("+")
-              ? "Cụm bàn gộp đang dùng chung đơn hàng này."
-              : "Món hết hàng sẽ không thể chọn."}
+            {exclusive ? "Bàn dành riêng cho lượt đặt trước." : "Chọn đúng mã đơn trước khi gọi món hoặc thanh toán."}
           </DialogDescription>
         </DialogHeader>
 
@@ -509,27 +559,24 @@ function OrderDialog({
               <span className={cn("inline-block rounded-full px-2.5 py-0.5 text-xs font-medium", REAL_STATUS_CLASSES[table.status])}>
                 {TABLE_STATUS_LABELS[table.status]}
               </span>
-              {!isOccupied && (
-                <span className="text-xs text-amber-600 dark:text-amber-400">
-                  (Cần mở bàn trước khi gọi món)
-                </span>
+              {!isOccupied && table.status === "AVAILABLE" && (
+                <span className="text-xs text-muted-foreground">Mở bàn trước khi xếp khách</span>
               )}
             </div>
 
             <div className="flex items-center gap-2">
-              {!isOccupied && (
+              {table.status === "AVAILABLE" && (
                 <Button
-                  size="sm"
-                  className="bg-primary hover:bg-primary-hover"
+                  className="min-h-11 bg-primary hover:bg-primary-hover"
                   disabled={updateTableStatus.isPending}
                   onClick={() => updateTableStatus.mutate({ id: table.id, status: "OCCUPIED" })}
                 >
                   Mở bàn
                 </Button>
               )}
-              {isOccupied && (!activeOrder.data || activeOrder.data.items.length === 0) && (
+              {isOccupied && seatedQuery.isSuccess && orders.length === 0 && (
                 <Button
-                  size="sm"
+                  className="min-h-11"
                   variant="outline"
                   disabled={updateTableStatus.isPending}
                   onClick={() => updateTableStatus.mutate({ id: table.id, status: "AVAILABLE" })}
@@ -563,16 +610,83 @@ function OrderDialog({
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="space-y-2">
+        <section className="space-y-3 rounded-lg border p-3" aria-label="Đơn tại bàn">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-semibold">Đơn tại bàn</h3>
+            {isOccupied && !exclusive && seatedQuery.isSuccess && (
+              <span className="text-sm tabular-nums text-muted-foreground">{freeSeats}/{table.capacity} ghế trống</span>
+            )}
+          </div>
+          {seatedQuery.isLoading && <p role="status" className="text-sm">Đang tải các đơn tại bàn…</p>}
+          {seatedQuery.isError && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="text-sm text-alert">Không tải được các đơn tại bàn.</p>
+              <Button className="min-h-11" variant="outline" onClick={() => void seatedQuery.refetch()}>Tải lại</Button>
+            </div>
+          )}
+          {seatedQuery.isSuccess && orders.length === 0 && <p className="text-sm">Bàn chưa có đơn.</p>}
+          {seatedQuery.isSuccess && orders.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {orders.map((order) => (
+                <Button
+                  key={order.id}
+                  type="button"
+                  aria-pressed={selectedOrder?.id === order.id}
+                  variant={selectedOrder?.id === order.id ? "default" : "outline"}
+                  className="h-auto min-h-11 max-w-full flex-wrap justify-start gap-x-2 gap-y-0 whitespace-normal px-3 text-left"
+                  onClick={() => setSelectedOrderId(order.id)}
+                >
+                  {orderCode(order.id)}{order.partySize != null ? ` · ${order.partySize} khách` : ""}
+                  {order.status === "COMPLETED" ? " · Đã trả tiền, còn ngồi" : " · Đang mở"}
+                </Button>
+              ))}
+            </div>
+          )}
+          {isOccupied && !exclusive && seatedQuery.isSuccess && freeSeats > 0 && (
+            <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
+              event.preventDefault();
+              if (canOpenOrder && Number.isInteger(parsedPartySize) && parsedPartySize >= 1 && parsedPartySize <= freeSeats) {
+                openOrder.mutate();
+              }
+            }}>
+              <label className="space-y-1 text-sm">
+                <span className="block">Số khách của đơn mới</span>
+                <Input className="h-11 w-32" type="number" min={1} max={freeSeats} required value={partySize}
+                  onChange={(event) => setPartySize(event.target.value)} />
+              </label>
+              <Button className="min-h-11" type="submit" disabled={!canOpenOrder}>
+                {openOrder.isPending ? "Đang mở đơn…" : "Mở đơn mới"}
+              </Button>
+            </form>
+          )}
+          {seatedQuery.isSuccess && orders.length > 0 && !selectedOrder && (
+            <p className="text-sm text-muted-foreground">Chọn một mã đơn để xem món hoặc thanh toán.</p>
+          )}
+          {seatedQuery.isSuccess && selectedOrder?.seated && !hasPayableItems && (
+            <div className="space-y-2 border-t pt-3">
+              {selectedOrder.status === "COMPLETED" && (
+                <p className="text-sm">Chỉ trả chỗ khi khách của đơn {orderCode(selectedOrder.id)} đã rời bàn.</p>
+              )}
+              <Button className="min-h-11" variant="outline" disabled={releaseSeats.isPending || addItem.isPending}
+                onClick={() => releaseSeats.mutate(selectedOrder.id)}>
+                {releaseSeats.isPending ? "Đang trả chỗ…" : selectedOrder.status === "COMPLETED" ? "Trả chỗ" : "Hủy đơn và trả chỗ"}
+              </Button>
+            </div>
+          )}
+        </section>
+
+        {showMenu && <div className="grid gap-6 md:grid-cols-2">
+          <div className="min-w-0 space-y-2">
             <p className="text-xs uppercase tracking-widest text-muted-foreground">Thực đơn</p>
-            {menuQuery.isLoading && <p className="text-sm text-muted-foreground">Đang tải thực đơn…</p>}
+            {menuQuery.isLoading && <p role="status" className="text-sm text-muted-foreground">Đang tải thực đơn…</p>}
+            {menuQuery.isError && <p role="alert" className="text-sm text-alert">Không tải được thực đơn. Đóng và mở lại đơn để thử lại.</p>}
+            {menuQuery.isSuccess && dishes.length === 0 && <p className="text-sm">Thực đơn chưa có món.</p>}
             {dishes.map((d) => {
               const shownQty = hasOpenOrder ? orderedQty(d.id) : qty(d.id);
               return (
                 <div
                   key={d.id}
-                  className={cn("flex items-center justify-between rounded-lg border p-3", !d.isAvailable && "opacity-50")}
+                  className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3", !d.isAvailable && "opacity-70")}
                 >
                   <div>
                     <p className="text-sm font-medium">{d.itemName}</p>
@@ -584,7 +698,8 @@ function OrderDialog({
                     <Button
                       size="icon"
                       variant="outline"
-                      className="h-7 w-7"
+                      className="size-11"
+                      aria-label={`Bớt ${d.itemName} khỏi giỏ`}
                       disabled={!d.isAvailable || hasOpenOrder || qty(d.id) === 0}
                       onClick={() => change(d.id, -1)}
                     >
@@ -594,8 +709,9 @@ function OrderDialog({
                     <Button
                       size="icon"
                       variant="outline"
-                      className="h-7 w-7"
-                      disabled={!d.isAvailable || addItem.isPending}
+                      className="size-11"
+                      aria-label={`Thêm ${d.itemName}`}
+                      disabled={!d.isAvailable || addItem.isPending || releaseSeats.isPending || createOrder.isPending}
                       onClick={() => selectDish(d.id)}
                     >
                       <Plus className="h-3 w-3" />
@@ -609,10 +725,10 @@ function OrderDialog({
           <div className="space-y-4">
             <div>
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">Đã gửi bếp</p>
-              {activeOrder.data && activeOrder.data.items.length === 0 && (
-                <p className="text-sm text-muted-foreground">Chưa có món.</p>
+              {activeOrder?.items.length === 0 && (
+                <p className="text-sm text-muted-foreground">Chưa gửi món nào cho đơn {orderCode(activeOrder.id)}.</p>
               )}
-              {activeOrder.data?.items.map((item) => {
+              {activeOrder?.items.map((item) => {
                 const locked = isLockedItem(item);
                 const cancelled = item.cookingStatus === "CANCELLED";
                 return (
@@ -632,11 +748,12 @@ function OrderDialog({
                       )}
                     </div>
                     {!locked && (
-                      <div className="mt-1.5 flex items-center gap-2">
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
                         <Button
                           size="icon"
                           variant="outline"
-                          className="h-7 w-7"
+                          className="size-11"
+                          aria-label={`Giảm số lượng ${item.itemName}`}
                           disabled={item.quantity <= 1 || updateItem.isPending}
                           onClick={() => changeItemQty(item, -1)}
                         >
@@ -646,14 +763,16 @@ function OrderDialog({
                         <Button
                           size="icon"
                           variant="outline"
-                          className="h-7 w-7"
+                          className="size-11"
+                          aria-label={`Tăng số lượng ${item.itemName}`}
                           disabled={updateItem.isPending}
                           onClick={() => changeItemQty(item, 1)}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
                         <Input
-                          className="h-8 min-w-0 flex-1 text-xs"
+                          className="h-11 min-w-28 flex-1 text-xs"
+                          aria-label={`Ghi chú cho bếp: ${item.itemName}`}
                           placeholder="Ghi chú cho bếp"
                           value={notes[item.id] ?? item.note ?? ""}
                           onChange={(e) => setNotes((cur) => ({ ...cur, [item.id]: e.target.value }))}
@@ -663,7 +782,8 @@ function OrderDialog({
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-8 w-8 text-alert hover:bg-alert/10"
+                            className="size-11 text-alert hover:bg-alert/10"
+                            aria-label={`Hủy món ${item.itemName}`}
                             disabled={cancelItem.isPending}
                             onClick={() => {
                               setCancelReason("Khách đổi món");
@@ -682,9 +802,9 @@ function OrderDialog({
 
             <div>
               <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">Món mới</p>
-              {hasOpenOrder ? (
+              {orderId ? (
                 <p className="text-sm text-muted-foreground">
-                  Bàn đang có đơn mở. Chọn món ở bên trái để thêm thẳng vào đơn.
+                  Chọn món trong thực đơn để gửi thêm cho đơn {orderCode(orderId)}.
                 </p>
               ) : cart.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
@@ -721,7 +841,8 @@ function OrderDialog({
                       submit: true,
                     },
                     {
-                      onSuccess: () => {
+                      onSuccess: (order) => {
+                        setSelectedOrderId(order.id);
                         toast.success(`Đã gửi ${cart.length} món xuống bếp`);
                         setCart([]);
                       },
@@ -734,15 +855,17 @@ function OrderDialog({
               </Button>
             )}
 
-            <Button
-              className="w-full bg-primary hover:bg-primary-hover"
-              disabled={!activeOrder.data || activeOrder.data.items.length === 0}
-              onClick={onBill}
-            >
-              <Receipt className="mr-2 h-4 w-4" /> Tạo Hoá Đơn / Thanh Toán
-            </Button>
+            {activeOrder && (
+              <Button
+                className="min-h-11 w-full bg-primary hover:bg-primary-hover"
+                disabled={!hasPayableItems || addItem.isPending || updateItem.isPending || cancelItem.isPending}
+                onClick={() => onBill(activeOrder)}
+              >
+                Thanh toán đơn {orderCode(activeOrder.id)}
+              </Button>
+            )}
           </div>
-        </div>
+        </div>}
 
         <AlertDialog open={Boolean(cancelTarget)} onOpenChange={(open) => !open && setCancelTarget(null)}>
           <AlertDialogContent>
@@ -781,17 +904,16 @@ function OrderDialog({
 
 const methods = ["Tiền mặt", "VNPAY"];
 
-export function BillingDialog({ table, onClose }: { table: TableResponse; onClose: () => void }) {
+export function BillingDialog({ table, order, onClose }: { table: TableResponse; order: OrderResponse; onClose: () => void }) {
   const queryClient = useQueryClient();
 
-  const sentOrdersQuery = useQuery({
-    queryKey: ["orders", "table", table.id, "unpaid"],
-    queryFn: () => orderApi.list({ tableId: table.id, status: "IN_PROGRESS" }),
-    staleTime: 0,
+  const billOrderQuery = useQuery({
+    queryKey: ["orders", "bill", order.id],
+    queryFn: () => orderApi.getById(order.id),
   });
 
-  const sentItems = (sentOrdersQuery.data ?? []).flatMap((order) => order.items);
-  const displayTableNumber = sentOrdersQuery.data?.[0]?.tableNumber || table.tableNumber;
+  const sentItems = billOrderQuery.data?.items ?? [];
+  const displayTableNumber = billOrderQuery.data?.tableNumber || order.tableNumber || table.tableNumber;
 
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
@@ -807,13 +929,13 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
 
   const bill = splitBillItems(sentItems);
   const subtotal = bill.subtotal;
-  const vat = subtotal * 0.1;
+  const vat = Math.round(subtotal * 10) / 100;
   const discount = voucherValidated ? Math.min(voucherDiscount, subtotal + vat) : 0;
   const beforeRedeem = subtotal + vat - discount;
 
   const maxPointsPossible = Math.floor(beforeRedeem / (pointValueVnd || 1));
-  const redeemedPoints = redeem ? Math.min(loyaltyBalance, maxPointsPossible) : 0;
-  const redeemedAmount = redeemedPoints * pointValueVnd;
+  const redeemedPoints = redeem ? Math.floor(Math.min(loyaltyBalance, maxPointsPossible)) : 0;
+  const redeemedAmount = Math.round(redeemedPoints * pointValueVnd * 100) / 100;
   const total = Math.max(0, beforeRedeem - redeemedAmount);
 
   const Row = ({ l, v, cls }: { l: string; v: string; cls?: string }) => (
@@ -825,9 +947,10 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">Hoá đơn · {displayTableNumber}</DialogTitle>
+          <DialogTitle className="font-display text-3xl">Hóa đơn · {displayTableNumber} / {orderCode(order.id)}</DialogTitle>
+          <DialogDescription>Chỉ tính tiền món của đơn {orderCode(order.id)}.</DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5 border-b pb-3">
           {bill.lines.map((line) => (
@@ -836,15 +959,19 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
           {bill.cancelled.length > 0 && (
             <div className="pt-1">
               <Row
-                l={`Món đã huỷ (${bill.cancelled.length}) — không tính tiền`}
+                l={`Món đã huỷ (${bill.cancelled.length}), không tính tiền`}
                 v={`-${formatVND(bill.cancelledAmount)}`}
                 cls="text-muted-foreground line-through"
               />
             </div>
           )}
-          {sentOrdersQuery.isLoading && <p className="text-sm text-muted-foreground">Đang tải món đã gửi bếp…</p>}
-          {sentOrdersQuery.isSuccess && bill.lines.length === 0 && (
-            <p className="text-sm text-alert">Bàn chưa có món nào đã gửi bếp để tính hóa đơn.</p>
+          {billOrderQuery.isLoading && <p role="status" className="text-sm">Đang tải hóa đơn…</p>}
+          {billOrderQuery.isError && <p role="alert" className="text-sm text-alert">Không tải được hóa đơn. Đóng và mở lại để thử lại.</p>}
+          {billOrderQuery.data && billOrderQuery.data.status !== "IN_PROGRESS" && (
+            <p className="text-sm">Đơn đã đóng, không thể thanh toán thêm.</p>
+          )}
+          {billOrderQuery.isSuccess && bill.lines.length === 0 && (
+            <p className="text-sm text-alert">Đơn không còn món để tính tiền.</p>
           )}
         </div>
 
@@ -854,6 +981,8 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
 
           <div className="space-y-2 pt-1">
             <Input
+              aria-label="Số điện thoại khách"
+              className="h-11"
               placeholder="Số điện thoại khách (để dùng điểm/voucher)"
               value={phoneNumber}
               onChange={(e) => {
@@ -868,6 +997,8 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
             />
 
             <Input
+              aria-label="Mã voucher"
+              className="h-11"
               placeholder="Mã voucher"
               value={code}
               onChange={(e) => {
@@ -963,8 +1094,9 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
             <Button
               key={m}
               variant="outline"
+              aria-pressed={method === m}
               onClick={() => setMethod(m)}
-              className={cn("h-auto py-2 text-xs", method === m && "border-primary bg-primary/5 text-primary font-medium")}
+              className={cn("h-auto min-h-11 py-2 text-xs", method === m && "border-primary bg-primary/5 text-primary font-medium")}
             >
               {m}
             </Button>
@@ -972,10 +1104,10 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
         </div>
 
         <Button
-          className="w-full bg-primary hover:bg-primary-hover"
+          className="min-h-11 w-full bg-primary hover:bg-primary-hover"
           disabled={
-            voucherBusy ||
-            sentOrdersQuery.isLoading ||
+            voucherBusy || loyaltyBusy ||
+            billOrderQuery.data?.status !== "IN_PROGRESS" || billOrderQuery.isError ||
             bill.lines.length === 0 ||
             (!!code.trim() && !voucherValidated)
           }
@@ -988,8 +1120,9 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
               setVoucherBusy(true);
               try {
                 const payment = await paymentApi.createVnpay({
-                  tableId: table.id,
-                  subtotal: subtotal + vat,
+                  tableId: order.tableId,
+                  diningOrderId: order.id,
+                  subtotal: Math.round((subtotal + vat) * 100) / 100,
                   phoneNumber: phoneNumber.trim(),
                   ...(code.trim() ? { voucherCode: code.trim() } : {}),
                   ...(redeem && redeemedPoints > 0 ? { pointsToUse: redeemedPoints, usePoints: true } : { usePoints: false }),
@@ -1004,17 +1137,19 @@ export function BillingDialog({ table, onClose }: { table: TableResponse; onClos
 
             setVoucherBusy(true);
             try {
-              const settled = await orderApi.checkoutCash(table.id, {
+              const settled = await orderApi.checkoutCash(order.id, {
                 phoneNumber: phoneNumber.trim() || undefined,
                 voucherCode: code.trim() || undefined,
-                usePoints: redeem,
+                usePoints: redeem && redeemedPoints > 0,
+                ...(redeem && redeemedPoints > 0 ? { pointsToUse: redeemedPoints } : {}),
+                expectedTotal: Math.round(total * 100) / 100,
               });
 
               await queryClient.invalidateQueries({ queryKey: ["tables"] });
               await queryClient.invalidateQueries({ queryKey: ["orders"] });
               toast.success(
-                `Thanh toán ${formatVND(Number(settled.total))} thành công! Cụm ${settled.tableNumber} đã được giải phóng. Điểm thưởng: +${Number(settled.pointsAwarded || 0).toLocaleString("vi-VN")} điểm`,
-            );
+                `Đã thu ${formatVND(Number(settled.total))} cho đơn ${orderCode(order.id)}. Điểm thưởng: +${Number(settled.pointsAwarded || 0).toLocaleString("vi-VN")}.`,
+              );
               onClose();
             } catch (error) {
               toast.error(error instanceof Error ? error.message : "Không thể hoàn tất thanh toán.");
