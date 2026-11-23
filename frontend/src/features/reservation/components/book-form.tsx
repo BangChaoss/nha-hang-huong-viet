@@ -24,9 +24,11 @@ import type { ReservationResponse } from "../types/reservation.types";
 interface BookFormProps {
   onDone?: () => void;
   initialValues?: Partial<CreateReservationFormValues>;
+  initialReservation?: ReservationResponse | null;
+  onResetBooking?: () => void;
 }
 
-export function BookForm({ onDone, initialValues }: BookFormProps) {
+export function BookForm({ onDone, initialValues, initialReservation, onResetBooking }: BookFormProps) {
   const { session } = useSession();
   const profileQuery = useQuery({
     queryKey: ["account", "profile"],
@@ -36,8 +38,14 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
   const userPhone = session?.phoneNumber || profileQuery.data?.phoneNumber || "";
 
   const [createdReservation, setCreatedReservation] = React.useState<ReservationResponse | null>(
-    null,
+    initialReservation ?? null,
   );
+
+  React.useEffect(() => {
+    if (initialReservation) {
+      setCreatedReservation(initialReservation);
+    }
+  }, [initialReservation]);
 
   const form = useForm<CreateReservationFormValues>({
     resolver: zodResolver(createReservationSchema),
@@ -107,6 +115,9 @@ export function BookForm({ onDone, initialValues }: BookFormProps) {
 
   const handleResetForm = () => {
     setCreatedReservation(null);
+    if (onResetBooking) {
+      onResetBooking();
+    }
     reset({
       guestName: session?.username ?? "",
       guestPhone: userPhone || "",

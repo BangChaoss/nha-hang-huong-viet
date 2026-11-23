@@ -65,6 +65,8 @@ public class ReservationTableStatusScheduler {
             for (String tableId : targetTableIds) {
                 tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(table -> {
                     if (table.getStatus() != TableStatus.AVAILABLE) {
+                        logger.debug("Bàn {} đã ở trạng thái {} (shared/occupied), bỏ qua cho đơn {}",
+                                table.getTableNumber(), table.getStatus(), reservation.getId());
                         return;
                     }
 

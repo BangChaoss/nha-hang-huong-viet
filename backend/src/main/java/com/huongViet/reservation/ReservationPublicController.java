@@ -1,13 +1,16 @@
 package com.huongViet.reservation;
 
 import com.huongViet.auth.User;
+import com.huongViet.payment.PaymentService;
 import com.huongViet.reservation.dto.CancelReservationRequest;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
 import com.huongViet.reservation.dto.ZoneAvailabilityResponse;
 import com.huongViet.table.ZoneResponse;
 import com.huongViet.table.ZoneService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,9 +25,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.view.RedirectView;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/reservations")
@@ -34,10 +39,20 @@ public class ReservationPublicController {
 
     private final ReservationService reservationService;
     private final ZoneService zoneService;
+    private final ReservationRepository reservationRepository;
+    private final PaymentService paymentService;
 
-    public ReservationPublicController(ReservationService reservationService, ZoneService zoneService) {
+    @Value("${app.frontend-url:http://localhost:8081}")
+    private String frontendUrl;
+
+    public ReservationPublicController(ReservationService reservationService,
+                                       ZoneService zoneService,
+                                       ReservationRepository reservationRepository,
+                                       PaymentService paymentService) {
         this.reservationService = reservationService;
         this.zoneService = zoneService;
+        this.reservationRepository = reservationRepository;
+        this.paymentService = paymentService;
     }
 
     /**
@@ -130,5 +145,79 @@ public class ReservationPublicController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập hoặc cung cấp số điện thoại để xác thực hủy đặt bàn");
         }
         return ResponseEntity.ok(reservationService.cancelByCustomer(id, customerId, safeRequest));
+    }
+
+    /**
+     * GET /api/reservations/{id}
+     * Tra cứu chi tiết đơn đặt bàn theo ID.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<ReservationResponse> getBookingById(@PathVariable String id) {
+        return ResponseEntity.ok(reservationService.getById(id));
+    }
+
+    /**
+     * POST /api/reservations/{id}/deposit
+     * Tạo link thanh toán VNPay cho đặt cọc VIP.
+     */
+    @PostMapping("/{id}/deposit")
+    public ResponseEntity<Map<String, String>> createDepositPayment(
+        @PathVariable String id,
+        HttpServletRequest servletRequest
+    ) {
+        Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
+
+        if (reservation.getStatus() != ReservationStatus.PENDING_DEPOSIT) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đơn đặt bàn không ở trạng thái chờ đặt cọc");
+        }
+
+        String ip = servletRequest.getHeader("X-Forwarded-For");
+        if (ip != null && ip.contains(",")) ip = ip.substring(0, ip.indexOf(',')).trim();
+        if (ip == null || ip.isBlank()) ip = servletRequest.getRemoteAddr();
+
+        Map<String, String> paymentResult = paymentService.createReservationDepositPayment(
+            reservation.getId(), reservation.getDepositAmount(), ip
+        );
+        return ResponseEntity.ok(paymentResult);
+    }
+
+    /**
+     * GET /api/reservations/deposit-callback
+     * VNPay redirect callback sau khi thanh toán cọc.
+     */
+    @GetMapping("/deposit-callback")
+    public RedirectView depositCallback(@RequestParam Map<String, String> params) {
+        String txnRef = params.getOrDefault("vnp_TxnRef", "");
+        String reservationId = "";
+        if (txnRef.startsWith("DEP_")) {
+            String[] parts = txnRef.split("_");
+            if (parts.length >= 2) {
+                reservationId = parts[1];
+            }
+        } else {
+            reservationId = txnRef;
+        }
+
+        String status = "failed";
+        try {
+            if (paymentService.verify(params)) {
+                String responseCode = params.getOrDefault("vnp_ResponseCode", "");
+                String transactionStatus = params.getOrDefault("vnp_TransactionStatus", "");
+                String transactionNo = params.getOrDefault("vnp_TransactionNo", "");
+
+                if ("00".equals(responseCode) && "00".equals(transactionStatus)) {
+                    reservationService.confirmDeposit(reservationId, transactionNo);
+                    status = "success";
+                }
+            }
+        } catch (Exception ex) {
+            status = "failed";
+        }
+
+        String redirectUrl = frontendUrl.replaceAll("/$", "") + "/?tab=history&reservationId=" +
+            java.net.URLEncoder.encode(reservationId, java.nio.charset.StandardCharsets.UTF_8) +
+            "&depositStatus=" + status;
+        return new RedirectView(redirectUrl);
     }
 }

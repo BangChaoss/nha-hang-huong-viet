@@ -9,12 +9,48 @@ import {
   Phone,
   User,
   Clock,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { RESERVATION_STATUS_CONFIG, type ReservationResponse } from "../types/reservation.types";
+import { reservationApi } from "../api/reservation-api";
+
+function DepositCountdown({ createdAt }: { createdAt: string }) {
+  const [timeLeft, setTimeLeft] = React.useState<number>(() => {
+    const createdTime = new Date(createdAt).getTime();
+    const expireTime = createdTime + 10 * 60 * 1000;
+    return Math.max(0, Math.floor((expireTime - Date.now()) / 1000));
+  });
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      const createdTime = new Date(createdAt).getTime();
+      const expireTime = createdTime + 10 * 60 * 1000;
+      const remaining = Math.max(0, Math.floor((expireTime - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(timer);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [createdAt]);
+
+  if (timeLeft <= 0) {
+    return <span className="font-semibold text-destructive">Đã hết hạn đặt cọc</span>;
+  }
+
+  const minutes = Math.floor(timeLeft / 60);
+  const seconds = timeLeft % 60;
+  return (
+    <span className="font-mono font-bold">
+      {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
+    </span>
+  );
+}
 
 interface BookingConfirmationProps {
   reservation: ReservationResponse;
@@ -28,6 +64,24 @@ export function BookingConfirmation({
   onViewHistory,
 }: BookingConfirmationProps) {
   const [copied, setCopied] = React.useState(false);
+  const [isRedirecting, setIsRedirecting] = React.useState(false);
+
+  const handleVnpayDeposit = async () => {
+    try {
+      setIsRedirecting(true);
+      const res = await reservationApi.createDepositPayment(reservation.id);
+      if (res?.paymentUrl) {
+        window.location.href = res.paymentUrl;
+      } else {
+        toast.error("Không thể khởi tạo cổng thanh toán VNPay");
+        setIsRedirecting(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Lỗi khi gọi VNPay";
+      toast.error(msg);
+      setIsRedirecting(false);
+    }
+  };
 
   const bookingCode = reservation.id.substring(0, 8).toUpperCase();
   const fullBookingCode = `HV-${bookingCode}`;
@@ -143,6 +197,57 @@ export function BookingConfirmation({
           <div className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
             <span className="font-semibold text-foreground">Yêu cầu đặc biệt: </span>
             {reservation.specialRequests}
+          </div>
+        )}
+
+        {/* ★ VIP DEPOSIT SECTION */}
+        {reservation.status === "PENDING_DEPOSIT" && (
+          <div className="rounded-xl border-2 border-orange-500/50 bg-orange-500/10 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+              <h3 className="font-bold text-orange-800 dark:text-orange-300">
+                Yêu Cầu Đặt Cọc — Phòng VIP
+              </h3>
+            </div>
+            <p className="text-sm text-orange-700 dark:text-orange-400">
+              Đơn đặt bàn Phòng VIP yêu cầu đặt cọc <strong>1.000.000đ</strong> qua VNPay để xác nhận giữ chỗ. Vui lòng thanh toán trong vòng <strong>10 phút</strong>.
+            </p>
+            <div className="flex items-center gap-2 text-xs text-orange-600 dark:text-orange-400">
+              <Clock className="h-3.5 w-3.5" />
+              <span>Hết hạn sau: <DepositCountdown createdAt={reservation.createdAt} /></span>
+            </div>
+            <Button
+              onClick={handleVnpayDeposit}
+              disabled={isRedirecting}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold gap-2"
+            >
+              {isRedirecting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Đang chuyển tới VNPay...
+                </>
+              ) : (
+                "💳 Đặt Cọc 1.000.000đ qua VNPay"
+              )}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              * Cọc sẽ được trừ vào hóa đơn khi dùng bữa. Nếu không đến (No-show), cọc không được hoàn lại.
+            </p>
+          </div>
+        )}
+
+        {/* Đã cọc thành công */}
+        {reservation.status === "PENDING_HOLD" && reservation.depositAmount > 0 && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              <span className="font-semibold text-emerald-800 dark:text-emerald-300">
+                Đã đặt cọc thành công: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(reservation.depositAmount)}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Nhân viên sẽ liên hệ xác nhận bàn ăn cho quý khách.
+            </p>
           </div>
         )}
 

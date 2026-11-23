@@ -219,6 +219,45 @@ public class PaymentService {
         return Map.of("orderId", orderId, "paymentUrl", paymentUrl);
     }
 
+    public Map<String, String> createReservationDepositPayment(String reservationId, BigDecimal amount, String clientIp) {
+        if (tmnCode == null || tmnCode.isBlank() || hashSecret == null || hashSecret.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Chưa cấu hình VNPAY_SANDBOX_TMN_CODE và VNPAY_SANDBOX_HASH_SECRET."
+            );
+        }
+
+        String txnRef = "DEP_" + reservationId + "_" + System.currentTimeMillis();
+        Map<String, String> params = new TreeMap<>();
+        params.put("vnp_Version", "2.1.0");
+        params.put("vnp_Command", "pay");
+        params.put("vnp_TmnCode", tmnCode);
+        params.put("vnp_Amount", amount.multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP).toPlainString());
+        params.put("vnp_CurrCode", "VND");
+        params.put("vnp_TxnRef", txnRef);
+        String shortId = reservationId.length() >= 8 ? reservationId.substring(0, 8).toUpperCase() : reservationId;
+        params.put("vnp_OrderInfo", "Dat coc phong VIP HV-" + shortId);
+        params.put("vnp_OrderType", "other");
+        params.put("vnp_Locale", "vn");
+
+        String depReturnUrl = returnUrl.replace("/api/payments/vnpay/return", "/api/reservations/deposit-callback");
+        params.put("vnp_ReturnUrl", depReturnUrl);
+        params.put("vnp_IpAddr", normalizeIp(clientIp));
+
+        ZoneId zone = ZoneId.of("Asia/Ho_Chi_Minh");
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+        LocalDateTime now = LocalDateTime.now(zone);
+
+        params.put("vnp_CreateDate", now.format(formatter));
+        params.put("vnp_ExpireDate", now.plusMinutes(10).format(formatter));
+
+        String query = toQuery(params);
+        String signature = hmacSha512(hashSecret, query);
+        String paymentUrl = payUrl + "?" + query + "&vnp_SecureHash=" + signature;
+
+        return Map.of("paymentUrl", paymentUrl, "txnRef", txnRef);
+    }
+
     public boolean verify(Map<String, String> input) {
         if (input == null || input.isEmpty() || hashSecret == null || hashSecret.isBlank()) {
             return false;

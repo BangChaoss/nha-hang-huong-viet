@@ -14,13 +14,18 @@ public record FloorPlanLayoutResponse(
     TableStatus status,
     String zoneId,
     String zoneName,
-    Boolean zoneIsVip
+    Boolean zoneIsVip,
+    Integer occupiedSeats
 ) {
     public static FloorPlanLayoutResponse from(FloorPlanLayout layout, RestaurantTable table) {
-        return from(layout, table, table.getStatus());
+        return from(layout, table, table.getStatus(), 0);
     }
 
     public static FloorPlanLayoutResponse from(FloorPlanLayout layout, RestaurantTable table, TableStatus dynamicStatus) {
+        return from(layout, table, dynamicStatus, 0);
+    }
+
+    public static FloorPlanLayoutResponse from(FloorPlanLayout layout, RestaurantTable table, TableStatus dynamicStatus, Integer occupiedSeats) {
         TableZone zone = table.getZone();
         return new FloorPlanLayoutResponse(
             layout.getId(),
@@ -36,7 +41,8 @@ public record FloorPlanLayoutResponse(
             dynamicStatus != null ? dynamicStatus : table.getStatus(),
             table.getZoneId(),
             zone != null ? zone.getZoneName() : null,
-            zone != null ? zone.getIsVip() : null
+            zone != null ? zone.getIsVip() : null,
+            occupiedSeats != null ? occupiedSeats : 0
         );
     }
 }

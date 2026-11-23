@@ -13,6 +13,7 @@ import {
   Loader2,
   CheckCircle,
   UtensilsCrossed,
+  CreditCard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { feedbackApi } from "@/features/feedback/api/feedback-api";
+import { reservationApi } from "../api/reservation-api";
 import { RESERVATION_STATUS_CONFIG, type ReservationResponse } from "../types/reservation.types";
 
 interface BookingHistoryCardProps {
@@ -39,6 +41,25 @@ export function BookingHistoryCard({
   onLeaveFeedback,
 }: BookingHistoryCardProps) {
   const [checkingInvoice, setCheckingInvoice] = React.useState(false);
+  const [isRedirectingDeposit, setIsRedirectingDeposit] = React.useState(false);
+
+  const handleContinueDeposit = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      setIsRedirectingDeposit(true);
+      const res = await reservationApi.createDepositPayment(booking.id);
+      if (res?.paymentUrl) {
+        window.location.href = res.paymentUrl;
+      } else {
+        toast.error("Không thể khởi tạo cổng thanh toán VNPay");
+        setIsRedirectingDeposit(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Lỗi khi gọi VNPay";
+      toast.error(msg);
+      setIsRedirectingDeposit(false);
+    }
+  };
 
   const handleLeaveFeedback = async () => {
     // Chỉ cho phép đánh giá khi đơn đã thanh toán hoàn tất (PAID)
@@ -109,9 +130,16 @@ export function BookingHistoryCard({
             <span className="text-xs text-muted-foreground">·</span>
             <span className="text-xs text-muted-foreground">{booking.guestName}</span>
           </div>
-          <Badge variant="outline" className={statusCfg.badgeCls}>
-            {statusCfg.label}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className={statusCfg.badgeCls}>
+              {booking.status === "PENDING_DEPOSIT" ? "Chờ cọc VIP ⏳" : statusCfg.label}
+            </Badge>
+            {booking.status !== "PENDING_DEPOSIT" && booking.status !== "CANCELLED" && booking.depositAmount > 0 && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
+                Đã cọc 1tr ✅
+              </Badge>
+            )}
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -165,6 +193,26 @@ export function BookingHistoryCard({
           </div>
         )}
 
+        {/* Banner nhắc đặt cọc cho đơn VIP */}
+        {booking.status === "PENDING_DEPOSIT" && (
+          <div
+            onClick={handleContinueDeposit}
+            role="button"
+            tabIndex={0}
+            className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-800 dark:text-orange-300 cursor-pointer hover:bg-orange-500/15 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-orange-600 dark:text-orange-400 shrink-0" />
+              <span>
+                Đơn đặt bàn Phòng VIP đang chờ đặt cọc <strong>1.000.000đ</strong> để xác nhận giữ chỗ. Nhấn để tiếp tục thanh toán.
+              </span>
+            </div>
+            <span className="font-semibold text-[11px] underline shrink-0 flex items-center gap-1 text-orange-700 dark:text-orange-400">
+              {isRedirectingDeposit ? <Loader2 className="h-3 w-3 animate-spin" /> : "Thanh toán ngay →"}
+            </span>
+          </div>
+        )}
+
         {/* Footer Actions */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1 font-mono">
@@ -172,6 +220,23 @@ export function BookingHistoryCard({
           </span>
 
           <div className="flex items-center gap-2 ml-auto">
+            {/* 0. Nút tiếp tục đặt cọc VNPay */}
+            {booking.status === "PENDING_DEPOSIT" && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={isRedirectingDeposit}
+                onClick={handleContinueDeposit}
+                className="h-8 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white cursor-pointer shadow-sm gap-1.5"
+              >
+                {isRedirectingDeposit ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CreditCard className="h-3.5 w-3.5" />
+                )}
+                Tiếp tục đặt cọc VNPay
+              </Button>
+            )}
             {/* 1. Nếu khách đang ở bàn (ARRIVED) nhưng chưa thanh toán: Hiển thị nhãn trạng thái, KHÔNG hiển thị nút đánh giá */}
             {booking.status === "ARRIVED" && (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-400 border border-blue-500/20">

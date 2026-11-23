@@ -662,6 +662,8 @@ CREATE TABLE loyalty_settings (
     id VARCHAR(36) NOT NULL,
     earn_rate_percent DECIMAL(7, 3) NOT NULL DEFAULT 5.000,
     updated_at DATETIME NOT NULL,
+    point_to_vnd_rate DECIMAL(12, 3) NOT NULL DEFAULT 1.000,
+    point_value_vnd DECIMAL(12, 2) NOT NULL DEFAULT 1.00,
 
     PRIMARY KEY (id),
 

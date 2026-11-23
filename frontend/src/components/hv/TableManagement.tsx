@@ -136,7 +136,18 @@ export function TableManagement() {
 
       // Cập nhật trạng thái bàn trong state sơ đồ floor plan
       setLayouts((prev) =>
-        prev.map((l) => (l.tableId === message.tableId ? { ...l, status: message.newStatus } : l)),
+        prev.map((l) =>
+          l.tableId === message.tableId
+            ? {
+                ...l,
+                status: message.newStatus,
+                occupiedSeats:
+                  typeof message.occupiedSeats === "number"
+                    ? message.occupiedSeats
+                    : l.occupiedSeats,
+              }
+            : l,
+        ),
       );
 
       const oldLabel = STATUS_COLORS[message.oldStatus]?.label ?? message.oldStatus;

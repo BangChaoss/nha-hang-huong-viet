@@ -4,7 +4,18 @@ import { RestaurantProvider } from "@/lib/restaurant-store";
 import { CustomerPortal } from "@/components/hv/CustomerPortal";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 
+interface IndexSearch {
+  tab?: string;
+  reservationId?: string;
+  depositStatus?: string;
+}
+
 export const Route = createFileRoute("/")({
+  validateSearch: (search: Record<string, unknown>): IndexSearch => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+    reservationId: typeof search.reservationId === "string" ? search.reservationId : undefined,
+    depositStatus: typeof search.depositStatus === "string" ? search.depositStatus : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Hương Việt — Nhà hàng Ẩm Thực Cố Đô" },
@@ -15,6 +26,7 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
+  const search = Route.useSearch();
   return (
     <RestaurantProvider>
       <div className="min-h-screen">
@@ -35,7 +47,11 @@ function HomePage() {
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-          <CustomerPortal />
+          <CustomerPortal
+            initialTab={search.tab}
+            reservationId={search.reservationId}
+            depositStatus={search.depositStatus}
+          />
         </main>
       </div>
     </RestaurantProvider>

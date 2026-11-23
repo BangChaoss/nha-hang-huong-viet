@@ -119,6 +119,8 @@ public class TableService {
         return TableStatus.AVAILABLE;
     }
 
+    private static final int MAX_ATOMIC_CAPACITY = 4;
+
     /**
      * BR-57: Unique Table Identification within restaurant.
      */
@@ -132,6 +134,12 @@ public class TableService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Số bàn đã tồn tại. Vui lòng nhập số bàn khác.");
         }
 
+        // ★ AUTO-SPLIT: Khu vực không phải VIP + capacity > 4 → tách bàn
+        boolean isVipZone = zone.getIsVip() != null && zone.getIsVip();
+        if (!isVipZone && request.capacity() > MAX_ATOMIC_CAPACITY) {
+            return createSplitTables(trimmedNumber, request.capacity(), zone);
+        }
+
         RestaurantTable table = new RestaurantTable(
             UUID.randomUUID().toString(),
             zone.getId(),
@@ -143,15 +151,89 @@ public class TableService {
         RestaurantTable saved = tableRepository.save(table);
 
         // Calculate smart optimal floor plan layout coordinates for new table
-        FloorPlanLayout layout = calculateOptimalLayoutPosition(saved);
-        floorPlanLayoutRepository.save(layout);
+        List<FloorPlanLayout> layouts = calculateAndApplyOptimalLayouts(List.of(saved), zone);
+        for (FloorPlanLayout layout : layouts) {
+            floorPlanLayoutRepository.save(layout);
+        }
 
+        FloorPlanLayout primaryLayout = layouts.isEmpty() ? null : layouts.get(0);
         logger.info("Created table: id={}, tableNumber={}, zone={}, position=({}, {})",
-            saved.getId(), saved.getTableNumber(), zone.getZoneName(), layout.getPositionX(), layout.getPositionY());
+            saved.getId(), saved.getTableNumber(), zone.getZoneName(),
+            primaryLayout != null ? primaryLayout.getPositionX() : null,
+            primaryLayout != null ? primaryLayout.getPositionY() : null);
 
         TableResponse response = TableResponse.from(saved, TableStatus.AVAILABLE);
         broadcastStatusChange(saved, null, saved.getStatus());
         return response;
+    }
+
+    /**
+     * Tách bàn lớn thành nhiều bàn nhỏ (max 4 chỗ/bàn).
+     * Ví dụ: "Bàn 20" capacity 8 → "Bàn 20A"(4) + "Bàn 20B"(4) xếp liền kề nhau ("xếp vào nhau").
+     */
+    private TableResponse createSplitTables(String baseNumber, int totalCapacity, TableZone zone) {
+        List<Integer> splits = calculateSplits(totalCapacity);
+        char suffix = 'A';
+
+        // 1. Kiểm tra trước xem có bị trùng số hiệu bàn con nào không
+        for (int cap : splits) {
+            String splitNumber = baseNumber + suffix;
+            if (tableRepository.existsByTableNumberIgnoreCaseAndDeletedAtIsNull(splitNumber)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Số bàn " + splitNumber + " đã tồn tại. Hãy chọn số bàn khác.");
+            }
+            suffix++;
+        }
+
+        // 2. Tạo và lưu toàn bộ các bàn con vào CSDL
+        List<RestaurantTable> savedTables = new ArrayList<>();
+        suffix = 'A';
+        for (int cap : splits) {
+            String splitNumber = baseNumber + suffix;
+            RestaurantTable table = new RestaurantTable(
+                UUID.randomUUID().toString(), zone.getId(), splitNumber, cap
+            );
+            table.setZone(zone);
+            RestaurantTable saved = tableRepository.save(table);
+            savedTables.add(saved);
+            suffix++;
+        }
+
+        // 3. Tính toán vị trí xếp cặp liền kề nhau và áp dụng lực đẩy nam châm trái chiều nếu khu vực mở rộng
+        List<FloorPlanLayout> layouts = calculateAndApplyOptimalLayouts(savedTables, zone);
+        for (FloorPlanLayout layout : layouts) {
+            floorPlanLayoutRepository.save(layout);
+        }
+
+        // 4. Phát thông báo trạng thái
+        for (RestaurantTable st : savedTables) {
+            logger.info("Auto-split: created sub-table {}, capacity={}, zone={}",
+                st.getTableNumber(), st.getCapacity(), zone.getZoneName());
+            broadcastStatusChange(st, null, st.getStatus());
+        }
+
+        logger.info("Auto-split complete: {} → {} paired sub-tables", baseNumber, splits.size());
+        return TableResponse.from(savedTables.get(0), TableStatus.AVAILABLE);
+    }
+
+    /**
+     * Chia totalCapacity thành list các cap ≤ 4.
+     * Quy tắc: chia thành các phần 4, remainder 1-2 giữ nguyên, remainder 3 pad lên 4.
+     */
+    public static List<Integer> calculateSplits(int totalCapacity) {
+        List<Integer> parts = new ArrayList<>();
+        int remaining = totalCapacity;
+        while (remaining > MAX_ATOMIC_CAPACITY) {
+            parts.add(MAX_ATOMIC_CAPACITY);
+            remaining -= MAX_ATOMIC_CAPACITY;
+        }
+        if (remaining == 3) {
+            // Pad 3 → 4 (thêm 1 chỗ cho thoải mái)
+            parts.add(MAX_ATOMIC_CAPACITY);
+        } else if (remaining > 0) {
+            parts.add(remaining); // 1 hoặc 2
+        }
+        return parts;
     }
 
     /**
@@ -278,11 +360,30 @@ public class TableService {
      * - If the zone is brand new (or has no active layouts): finds an empty spot in the visible canvas
      *   without overlapping any other zone's boundaries or tables.
      */
+    /**
+     * Calculates optimal non-overlapping coordinates for a newly created table.
+     * Backwards-compatible wrapper around calculateAndApplyOptimalLayouts.
+     */
     public FloorPlanLayout calculateOptimalLayoutPosition(RestaurantTable savedTable) {
-        double width = savedTable.getCapacity() <= 2 ? 70.0 : (savedTable.getCapacity() <= 4 ? 90.0 : 140.0);
-        double height = savedTable.getCapacity() <= 2 ? 70.0 : 90.0;
-        FloorPlanShape shape = FloorPlanShape.RECTANGLE;
+        TableZone zone = savedTable.getZone();
+        if (zone == null && savedTable.getZoneId() != null) {
+            zone = zoneRepository.findById(savedTable.getZoneId()).orElse(null);
+        }
+        List<FloorPlanLayout> layouts = calculateAndApplyOptimalLayouts(List.of(savedTable), zone);
+        return layouts.isEmpty() ? null : layouts.get(0);
+    }
 
+    /**
+     * Tính toán vị trí xếp bàn thông minh và xếp cặp bàn tự tách liền kề nhau ("xếp vào nhau").
+     * Khi một khu vực bị nở rộng, kích hoạt cơ chế "Nam châm trái chiều" (Magnetic Repulsion)
+     * tự động đẩy các khu vực liền kề ra xa để triệt tiêu 100% va chạm ranh giới.
+     */
+    public List<FloorPlanLayout> calculateAndApplyOptimalLayouts(List<RestaurantTable> newTables, TableZone zone) {
+        if (newTables == null || newTables.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String zoneId = zone != null ? zone.getId() : newTables.get(0).getZoneId();
         List<RestaurantTable> allActiveTables = tableRepository.findAllActiveWithZone();
         List<FloorPlanLayout> allLayouts = floorPlanLayoutRepository.findAll();
 
@@ -291,20 +392,43 @@ public class TableService {
 
         Map<String, List<FloorPlanLayout>> zoneLayoutsMap = new HashMap<>();
         for (RestaurantTable t : allActiveTables) {
-            if (t.getId().equals(savedTable.getId())) continue;
+            boolean isNew = newTables.stream().anyMatch(nt -> nt.getId().equals(t.getId()));
+            if (isNew) continue;
             FloorPlanLayout l = layoutMap.get(t.getId());
             if (l != null && l.getPositionX() != null && l.getPositionY() != null) {
                 zoneLayoutsMap.computeIfAbsent(t.getZoneId(), k -> new ArrayList<>()).add(l);
             }
         }
 
-        List<FloorPlanLayout> thisZoneLayouts = zoneLayoutsMap.getOrDefault(savedTable.getZoneId(), Collections.emptyList());
+        List<FloorPlanLayout> thisZoneLayouts = zoneLayoutsMap.getOrDefault(zoneId, Collections.emptyList());
 
-        double candX;
-        double candY;
+        int count = newTables.size();
+        double[] widths = new double[count];
+        double[] heights = new double[count];
+        double[] relX = new double[count];
+        double[] relY = new double[count];
+
+        double currentRelX = 0;
+        double maxH = 0;
+        double pairGap = 10.0;
+
+        for (int i = 0; i < count; i++) {
+            RestaurantTable t = newTables.get(i);
+            widths[i] = t.getCapacity() <= 2 ? 70.0 : (t.getCapacity() <= 4 ? 90.0 : 140.0);
+            heights[i] = t.getCapacity() <= 2 ? 70.0 : 90.0;
+            relX[i] = currentRelX;
+            relY[i] = 0;
+            currentRelX += widths[i] + (i < count - 1 ? pairGap : 0);
+            if (heights[i] > maxH) maxH = heights[i];
+        }
+
+        double clusterW = currentRelX;
+        double clusterH = maxH;
+
+        double candX = 50.0;
+        double candY = 70.0;
 
         if (!thisZoneLayouts.isEmpty()) {
-            // Case 1: Zone already has tables - place adjacent in grid
             double gapX = 40.0;
             double gapY = 40.0;
 
@@ -316,9 +440,10 @@ public class TableService {
 
             double minX = thisZoneLayouts.stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(50.0);
             double maxX = thisZoneLayouts.stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(150.0);
+            double minY = thisZoneLayouts.stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(70.0);
             double maxY = thisZoneLayouts.stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(150.0);
 
-            candidates.add(new double[]{maxX + gapX, thisZoneLayouts.get(0).getPositionY()});
+            candidates.add(new double[]{maxX + gapX, minY});
             candidates.add(new double[]{minX, maxY + gapY});
 
             double[] best = null;
@@ -327,40 +452,42 @@ public class TableService {
                 double cy = cand[1];
                 if (cx < 20 || cy < 20) continue;
 
-                // Check collision with any existing table
+                // 1. Kiểm tra va chạm bàn với tất cả bàn hiện có
                 boolean collidesWithTable = false;
-                for (FloorPlanLayout other : layoutMap.values()) {
-                    if (other.getTableId().equals(savedTable.getId())) continue;
-                    if (isAabbOverlap(cx, cy, width, height, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
-                        collidesWithTable = true;
-                        break;
+                for (int i = 0; i < count; i++) {
+                    double tiX = cx + relX[i];
+                    double tiY = cy + relY[i];
+                    double tiW = widths[i];
+                    double tiH = heights[i];
+
+                    for (FloorPlanLayout other : layoutMap.values()) {
+                        boolean isNew = newTables.stream().anyMatch(nt -> nt.getId().equals(other.getTableId()));
+                        if (isNew) continue;
+                        if (isAabbOverlap(tiX, tiY, tiW, tiH, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
+                            collidesWithTable = true;
+                            break;
+                        }
                     }
+                    if (collidesWithTable) break;
                 }
                 if (collidesWithTable) continue;
 
-                // Check if new projected zone boundary would collide with other zones
-                boolean collidesWithOtherZones = false;
+                // 2. Kiểm tra va chạm ranh giới khu vực (Zone Collision)
                 double newZoneMinX = Math.min(minX, cx);
-                double newZoneMinY = Math.min(thisZoneLayouts.stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(50.0), cy);
-                double newZoneMaxX = Math.max(maxX, cx + width);
-                double newZoneMaxY = Math.max(maxY, cy + height);
+                double newZoneMinY = Math.min(minY, cy);
+                double newZoneMaxX = Math.max(maxX, cx + clusterW);
+                double newZoneMaxY = Math.max(maxY, cy + clusterH);
+
                 double newBoxX = newZoneMinX - 24.0;
                 double newBoxY = newZoneMinY - 54.0;
                 double newBoxW = newZoneMaxX - newZoneMinX + 48.0;
                 double newBoxH = newZoneMaxY - newZoneMinY + 78.0;
 
+                boolean collidesWithOtherZones = false;
                 for (Map.Entry<String, List<FloorPlanLayout>> entry : zoneLayoutsMap.entrySet()) {
-                    if (entry.getKey().equals(savedTable.getZoneId()) || entry.getValue().isEmpty()) continue;
-                    double otherMinX = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(0);
-                    double otherMinY = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(0);
-                    double otherMaxX = entry.getValue().stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(0);
-                    double otherMaxY = entry.getValue().stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(0);
-                    double otherBoxX = otherMinX - 24.0;
-                    double otherBoxY = otherMinY - 54.0;
-                    double otherBoxW = otherMaxX - otherMinX + 48.0;
-                    double otherBoxH = otherMaxY - otherMinY + 78.0;
-
-                    if (isAabbOverlap(newBoxX, newBoxY, newBoxW, newBoxH, otherBoxX, otherBoxY, otherBoxW, otherBoxH)) {
+                    if (entry.getKey().equals(zoneId) || entry.getValue().isEmpty()) continue;
+                    double[] otherBox = computeZoneVisualBox(entry.getValue());
+                    if (isAabbOverlap(newBoxX, newBoxY, newBoxW, newBoxH, otherBox[0], otherBox[1], otherBox[2], otherBox[3])) {
                         collidesWithOtherZones = true;
                         break;
                     }
@@ -376,11 +503,20 @@ public class TableService {
                 candX = best[0];
                 candY = best[1];
             } else {
+                // Không có vị trí nào vừa vặn bên trong ranh giới hiện tại -> Mở rộng khu vực
                 candX = minX;
                 candY = maxY + gapY;
+
+                // Điều chỉnh tránh va chạm bàn cục bộ
+                while (hasClusterTableCollision(candX, candY, count, relX, relY, widths, heights, layoutMap, newTables)) {
+                    candY += 30.0;
+                }
+
+                // KÍCH HOẠT LỰC ĐẨY NAM CHÂM TRÁI CHIỀU (Magnetic Repulsion)
+                applyMagneticRepulsion(zoneId, candX, candY, clusterW, clusterH, minX, maxX, minY, maxY, zoneLayoutsMap);
             }
         } else {
-            // Case 2: Brand new zone (no existing layouts in this zone)
+            // Case 2: Khu vực mới hoàn toàn chưa có bàn nào
             candX = 50.0;
             candY = 70.0;
             boolean found = false;
@@ -389,30 +525,27 @@ public class TableService {
                 for (double x = 50.0; x <= 900.0 && !found; x += 180.0) {
                     double boxX = x - 24.0;
                     double boxY = y - 54.0;
-                    double boxW = width + 48.0;
-                    double boxH = height + 78.0;
+                    double boxW = clusterW + 48.0;
+                    double boxH = clusterH + 78.0;
 
                     boolean overlapsAny = false;
-                    for (FloorPlanLayout other : layoutMap.values()) {
-                        if (isAabbOverlap(x, y, width, height, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
-                            overlapsAny = true;
-                            break;
+                    for (int i = 0; i < count; i++) {
+                        double tiX = x + relX[i];
+                        double tiY = y + relY[i];
+                        for (FloorPlanLayout other : layoutMap.values()) {
+                            if (isAabbOverlap(tiX, tiY, widths[i], heights[i], other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
+                                overlapsAny = true;
+                                break;
+                            }
                         }
+                        if (overlapsAny) break;
                     }
                     if (overlapsAny) continue;
 
                     for (Map.Entry<String, List<FloorPlanLayout>> entry : zoneLayoutsMap.entrySet()) {
                         if (entry.getValue().isEmpty()) continue;
-                        double otherMinX = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(0);
-                        double otherMinY = entry.getValue().stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(0);
-                        double otherMaxX = entry.getValue().stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(0);
-                        double otherMaxY = entry.getValue().stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(0);
-                        double otherBoxX = otherMinX - 24.0;
-                        double otherBoxY = otherMinY - 54.0;
-                        double otherBoxW = otherMaxX - otherMinX + 48.0;
-                        double otherBoxH = otherMaxY - otherMinY + 78.0;
-
-                        if (isAabbOverlap(boxX, boxY, boxW, boxH, otherBoxX, otherBoxY, otherBoxW, otherBoxH)) {
+                        double[] otherBox = computeZoneVisualBox(entry.getValue());
+                        if (isAabbOverlap(boxX, boxY, boxW, boxH, otherBox[0], otherBox[1], otherBox[2], otherBox[3])) {
                             overlapsAny = true;
                             break;
                         }
@@ -428,16 +561,131 @@ public class TableService {
             }
         }
 
-        return new FloorPlanLayout(
-            UUID.randomUUID().toString(),
-            savedTable.getId(),
-            (double) Math.round(candX),
-            (double) Math.round(candY),
-            width,
-            height,
-            0.0,
-            shape
-        );
+        // Tạo danh sách layout cho từng bàn con xếp liền kề nhau
+        List<FloorPlanLayout> results = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            RestaurantTable t = newTables.get(i);
+            FloorPlanLayout layout = new FloorPlanLayout(
+                UUID.randomUUID().toString(),
+                t.getId(),
+                (double) Math.round(candX + relX[i]),
+                (double) Math.round(candY + relY[i]),
+                widths[i],
+                heights[i],
+                0.0,
+                FloorPlanShape.RECTANGLE
+            );
+            results.add(layout);
+        }
+
+        return results;
+    }
+
+    private boolean hasClusterTableCollision(double cx, double cy, int count,
+                                            double[] relX, double[] relY,
+                                            double[] widths, double[] heights,
+                                            Map<String, FloorPlanLayout> layoutMap,
+                                            List<RestaurantTable> newTables) {
+        for (int i = 0; i < count; i++) {
+            double tiX = cx + relX[i];
+            double tiY = cy + relY[i];
+            double tiW = widths[i];
+            double tiH = heights[i];
+            for (FloorPlanLayout other : layoutMap.values()) {
+                boolean isNew = newTables.stream().anyMatch(nt -> nt.getId().equals(other.getTableId()));
+                if (isNew) continue;
+                if (isAabbOverlap(tiX, tiY, tiW, tiH, other.getPositionX(), other.getPositionY(), other.getWidth(), other.getHeight())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Cơ chế Nam châm trái chiều (Magnetic Repulsion):
+     * Khi khu vực mở rộng, tính toán vector đẩy và tịnh tiến các khu vực lân cận ra xa
+     * để duy trì khoảng đệm an toàn >= 40px, triệt tiêu 100% va chạm ranh giới.
+     */
+    private void applyMagneticRepulsion(String thisZoneId, double candX, double candY,
+                                       double clusterW, double clusterH,
+                                       double minX, double maxX, double minY, double maxY,
+                                       Map<String, List<FloorPlanLayout>> zoneLayoutsMap) {
+        double thisMinX = Math.min(minX, candX);
+        double thisMaxX = Math.max(maxX, candX + clusterW);
+        double thisMinY = Math.min(minY, candY);
+        double thisMaxY = Math.max(maxY, candY + clusterH);
+
+        double thisBoxX = thisMinX - 24.0;
+        double thisBoxY = thisMinY - 54.0;
+        double thisBoxW = thisMaxX - thisMinX + 48.0;
+        double thisBoxH = thisMaxY - thisMinY + 78.0;
+
+        double zoneBuffer = 40.0;
+
+        for (Map.Entry<String, List<FloorPlanLayout>> entry : zoneLayoutsMap.entrySet()) {
+            String otherZoneId = entry.getKey();
+            List<FloorPlanLayout> otherLayouts = entry.getValue();
+            if (otherZoneId.equals(thisZoneId) || otherLayouts == null || otherLayouts.isEmpty()) continue;
+
+            double[] otherBox = computeZoneVisualBox(otherLayouts);
+            double otherBoxX = otherBox[0];
+            double otherBoxY = otherBox[1];
+            double otherBoxW = otherBox[2];
+            double otherBoxH = otherBox[3];
+            double otherMinX = otherBox[4];
+            double otherMinY = otherBox[5];
+
+            // Kiểm tra va chạm có tính cả khoảng đệm an toàn
+            boolean collidesWithBuffer = isAabbOverlap(
+                thisBoxX, thisBoxY, thisBoxW + zoneBuffer, thisBoxH + zoneBuffer,
+                otherBoxX, otherBoxY, otherBoxW, otherBoxH
+            );
+
+            if (!collidesWithBuffer) continue;
+
+            // Xác định hướng đẩy nam châm (Đẩy xuống dưới trục Y hoặc Đẩy sang phải trục X)
+            if (otherMinY >= thisMinY + 50.0 || (otherBoxY >= thisBoxY + thisBoxH / 2.0)) {
+                // Đẩy xuống phía dưới theo trục Y
+                double targetOtherBoxY = thisBoxY + thisBoxH + zoneBuffer;
+                double shiftY = targetOtherBoxY - otherBoxY;
+                if (shiftY > 0) {
+                    shiftY = Math.ceil(shiftY / 10.0) * 10.0;
+                    for (FloorPlanLayout layout : otherLayouts) {
+                        layout.setPositionY(layout.getPositionY() + shiftY);
+                        floorPlanLayoutRepository.save(layout);
+                    }
+                    logger.info("Magnetic repulsion: pushed zone {} downwards by {}px", otherZoneId, shiftY);
+                }
+            } else if (otherMinX >= thisMinX + 50.0 || (otherBoxX >= thisBoxX + thisBoxW / 2.0)) {
+                // Đẩy sang bên phải theo trục X
+                double targetOtherBoxX = thisBoxX + thisBoxW + zoneBuffer;
+                double shiftX = targetOtherBoxX - otherBoxX;
+                if (shiftX > 0) {
+                    shiftX = Math.ceil(shiftX / 10.0) * 10.0;
+                    for (FloorPlanLayout layout : otherLayouts) {
+                        layout.setPositionX(layout.getPositionX() + shiftX);
+                        floorPlanLayoutRepository.save(layout);
+                    }
+                    logger.info("Magnetic repulsion: pushed zone {} rightwards by {}px", otherZoneId, shiftX);
+                }
+            }
+        }
+    }
+
+    private static double[] computeZoneVisualBox(List<FloorPlanLayout> layouts) {
+        double minX = layouts.stream().mapToDouble(FloorPlanLayout::getPositionX).min().orElse(0.0);
+        double minY = layouts.stream().mapToDouble(FloorPlanLayout::getPositionY).min().orElse(0.0);
+        double maxX = layouts.stream().mapToDouble(l -> l.getPositionX() + l.getWidth()).max().orElse(0.0);
+        double maxY = layouts.stream().mapToDouble(l -> l.getPositionY() + l.getHeight()).max().orElse(0.0);
+
+        double padding = 24.0;
+        double headerHeight = 30.0;
+        double boxX = minX - padding;
+        double boxY = minY - padding - headerHeight;
+        double boxW = maxX - minX + padding * 2.0;
+        double boxH = maxY - minY + padding * 2.0 + headerHeight;
+        return new double[]{boxX, boxY, boxW, boxH, minX, minY, maxX, maxY};
     }
 
     private static boolean isAabbOverlap(double x1, double y1, double w1, double h1,

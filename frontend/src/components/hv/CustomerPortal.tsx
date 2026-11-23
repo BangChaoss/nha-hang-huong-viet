@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { Client } from "@stomp/stompjs";
 import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +16,8 @@ import { BookingHistoryList } from "@/features/reservation/components/booking-hi
 import { CustomerFeedback } from "@/features/feedback/components/customer-feedback";
 import { useMenu } from "@/features/menu/hooks/use-menu";
 import { MenuDetailDialog } from "@/features/menu/components/menu-detail-dialog";
+import { reservationApi } from "@/features/reservation/api/reservation-api";
+import type { ReservationResponse } from "@/features/reservation/types/reservation.types";
 import type {
   MenuAvailabilityMessage,
   MenuItemResponse,
@@ -22,10 +26,66 @@ import type {
 
 const ALL_CATEGORIES = "all";
 
+interface CustomerPortalProps {
+  initialTab?: string;
+  reservationId?: string;
+  depositStatus?: string;
+}
+
 /** Cổng khách hàng với các tab thực đơn, đặt bàn, lịch sử và đánh giá. */
-export function CustomerPortal() {
-  const [tab, setTab] = useState("menu");
+export function CustomerPortal({
+  initialTab,
+  reservationId,
+  depositStatus,
+}: CustomerPortalProps = {}) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState(() => initialTab || (reservationId ? "book" : "menu"));
   const [targetInvoiceId, setTargetInvoiceId] = useState<string | undefined>(undefined);
+  const [reservation, setReservation] = useState<ReservationResponse | null>(null);
+  const [isLoadingReservation, setIsLoadingReservation] = useState<boolean>(Boolean(reservationId));
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+    } else if (reservationId) {
+      setTab("book");
+    }
+  }, [initialTab, reservationId]);
+
+  useEffect(() => {
+    if (!reservationId) return;
+
+    let isMounted = true;
+    setIsLoadingReservation(true);
+
+    reservationApi
+      .getPublicBooking(reservationId)
+      .then((data) => {
+        if (!isMounted) return;
+        setReservation(data);
+        if (depositStatus === "success") {
+          toast.success("Đặt cọc thành công! Đơn đặt bàn của bạn đang chờ xác nhận.");
+        } else if (depositStatus === "failed") {
+          toast.error("Thanh toán đặt cọc thất bại hoặc bị hủy. Quý khách vui lòng thử lại.");
+        }
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Không tìm thấy đơn đặt bàn";
+        toast.error(msg);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingReservation(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [reservationId, depositStatus]);
+
+  const handleResetBooking = () => {
+    setReservation(null);
+    navigate({ to: "/", search: { tab: "book" }, replace: true });
+  };
 
   const handleNavigateToReview = (invoiceId: string) => {
     setTargetInvoiceId(invoiceId);
@@ -52,7 +112,18 @@ export function CustomerPortal() {
         <Menu />
       </TabsContent>
       <TabsContent value="book">
-        <BookForm onDone={() => setTab("history")} />
+        {isLoadingReservation ? (
+          <div className="surface-card mx-auto max-w-4xl p-12 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Đang tải thông tin đơn đặt bàn...</p>
+          </div>
+        ) : (
+          <BookForm
+            initialReservation={reservation}
+            onResetBooking={handleResetBooking}
+            onDone={() => setTab("history")}
+          />
+        )}
       </TabsContent>
       <TabsContent value="history">
         <BookingHistoryList onLeaveFeedback={handleNavigateToReview} />

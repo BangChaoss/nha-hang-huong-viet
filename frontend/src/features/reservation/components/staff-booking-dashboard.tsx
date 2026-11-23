@@ -553,6 +553,7 @@ export function StaffBookingDashboard() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">Tất cả trạng thái</SelectItem>
+                  <SelectItem value="PENDING_DEPOSIT">Chờ đặt cọc (VIP)</SelectItem>
                   <SelectItem value="PENDING_HOLD">Chờ xác nhận</SelectItem>
                   <SelectItem value="CONFIRMED">Đã xác nhận</SelectItem>
                   <SelectItem value="ARRIVED">Đã nhận bàn</SelectItem>

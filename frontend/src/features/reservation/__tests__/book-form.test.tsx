@@ -5,6 +5,7 @@ import { setSession } from "@/lib/auth-session";
 import { profileApi } from "@/lib/account-api";
 import { BookForm } from "../components/book-form";
 import { createReservationSchema } from "../utils/reservation-validators";
+import type { ReservationResponse } from "../types/reservation.types";
 
 function renderWithClient(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -138,6 +139,36 @@ describe("BookForm & Reservation Validators", () => {
       await waitFor(() => {
         expect(phoneInput.placeholder).toBe("0909123456");
         expect(phoneInput.value).toBe("0909123456");
+      });
+    });
+
+    it("renders BookingConfirmation directly when initialReservation is provided", async () => {
+      const mockBooking: ReservationResponse = {
+        id: "res-test-vip",
+        guestName: "Khách VIP",
+        guestPhone: "0909111222",
+        guestEmail: "vip@test.com",
+        partySize: 4,
+        reservationDate: "2026-11-25",
+        reservationTime: "19:00:00",
+        tableNumber: null,
+        status: "PENDING_DEPOSIT",
+        zoneId: "zone-vip",
+        zoneName: "Phòng VIP",
+        isVip: true,
+        depositAmount: 1000000,
+        depositStatus: "PENDING",
+        depositTransactionNo: null,
+        cancelReason: null,
+        createdAt: new Date().toISOString(),
+      };
+
+      renderWithClient(<BookForm initialReservation={mockBooking} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Yêu Cầu Đặt Bàn Đã Được Ghi Nhận!")).toBeInTheDocument();
+        expect(screen.getByText(/HV-/i)).toBeInTheDocument();
+        expect(screen.getByText("Yêu Cầu Đặt Cọc — Phòng VIP")).toBeInTheDocument();
       });
     });
   });
