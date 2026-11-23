@@ -84,7 +84,7 @@ export function ConfirmBookingDialog({
   // Helper map of all known tables (from availableTables and floorPlanLayouts)
   // MUST be called before any conditional return to strictly follow Rules of Hooks
   const allKnownTables = React.useMemo(() => {
-    const map = new Map<string, { id: string; tableNumber: string; capacity: number; zoneId?: string | null; zoneName?: string | null }>();
+    const map = new Map<string, { id: string; tableNumber: string; capacity: number; zoneId?: string | null; zoneName?: string | null; availableSeats?: number | null }>();
     if (availableTables) {
       for (const t of availableTables) {
         map.set(t.id, {
@@ -93,6 +93,7 @@ export function ConfirmBookingDialog({
           capacity: t.capacity,
           zoneId: t.zoneId ?? null,
           zoneName: t.zoneName ?? null,
+          availableSeats: t.availableSeats ?? null,
         });
       }
     }
@@ -105,12 +106,53 @@ export function ConfirmBookingDialog({
             capacity: l.capacity,
             zoneId: l.zoneId || null,
             zoneName: l.zoneName,
+            availableSeats: null,
           });
         }
       }
     }
     return map;
   }, [availableTables, floorPlanLayouts]);
+
+  // Bổ sung số ghế đã bị chiếm dựa trên availableSeats từ API tìm bàn khả dụng
+  // VÀ tính toán trước số ghế sẽ đỏ lên khi nhân viên gắn bàn (selectedTableIds) cho đoàn khách (booking.partySize)
+  const augmentedFloorPlanLayouts = React.useMemo(() => {
+    if (!floorPlanLayouts) return [];
+
+    // Tính toán phân bổ số khách của đoàn hiện tại vào các bàn đã chọn (selectedTableIds)
+    const currentAllocationMap = new Map<string, number>();
+    if (booking?.partySize && selectedTableIds.length > 0) {
+      let remainingParty = booking.partySize;
+      for (const tId of selectedTableIds) {
+        const layout = floorPlanLayouts.find((fl) => fl.tableId === tId);
+        const known = allKnownTables.get(tId);
+        const cap = layout?.capacity ?? known?.capacity ?? 4;
+        const baseOccupied = known?.availableSeats !== undefined && known?.availableSeats !== null
+          ? Math.max(0, cap - known.availableSeats)
+          : (layout?.occupiedSeats ?? 0);
+        const freeOnTable = Math.max(0, cap - baseOccupied);
+        const allocated = Math.min(remainingParty, freeOnTable);
+        currentAllocationMap.set(tId, allocated);
+        remainingParty = Math.max(0, remainingParty - allocated);
+      }
+    }
+
+    return floorPlanLayouts.map((l) => {
+      const known = allKnownTables.get(l.tableId);
+      let occupiedSeats = l.occupiedSeats ?? 0;
+      if (known?.availableSeats !== undefined && known?.availableSeats !== null) {
+        occupiedSeats = Math.max(0, l.capacity - known.availableSeats);
+      }
+      // Nếu bàn này đang được chọn gán cho đơn đặt bàn hiện tại, cộng thêm số ghế đoàn sẽ ngồi
+      const allocatedForCurrent = currentAllocationMap.get(l.tableId) ?? 0;
+      occupiedSeats = Math.min(l.capacity, occupiedSeats + allocatedForCurrent);
+
+      return {
+        ...l,
+        occupiedSeats,
+      };
+    });
+  }, [floorPlanLayouts, allKnownTables, selectedTableIds, booking?.partySize]);
 
   if (!booking) {
     return null;
@@ -119,13 +161,16 @@ export function ConfirmBookingDialog({
   const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
   const timeFormatted = booking.reservationTime ? booking.reservationTime.substring(0, 5) : "";
 
+  const getEffectiveSeats = (table: { capacity: number; availableSeats?: number | null }) =>
+    table.availableSeats ?? table.capacity;
+
   // List of currently selected table objects
   const selectedTablesList = selectedTableIds
     .map((id) => allKnownTables.get(id))
     .filter((t): t is NonNullable<typeof t> => t !== undefined);
 
   // Total merged capacity
-  const totalMergedCapacity = selectedTablesList.reduce((sum, t) => sum + (t.capacity || 0), 0);
+  const totalMergedCapacity = selectedTablesList.reduce((sum, t) => sum + getEffectiveSeats(t), 0);
   const isCapacitySufficient = totalMergedCapacity >= booking.partySize;
 
   // Toggle table selection with SAME ZONE & NON-REDUNDANT MERGING constraints
@@ -142,9 +187,10 @@ export function ConfirmBookingDialog({
     // Rule 1: For small bookings (partySize <= 4), if 1 table is already sufficient, do not allow merging extra tables
     if (partySize <= 4 && selectedTableIds.length === 1) {
       const currentSelected = allKnownTables.get(selectedTableIds[0]!);
-      if (currentSelected && (currentSelected.capacity || 0) >= partySize) {
+      const effectiveSeats = currentSelected ? getEffectiveSeats(currentSelected) : 0;
+      if (effectiveSeats >= partySize) {
         toast.warning(
-          `Bàn ${currentSelected.tableNumber} (sức chứa ${currentSelected.capacity} chỗ) đã đủ cho đoàn ${partySize} khách. Để đổi sang bàn khác, vui lòng bỏ chọn bàn này trước.`
+          `Bàn ${currentSelected?.tableNumber} (còn ${effectiveSeats} chỗ) đã đủ cho đoàn ${partySize} khách. Để đổi sang bàn khác, vui lòng bỏ chọn bàn này trước.`
         );
         return;
       }
@@ -152,10 +198,10 @@ export function ConfirmBookingDialog({
 
     // Rule 2: If a single table in the current selection already fits the whole group, warn to use it alone
     if (selectedTableIds.length > 0) {
-      const singleSufficient = selectedTablesList.find((t) => (t.capacity || 0) >= partySize);
+      const singleSufficient = selectedTablesList.find((t) => getEffectiveSeats(t) >= partySize);
       if (singleSufficient) {
         toast.warning(
-          `Bàn ${singleSufficient.tableNumber} (sức chứa ${singleSufficient.capacity} chỗ) đã đủ cho đoàn ${partySize} khách. Không cần gộp thêm bàn khác.`
+          `Bàn ${singleSufficient.tableNumber} (còn ${getEffectiveSeats(singleSufficient)} chỗ) đã đủ cho đoàn ${partySize} khách. Không cần gộp thêm bàn khác.`
         );
         return;
       }
@@ -339,6 +385,17 @@ export function ConfirmBookingDialog({
                 Ghi chú khách: &ldquo;{booking.specialRequests}&rdquo;
               </div>
             )}
+            {booking.status !== "PENDING_DEPOSIT" && booking.depositAmount > 0 && (
+              <div className="border-t pt-1.5 flex items-center gap-1.5 text-emerald-600 font-semibold">
+                <span>💰 Đã đặt cọc:</span>
+                <span>{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(booking.depositAmount)}</span>
+              </div>
+            )}
+            {booking.status === "PENDING_DEPOSIT" && (
+              <div className="border-t pt-1.5 flex items-center gap-1.5 text-orange-600 font-semibold">
+                <span>⏳ Đơn VIP đang chờ khách đặt cọc 1.000.000đ</span>
+              </div>
+            )}
           </div>
 
           {/* Selected Table(s) Merging Indicator Banner */}
@@ -418,7 +475,7 @@ export function ConfirmBookingDialog({
                     </p>
                     <div className="border rounded-xl overflow-hidden bg-slate-50/50">
                       <FloorPlanCanvas
-                        layouts={floorPlanLayouts}
+                        layouts={augmentedFloorPlanLayouts}
                         selectedTableIds={selectedTableIds}
                         onSelectTable={handleSelectFromCanvas}
                         readOnly={true}
@@ -467,9 +524,16 @@ export function ConfirmBookingDialog({
                               {table.zoneIsVip ? " ⭐" : ""}
                             </span>
                           </div>
-                          <Badge variant="secondary" className="text-[10px]">
-                            {table.capacity} chỗ
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="secondary" className="text-[10px]">
+                              {table.capacity} chỗ
+                            </Badge>
+                            {table.availableSeats != null && table.availableSeats < table.capacity && (
+                              <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-700 bg-amber-500/10">
+                                Còn {table.availableSeats} chỗ trống
+                              </Badge>
+                            )}
+                          </div>
                         </button>
                       );
                     })}

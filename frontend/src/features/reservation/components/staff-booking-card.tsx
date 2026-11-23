@@ -146,12 +146,29 @@ export function StaffBookingCard({
               <span className="font-mono text-xs font-bold text-primary">
                 HV-{code}
               </span>
-              <Badge
-                variant="outline"
-                className={`text-[10px] px-1.5 py-0 h-5 font-normal ${statusCfg.badgeCls}`}
-              >
-                {statusCfg.label}
-              </Badge>
+              {booking.status === "PENDING_DEPOSIT" ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 h-5 font-medium bg-orange-500/15 text-orange-700 border-orange-500/30 dark:text-orange-400"
+                >
+                  Chờ cọc VIP ⏳
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] px-1.5 py-0 h-5 font-normal ${statusCfg.badgeCls}`}
+                >
+                  {statusCfg.label}
+                </Badge>
+              )}
+              {booking.status !== "PENDING_DEPOSIT" && booking.status !== "CANCELLED" && booking.depositAmount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 h-5 bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-medium"
+                >
+                  Đã cọc 1tr ✅
+                </Badge>
+              )}
             </div>
 
             <div className="flex items-center gap-2 mt-1">
@@ -302,9 +319,52 @@ export function StaffBookingCard({
               </>
             )}
 
-            {!isPending && !isConfirmed && (
-              <span className="text-xs text-muted-foreground">
+            {booking.status === "PENDING_DEPOSIT" && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-orange-600 dark:text-orange-400">
+                  Chờ khách đặt cọc...
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onCancel(booking)}
+                  disabled={isActionPending}
+                  className="h-8 px-2.5 text-xs text-destructive hover:bg-destructive/10 border-destructive/20"
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Hủy
+                </Button>
+              </div>
+            )}
+
+            {booking.status === "PAID" && (
+              <span className="text-xs font-medium text-teal-600 dark:text-teal-400">
                 Hoàn tất
+              </span>
+            )}
+
+            {booking.status === "REVIEWED" && (
+              <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
+                Đã đánh giá
+              </span>
+            )}
+
+            {booking.status === "ARRIVED" && (
+              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                Đang dùng bữa
+              </span>
+            )}
+
+            {booking.status === "CANCELLED" && (
+              <span className="text-xs text-rose-600 dark:text-rose-400">
+                Đã hủy
+              </span>
+            )}
+
+            {booking.status === "NO_SHOW" && (
+              <span className="text-xs text-slate-500">
+                Không đến
               </span>
             )}
           </div>

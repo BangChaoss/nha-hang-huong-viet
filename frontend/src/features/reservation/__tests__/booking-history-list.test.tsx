@@ -293,4 +293,104 @@ describe("BookingHistoryList - Quyền hiển thị nút Hủy khi tra cứu kh�
     expect(screen.getByText("HV-11111111")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Hủy đặt bàn/i })).toBeInTheDocument();
   });
+
+  it("6. Sắp xếp ưu tiên: PENDING_DEPOSIT đứng đầu, rồi đến PENDING_HOLD, rồi đến ngày tháng lớn nhất", async () => {
+    vi.spyOn(authSession, "useSession").mockReturnValue({
+      session: {
+        id: "user-1",
+        username: "user1",
+        email: "user1@example.com",
+        role: "CUSTOMER",
+        token: "fake-token-1",
+        refreshToken: null,
+      },
+      ready: true,
+    });
+
+    const confirmedNewest: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "aaaa1111-0000-0000-0000-000000000000",
+      status: "CONFIRMED",
+      reservationDate: "2026-12-01",
+      reservationTime: "19:00:00",
+    };
+
+    const pendingHoldOlder: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "bbbb2222-0000-0000-0000-000000000000",
+      status: "PENDING_HOLD",
+      reservationDate: "2026-11-20",
+      reservationTime: "18:00:00",
+    };
+
+    const pendingDepositOldest: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "cccc3333-0000-0000-0000-000000000000",
+      status: "PENDING_DEPOSIT",
+      reservationDate: "2026-11-15",
+      reservationTime: "12:00:00",
+      depositAmount: 1000000,
+    };
+
+    // Truyền vào danh sách không theo thứ tự ưu tiên
+    vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
+      data: [confirmedNewest, pendingHoldOlder, pendingDepositOldest],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    const codes = screen.getAllByText(/HV-/).map((el) => el.textContent);
+    // Thứ tự kỳ vọng: PENDING_DEPOSIT (HV-CCCC3333) -> PENDING_HOLD (HV-BBBB2222) -> CONFIRMED (HV-AAAA1111)
+    expect(codes[0]).toBe("HV-CCCC3333");
+    expect(codes[1]).toBe("HV-BBBB2222");
+    expect(codes[2]).toBe("HV-AAAA1111");
+  });
+
+  it("7. Đơn PENDING_DEPOSIT hiển thị nút 'Tiếp tục đặt cọc VNPay', chỉ hiện badge 'Chờ cọc VIP ⏳' và KHÔNG hiện 'Đã cọc 1tr ✅'", async () => {
+    vi.spyOn(authSession, "useSession").mockReturnValue({
+      session: {
+        id: "user-1",
+        username: "user1",
+        email: "user1@example.com",
+        role: "CUSTOMER",
+        token: "fake-token-1",
+        refreshToken: null,
+      },
+      ready: true,
+    });
+
+    const pendingDepositBooking: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "dddd4444-0000-0000-0000-000000000000",
+      status: "PENDING_DEPOSIT",
+      depositAmount: 1000000,
+    };
+
+    vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
+      data: [pendingDepositBooking],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    // Có nút Tiếp tục đặt cọc VNPay
+    expect(screen.getByRole("button", { name: /Tiếp tục đặt cọc VNPay/i })).toBeInTheDocument();
+    // Có badge Chờ cọc VIP ⏳
+    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
+    // KHÔNG có badge Đã cọc 1tr ✅
+    expect(screen.queryByText("Đã cọc 1tr ✅")).not.toBeInTheDocument();
+  });
 });

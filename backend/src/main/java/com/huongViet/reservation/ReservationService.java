@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -60,11 +61,12 @@ public class ReservationService {
 
     public static final List<LocalTime> TIME_SLOTS = generateContinuousTimeSlots();
     public static final Duration DINING_WINDOW = Duration.ofMinutes(119);
+    public static final BigDecimal VIP_DEPOSIT_AMOUNT = new BigDecimal("1000000");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final Map<ReservationStatus, Set<ReservationStatus>> ALLOWED_TRANSITIONS = Map.of(
         ReservationStatus.PENDING_HOLD, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
-        ReservationStatus.PENDING_DEPOSIT, Set.of(ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
+        ReservationStatus.PENDING_DEPOSIT, Set.of(ReservationStatus.PENDING_HOLD, ReservationStatus.CONFIRMED, ReservationStatus.CANCELLED),
         ReservationStatus.CONFIRMED, Set.of(ReservationStatus.ARRIVED, ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW),
         ReservationStatus.ARRIVED, Set.of(ReservationStatus.PAID, ReservationStatus.REVIEWED),
         ReservationStatus.PAID, Set.of(ReservationStatus.REVIEWED),
@@ -159,8 +161,18 @@ public class ReservationService {
         );
         reservation.setZone(zone);
 
+        // ★ VIP DEPOSIT POLICY: Khu vực VIP → bắt buộc đặt cọc
+        boolean isVipZone = zone.getIsVip() != null && zone.getIsVip();
+        if (isVipZone) {
+            reservation.setStatus(ReservationStatus.PENDING_DEPOSIT);
+            reservation.setDepositAmount(VIP_DEPOSIT_AMOUNT);
+        }
+
         Reservation saved = reservationRepository.save(reservation);
-        emailService.sendBookingConfirmation(saved, zone.getZoneName());
+        // ★ KHÔNG gửi email cho VIP (theo yêu cầu)
+        if (!isVipZone) {
+            emailService.sendBookingConfirmation(saved, zone.getZoneName());
+        }
         return toResponse(saved, zone.getId(), zone.getZoneName(), zone.getIsVip());
     }
 
@@ -187,11 +199,9 @@ public class ReservationService {
                 LocalTime windowStart = slot.minusMinutes(118);
                 LocalTime windowEnd = slot.plusMinutes(118);
 
-                int confirmedSeats = reservationRepository.sumConfirmedPartySizeByZoneAndSlot(
-                    zone.getId(), date, windowStart, windowEnd
-                );
-
-                int remaining = Math.max(0, zoneCapacity - confirmedSeats);
+                int totalFree = computeZoneFreeSeats(zone.getId(), date, windowStart, windowEnd);
+                int confirmedSeats = zoneCapacity - totalFree;
+                int remaining = totalFree;
                 boolean isAvail = (partySize != null && partySize > 0) ? remaining >= partySize : remaining > 0;
 
                 slotAvailabilities.add(new TimeSlotAvailability(slot, slot.format(TIME_FORMATTER), confirmedSeats, remaining, isAvail));
@@ -259,12 +269,30 @@ public class ReservationService {
         return allTables.stream()
             .filter(t -> t.getStatus() != TableStatus.MAINTENANCE)
             .filter(t -> {
-                List<Reservation> overlaps = reservationRepository.findOverlappingReservationsForTable(
-                    t.getId(), reservation.getReservationDate(), slotStart, slotEnd
-                );
-                return overlaps.stream().allMatch(r -> r.getId().equals(reservation.getId()));
+                int booked = reservationRepository.sumBookedPartySizeForTable(
+                    t.getId(), reservation.getReservationDate(), slotStart, slotEnd);
+                // Trừ partySize của chính đơn này nếu đã gán bàn này
+                int selfSeats = reservationRepository
+                    .findOverlappingReservationsForTable(
+                        t.getId(), reservation.getReservationDate(), slotStart, slotEnd)
+                    .stream()
+                    .filter(r -> r.getId().equals(reservation.getId()))
+                    .mapToInt(Reservation::getPartySize).sum();
+                int freeSeats = t.getCapacity() - (booked - selfSeats);
+                return freeSeats > 0;
             })
-            .map(TableResponse::from)
+            .map(t -> {
+                int booked = reservationRepository.sumBookedPartySizeForTable(
+                    t.getId(), reservation.getReservationDate(), slotStart, slotEnd);
+                int selfSeats = reservationRepository
+                    .findOverlappingReservationsForTable(
+                        t.getId(), reservation.getReservationDate(), slotStart, slotEnd)
+                    .stream()
+                    .filter(r -> r.getId().equals(reservation.getId()))
+                    .mapToInt(Reservation::getPartySize).sum();
+                int freeSeats = t.getCapacity() - (booked - selfSeats);
+                return TableResponse.from(t, t.getStatus(), freeSeats);
+            })
             .toList();
     }
 
@@ -307,14 +335,46 @@ public class ReservationService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ có thể gộp các bàn trong cùng một khu vực (zone).");
             }
 
-            int totalCapacity = assignedTables.stream().mapToInt(RestaurantTable::getCapacity).sum();
-            if (totalCapacity < reservation.getPartySize()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    String.format("Tổng sức chứa các bàn đã chọn là %d chỗ, không đủ cho đoàn %d khách.", totalCapacity, reservation.getPartySize()));
-            }
-
             LocalTime slotStart = reservation.getReservationTime().minusMinutes(118);
             LocalTime slotEnd = reservation.getReservationTime().plusMinutes(118);
+
+            int totalFreeSeats = 0;
+            for (RestaurantTable table : assignedTables) {
+                int booked = reservationRepository.sumBookedPartySizeForTable(
+                    table.getId(), reservation.getReservationDate(), slotStart, slotEnd);
+                int selfSeats = reservationRepository
+                    .findOverlappingReservationsForTable(
+                        table.getId(), reservation.getReservationDate(), slotStart, slotEnd)
+                    .stream()
+                    .filter(r -> r.getId().equals(reservation.getId()))
+                    .mapToInt(Reservation::getPartySize).sum();
+                totalFreeSeats += Math.max(0, table.getCapacity() - (booked - selfSeats));
+            }
+            if (totalFreeSeats < reservation.getPartySize()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    String.format("Tổng chỗ trống còn lại trên các bàn đã chọn là %d chỗ, không đủ cho đoàn %d khách.", totalFreeSeats, reservation.getPartySize()));
+            }
+
+            if (assignedTables.size() > 1) {
+                // Nếu một bàn đơn đã đủ cho đoàn, chặn gộp dư thừa
+                for (RestaurantTable t : assignedTables) {
+                    if (t.getCapacity() >= reservation.getPartySize()) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            String.format("Bàn %s (sức chứa %d chỗ) đã đủ cho đoàn %d khách. Không cần gộp thêm bàn khác.",
+                                t.getTableNumber(), t.getCapacity(), reservation.getPartySize()));
+                    }
+                }
+                // Nếu có bàn dư thừa trong cụm gộp (khi chọn từ 3 bàn trở lên)
+                if (assignedTables.size() > 2) {
+                    for (RestaurantTable t : assignedTables) {
+                        if (totalFreeSeats - t.getCapacity() >= reservation.getPartySize()) {
+                            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                String.format("Gộp bàn dư thừa: Bàn %s không cần thiết vì các bàn còn lại đã đủ cho đoàn %d khách.",
+                                    t.getTableNumber(), reservation.getPartySize()));
+                        }
+                    }
+                }
+            }
 
             for (RestaurantTable table : assignedTables) {
                 if (table.getStatus() == TableStatus.MAINTENANCE) {
@@ -326,9 +386,21 @@ public class ReservationService {
                     table.getId(), reservation.getReservationDate(), slotStart, slotEnd
                 );
 
-                if (overlapping.stream().anyMatch(r -> !r.getId().equals(reservation.getId()))) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        String.format("Bàn %s đã có đơn đặt trong khung giờ này.", table.getTableNumber()));
+                int otherBooked = overlapping.stream()
+                    .filter(r -> !r.getId().equals(reservation.getId()))
+                    .mapToInt(Reservation::getPartySize).sum();
+                int freeSeats = table.getCapacity() - otherBooked;
+                if (assignedTables.size() == 1) {
+                    if (freeSeats < reservation.getPartySize()) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            String.format("Bàn %s chỉ còn %d chỗ trống (đã có %d chỗ được đặt), không đủ cho đoàn %d khách.",
+                                table.getTableNumber(), freeSeats, otherBooked, reservation.getPartySize()));
+                    }
+                } else {
+                    if (freeSeats <= 0) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            String.format("Bàn %s đã hết chỗ trống.", table.getTableNumber()));
+                    }
                 }
             }
 
@@ -349,7 +421,7 @@ public class ReservationService {
                         TableStatus prevStatus = tbl.getStatus();
                         tbl.setStatus(TableStatus.AVAILABLE);
                         tableRepository.save(tbl);
-                        broadcastTableStatus(tbl, prevStatus, TableStatus.AVAILABLE);
+                        broadcastTableStatus(tbl, prevStatus, TableStatus.AVAILABLE, 0);
                     }
                 });
             }
@@ -363,12 +435,17 @@ public class ReservationService {
             // ĐỒNG BỘ: Nếu đơn đặt bàn diễn ra trong ngày hôm nay, lập tức đổi các bàn sang RESERVED
             LocalDate today = LocalDate.now();
             if (reservation.getReservationDate().isEqual(today)) {
+                int remainingParty = reservation.getPartySize();
                 for (RestaurantTable tbl : assignedTables) {
+                    int partyForTbl = Math.min(remainingParty, tbl.getCapacity());
+                    remainingParty = Math.max(0, remainingParty - tbl.getCapacity());
                     if (tbl.getStatus() == TableStatus.AVAILABLE) {
                         TableStatus prevStatus = tbl.getStatus();
                         tbl.setStatus(TableStatus.RESERVED);
                         tableRepository.save(tbl);
-                        broadcastTableStatus(tbl, prevStatus, TableStatus.RESERVED);
+                        broadcastTableStatus(tbl, prevStatus, TableStatus.RESERVED, partyForTbl);
+                    } else {
+                        broadcastTableStatus(tbl, tbl.getStatus(), tbl.getStatus(), partyForTbl);
                     }
                 }
             }
@@ -380,6 +457,14 @@ public class ReservationService {
             if (!reservation.getReservationDate().isEqual(today)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ có thể check-in các đơn đặt bàn trong ngày hôm nay.");
             }
+            LocalDateTime bookingDateTime = LocalDateTime.of(reservation.getReservationDate(), reservation.getReservationTime());
+            LocalDateTime nowTime = LocalDateTime.now();
+            if (nowTime.isBefore(bookingDateTime.minusMinutes(30))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chưa đến thời gian nhận bàn (chỉ được nhận bàn trước tối đa 30 phút).");
+            }
+            if (nowTime.isAfter(bookingDateTime.plusMinutes(30))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đã quá thời gian nhận bàn (quá 30 phút so với giờ hẹn).");
+            }
 
             List<String> targetTableIds = new ArrayList<>();
             if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
@@ -390,17 +475,24 @@ public class ReservationService {
             }
 
             targetTableIds.sort(String::compareTo);
+            int remainingParty = reservation.getPartySize();
             for (String tId : targetTableIds) {
+                final int currentRemaining = remainingParty;
                 tableRepository.lockActiveById(tId).ifPresent(t -> {
                     if (tableRepository.hasSeatedGuests(tId)) {
                         throw new ResponseStatusException(HttpStatus.CONFLICT,
                             "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
                     }
+                    int take = Math.min(currentRemaining, t.getCapacity());
                     TableStatus oldTStatus = t.getStatus();
                     t.setStatus(TableStatus.OCCUPIED);
                     tableRepository.save(t);
-                    broadcastTableStatus(t, oldTStatus, TableStatus.OCCUPIED);
+                    broadcastTableStatus(t, oldTStatus, TableStatus.OCCUPIED, take);
                 });
+                RestaurantTable locked = tableRepository.findById(tId).orElse(null);
+                if (locked != null) {
+                    remainingParty = Math.max(0, remainingParty - locked.getCapacity());
+                }
             }
         }
 
@@ -530,13 +622,13 @@ public class ReservationService {
                 if (oldStatus == TableStatus.RESERVED) {
                     t.setStatus(TableStatus.AVAILABLE);
                     tableRepository.save(t);
-                    broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE);
+                    broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE, 0);
                     logger.info("Table {} ({}) automatically released {} -> AVAILABLE due to cancellation of reservation {}",
                         t.getTableNumber(), t.getId(), oldStatus, reservation.getId());
                 } else if (oldStatus == TableStatus.AVAILABLE) {
                     // Ngay cả khi bàn trên DB đã là AVAILABLE, vẫn phát broadcast để client (POS, FloorPlan)
                     // hủy cache hiển thị trạng thái ảo theo đơn đặt bàn
-                    broadcastTableStatus(t, TableStatus.RESERVED, TableStatus.AVAILABLE);
+                    broadcastTableStatus(t, TableStatus.RESERVED, TableStatus.AVAILABLE, 0);
                 }
             });
         }
@@ -550,8 +642,63 @@ public class ReservationService {
     private boolean isTimeSlotAvailable(String zoneId, LocalDate date, LocalTime slot, int partySize, int totalCapacity) {
         LocalTime windowStart = slot.minusMinutes(118);
         LocalTime windowEnd = slot.plusMinutes(118);
-        int confirmed = reservationRepository.sumConfirmedPartySizeByZoneAndSlot(zoneId, date, windowStart, windowEnd);
-        return (totalCapacity - confirmed) >= partySize;
+        int totalFree = computeZoneFreeSeats(zoneId, date, windowStart, windowEnd);
+        return totalFree >= partySize;
+    }
+
+    /**
+     * Tính chỗ trống thực tế PER TABLE rồi cộng lại, trừ đi số khách của các đơn chưa gán bàn.
+     * Hỗ trợ shared seating: mỗi bàn = capacity - SUM(partySize đang booked).
+     */
+    private int computeZoneFreeSeats(String zoneId, LocalDate date,
+                                      LocalTime windowStart, LocalTime windowEnd) {
+        List<RestaurantTable> zoneTables = tableRepository
+            .findAllByZoneIdAndDeletedAtIsNull(zoneId);
+        int totalFreeTableSeats = 0;
+        for (RestaurantTable table : zoneTables) {
+            if (table.getStatus() == TableStatus.MAINTENANCE) continue;
+            int booked = reservationRepository.sumBookedPartySizeForTable(
+                table.getId(), date, windowStart, windowEnd);
+            totalFreeTableSeats += Math.max(0, table.getCapacity() - booked);
+        }
+
+        // Trừ các đơn đặt bàn đang giữ chỗ trong khu vực nhưng chưa được gán bàn cụ thể (PENDING_HOLD / PENDING_DEPOSIT)
+        int unassignedBooked = reservationRepository.sumUnassignedPartySizeForZone(
+            zoneId, date, windowStart, windowEnd);
+
+        return Math.max(0, totalFreeTableSeats - unassignedBooked);
+    }
+
+    /**
+     * Xác nhận đặt cọc VNPay thành công → chuyển PENDING_DEPOSIT → PENDING_HOLD.
+     */
+    @Transactional
+    public ReservationResponse confirmDeposit(String reservationId, String transactionRef) {
+        Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(reservationId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, 
+                "Không tìm thấy đơn đặt bàn"));
+
+        if (reservation.getStatus() != ReservationStatus.PENDING_DEPOSIT) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Đơn đặt bàn không ở trạng thái chờ đặt cọc");
+        }
+
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+        Reservation saved = reservationRepository.save(reservation);
+
+        // Audit
+        ReservationAudit audit = new ReservationAudit(
+            UUID.randomUUID().toString(), saved.getId(), null,
+            ReservationStatus.PENDING_DEPOSIT, ReservationStatus.PENDING_HOLD,
+            null, null,
+            "Đặt cọc VNPay thành công. Mã GD: " + transactionRef
+        );
+        reservationAuditRepository.save(audit);
+
+        String zoneName = (saved.getZone() != null) ? saved.getZone().getZoneName() : "Khu vực VIP";
+        emailService.sendBookingConfirmation(saved, zoneName);
+
+        return toResponse(saved);
     }
 
     private List<LocalTime> findAdjacentAvailableSlots(String zoneId, LocalDate date, int partySize, int totalCapacity) {
@@ -569,11 +716,15 @@ public class ReservationService {
     }
 
     private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus) {
+        broadcastTableStatus(table, oldStatus, newStatus, null);
+    }
+
+    private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus, Integer occupiedSeats) {
         if (messagingTemplate == null) return;
         try {
             String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
             messagingTemplate.convertAndSend("/topic/table-status",
-                new TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, newStatus, zoneName));
+                new TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus, newStatus, zoneName, occupiedSeats));
         } catch (Exception ex) {
             logger.warn("Không thể phát sự kiện trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
         }

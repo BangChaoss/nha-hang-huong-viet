@@ -16,6 +16,32 @@ interface BookingHistoryListProps {
   onLeaveFeedback?: (invoiceId: string) => void;
 }
 
+function sortBookingsByPriority(list: ReservationResponse[]): ReservationResponse[] {
+  return [...list].sort((a, b) => {
+    // 1. Ưu tiên cao nhất: Chờ đặt cọc (PENDING_DEPOSIT)
+    // 2. Ưu tiên kế tiếp: Chờ xác nhận (PENDING_HOLD)
+    // 3. Các trạng thái khác
+    const getPriority = (status: ReservationResponse["status"]) => {
+      if (status === "PENDING_DEPOSIT") return 1;
+      if (status === "PENDING_HOLD") return 2;
+      return 3;
+    };
+    const pA = getPriority(a.status);
+    const pB = getPriority(b.status);
+    if (pA !== pB) return pA - pB;
+
+    // Ngày tháng lớn nhất (mới nhất -> cũ nhất)
+    const dateA = `${a.reservationDate}T${a.reservationTime || "00:00"}`;
+    const dateB = `${b.reservationDate}T${b.reservationTime || "00:00"}`;
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return createdB - createdA;
+  });
+}
+
 export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps) {
   const { session } = useSession();
   const isAuthenticated = Boolean(session?.token);
@@ -26,6 +52,14 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
   const [lookupPhone, setLookupPhone] = React.useState("");
   const [lookupCode, setLookupCode] = React.useState("");
   const [guestResults, setGuestResults] = React.useState<ReservationResponse[] | null>(null);
+
+  const sortedMemberBookings = React.useMemo(() => {
+    return memberBookings ? sortBookingsByPriority(memberBookings) : [];
+  }, [memberBookings]);
+
+  const sortedGuestResults = React.useMemo(() => {
+    return guestResults ? sortBookingsByPriority(guestResults) : null;
+  }, [guestResults]);
 
   const [cancelTarget, setCancelTarget] = React.useState<ReservationResponse | null>(null);
   const [isCancelOpen, setIsCancelOpen] = React.useState<boolean>(false);
@@ -92,7 +126,7 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
                 <Skeleton className="h-28 rounded-xl" />
                 <Skeleton className="h-28 rounded-xl" />
               </div>
-            ) : memberBookings && memberBookings.length > 0 ? (
+            ) : sortedMemberBookings.length > 0 ? (
               <div className="space-y-3">
                 <div className="flex justify-end">
                   <Button
@@ -104,7 +138,7 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
                     Làm mới danh sách
                   </Button>
                 </div>
-                {memberBookings.map((booking) => (
+                {sortedMemberBookings.map((booking) => (
                   <BookingHistoryCard
                     key={booking.id}
                     booking={booking}
@@ -193,15 +227,15 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
             </div>
           </form>
 
-          {guestResults !== null && (
+          {sortedGuestResults !== null && (
             <div className="space-y-4">
               <h4 className="text-sm font-semibold text-foreground">
-                Kết quả tra cứu ({guestResults.length} đơn):
+                Kết quả tra cứu ({sortedGuestResults.length} đơn):
               </h4>
 
-              {guestResults.length > 0 ? (
+              {sortedGuestResults.length > 0 ? (
                 <div className="space-y-3">
-                  {guestResults.map((booking) => {
+                  {sortedGuestResults.map((booking) => {
                     // Cho phép hủy nếu:
                     // 1. Đơn của khách vãng lai (không gắn tài khoản thành viên: !booking.customerId)
                     // 2. HOẶC đơn thuộc về chính tài khoản đang đăng nhập
