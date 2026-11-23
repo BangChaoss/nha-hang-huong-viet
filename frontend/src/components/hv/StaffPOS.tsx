@@ -74,6 +74,78 @@ function localDateString(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+export type ConsolidatedTable = TableResponse & {
+  baseTableNumber: string;
+  subTables: TableResponse[];
+};
+
+/**
+ * Gom các bàn bị chia tách (ví dụ: Bàn 02A + Bàn 02B) thành 1 bàn gốc chưa chia duy nhất (Bàn 02)
+ * với tổng sức chứa và trạng thái hợp nhất.
+ */
+export function consolidateTables(rawTables: TableResponse[]): ConsolidatedTable[] {
+  const map = new Map<string, TableResponse[]>();
+  const order: string[] = [];
+
+  for (const table of rawTables) {
+    // Tách hậu tố [A-Z] ở cuối nếu có (ví dụ "Bàn 03A" -> "Bàn 03", "Bàn 05B" -> "Bàn 05", "Bàn 20A" -> "Bàn 20")
+    const baseNumber = table.tableNumber.replace(/\s*[A-Z]$/, "").trim();
+    const key = `${table.zoneId || "none"}__${baseNumber}`;
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key)!.push(table);
+  }
+
+  return order.map((key) => {
+    const subList = map.get(key)!;
+    const first = subList[0]!;
+    const baseNumber = first.tableNumber.replace(/\s*[A-Z]$/, "").trim();
+
+    if (subList.length === 1 && first.tableNumber === baseNumber) {
+      return {
+        ...first,
+        baseTableNumber: baseNumber,
+        subTables: subList,
+      };
+    }
+
+    const totalCapacity = subList.reduce((sum, t) => sum + (t.capacity || 0), 0);
+    const hasOccupied = subList.some((t) => t.status === "OCCUPIED");
+    const hasReserved = subList.some((t) => t.status === "RESERVED");
+    const allMaintenance = subList.every((t) => t.status === "MAINTENANCE");
+
+    let status: TableStatus = "AVAILABLE";
+    if (hasOccupied) {
+      status = "OCCUPIED";
+    } else if (hasReserved) {
+      status = "RESERVED";
+    } else if (allMaintenance) {
+      status = "MAINTENANCE";
+    }
+
+    let totalAvailableSeats: number | null = null;
+    if (hasOccupied) {
+      totalAvailableSeats = subList.reduce((sum, t) => {
+        if (t.status === "AVAILABLE") return sum + t.capacity;
+        if (t.status === "OCCUPIED") return sum + (t.availableSeats ?? 0);
+        return sum;
+      }, 0);
+    }
+
+    return {
+      ...first,
+      tableNumber: baseNumber,
+      baseTableNumber: baseNumber,
+      capacity: totalCapacity,
+      availableSeats: totalAvailableSeats,
+      status,
+      subTables: subList,
+    };
+  });
+}
+
 /**
  * Màn hình phục vụ: chọn bàn để xem thực đơn, gọi món và chuyển sang thanh toán.
  */
@@ -113,21 +185,29 @@ export function StaffPOS() {
     onFloorPlanChange: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
   });
 
+  const zones: ZoneResponse[] = zonesQuery.data ?? [];
+  const tables: TableResponse[] = tablesQuery.data ?? [];
+
+  // Gom các bàn bị chia tách lại thành bàn chưa chia (Consolidated Base Tables)
+  const consolidatedTables = useMemo(() => consolidateTables(tables), [tables]);
+
   // Map reservation theo tableId HOẶC các id trong mergedTableIds
-  const findReservationForTable = (table: TableResponse): ReservationResponse | undefined => {
+  const findReservationForTable = (table: TableResponse | ConsolidatedTable): ReservationResponse | undefined => {
     const list = reservationsQuery.data ?? [];
+    const subIds = (table as ConsolidatedTable).subTables?.map((t) => t.id) ?? [table.id];
     return list.find((r) => {
       if (!["CONFIRMED", "ARRIVED"].includes(r.status)) return false;
-      if (r.tableId === table.id) return true;
-      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).includes(table.id)) return true;
-      if (r.tableNumber && r.tableNumber.includes(table.tableNumber)) return true;
+      if (r.tableId && subIds.includes(r.tableId)) return true;
+      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).some((id) => subIds.includes(id))) return true;
+      if (r.tableNumber && (r.tableNumber.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id)))) return true;
       return false;
     });
   };
 
-  const zones: ZoneResponse[] = zonesQuery.data ?? [];
-  const tables: TableResponse[] = tablesQuery.data ?? [];
-  const selectedTable = tables.find((table) => table.id === tableSelection?.id) ?? tableSelection;
+  const selectedTable = consolidatedTables.find(
+    (table) => table.id === tableSelection?.id || table.subTables.some((st) => st.id === tableSelection?.id)
+  ) ?? tableSelection;
+
   const selectedReservation = selectedTable ? findReservationForTable(selectedTable) : undefined;
   const updateSelectedTable = (updated: TableResponse) => {
     queryClient.setQueryData<TableResponse[]>(["tables"], (current) =>
@@ -137,12 +217,12 @@ export function StaffPOS() {
   };
 
   const tablesByZone = useMemo(() => {
-    const map = new Map<string, TableResponse[]>();
+    const map = new Map<string, ConsolidatedTable[]>();
     for (const z of zones) {
       map.set(z.id, []);
     }
-    const defaultList: TableResponse[] = [];
-    for (const t of tables) {
+    const defaultList: ConsolidatedTable[] = [];
+    for (const t of consolidatedTables) {
       if (t.zoneId && map.has(t.zoneId)) {
         map.get(t.zoneId)!.push(t);
       } else {
@@ -153,9 +233,9 @@ export function StaffPOS() {
       map.set("other", defaultList);
     }
     return map;
-  }, [zones, tables]);
+  }, [zones, consolidatedTables]);
 
-  const counts = (status: TableStatus) => tables.filter((item) => item.status === status).length;
+  const counts = (status: TableStatus) => consolidatedTables.filter((item) => item.status === status).length;
 
   return (
     <div className="space-y-8">
@@ -289,11 +369,18 @@ function ReservationDialog({
 }) {
   const queryClient = useQueryClient();
 
+  const subTables: TableResponse[] = (table as any).subTables ?? [table];
+
   const changeStatusMutation = useMutation({
-    mutationFn: (payload: { id: string; status: TableStatus }) =>
-      tableApi.updateStatus(payload.id, payload.status),
+    mutationFn: async (payload: { id: string; status: TableStatus }) => {
+      let lastUpdated = table;
+      for (const st of subTables) {
+        lastUpdated = await tableApi.updateStatus(st.id, payload.status);
+      }
+      return lastUpdated;
+    },
     onSuccess: (updated) => {
-      toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
+      toast.success(`${table.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       if (onTableUpdated) onTableUpdated(updated);
     },
@@ -306,13 +393,15 @@ function ReservationDialog({
       if (reservation) {
         await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
       }
-      if (table.status !== "OCCUPIED") {
-        updatedTable = await tableApi.updateStatus(table.id, "OCCUPIED");
+      for (const st of subTables) {
+        if (st.status !== "OCCUPIED") {
+          updatedTable = await tableApi.updateStatus(st.id, "OCCUPIED");
+        }
       }
       return { updatedTable };
     },
     onSuccess: ({ updatedTable }) => {
-      toast.success(`Check-in thành công! Bàn ${updatedTable.tableNumber} đã chuyển sang Đang phục vụ.`);
+      toast.success(`Check-in thành công! Bàn ${table.tableNumber} đã chuyển sang Đang phục vụ.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
       onTableUpdated?.(updatedTable);
@@ -399,10 +488,14 @@ function OrderDialog({
   });
   const dishes = menuQuery.data?.categories.flatMap((c) => c.items ?? []) ?? [];
 
-  const seatedKey = ["orders", "table", table.id, "seated"];
+  const subIds: string[] = (table as any).subTables?.map((t: any) => t.id) ?? [table.id];
+  const seatedKey = ["orders", "table", table.id, "seated", subIds.join(",")];
   const seatedQuery = useQuery({
     queryKey: seatedKey,
-    queryFn: () => orderApi.seatedAtTable(table.id),
+    queryFn: async () => {
+      const results = await Promise.all(subIds.map((id: string) => orderApi.seatedAtTable(id)));
+      return results.flat();
+    },
     refetchInterval: 5000,
   });
   const orders = seatedQuery.data ?? [];
