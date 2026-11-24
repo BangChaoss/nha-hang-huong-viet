@@ -23,6 +23,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Stream;
 
 @Entity
 @Table(name = "reservations")
@@ -210,6 +212,16 @@ public class Reservation {
     public boolean includesTable(String tableId) {
         return tableId.equals(getTableId()) || (mergedTableIds != null &&
             Arrays.stream(mergedTableIds.split(",")).map(String::trim).anyMatch(tableId::equals));
+    }
+
+    public static List<String> relatedArrivedTableIds(String tableId, List<Reservation> reservations) {
+        return reservations.stream()
+            .filter(reservation -> reservation.status == ReservationStatus.ARRIVED && reservation.includesTable(tableId))
+            .findFirst()
+            .map(reservation -> Stream.concat(Stream.ofNullable(reservation.getTableId()),
+                    Arrays.stream(reservation.mergedTableIds == null ? new String[0] : reservation.mergedTableIds.split(",")))
+                .map(String::trim).filter(id -> !id.isEmpty()).distinct().sorted().toList())
+            .orElseGet(() -> List.of(tableId));
     }
 
     public boolean blocksSharedSeating(String tableId) {

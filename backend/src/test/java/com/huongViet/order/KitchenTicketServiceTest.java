@@ -11,6 +11,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -101,15 +103,27 @@ class KitchenTicketServiceTest {
     @DisplayName("updateStatus - cho phép chuyển QUEUED sang PREPARING")
     void updateStatus_QueuedToPreparing_Success() {
         KitchenTicket ticket = ticket(CookingStatus.QUEUED);
+        when(kitchenTicketRepository.findOwningOrderId("ticket-1")).thenReturn(Optional.of("order-1"));
         when(kitchenTicketRepository.findById("ticket-1")).thenReturn(Optional.of(ticket));
         when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.findById("item-1")).thenReturn(Optional.of(orderItem));
 
-        KitchenTicketResponse response = kitchenTicketService.updateStatus("ticket-1",
-            new UpdateTicketStatusRequest(CookingStatus.PREPARING));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            KitchenTicketResponse response = kitchenTicketService.updateStatus("ticket-1",
+                new UpdateTicketStatusRequest(CookingStatus.PREPARING));
+            assertEquals(CookingStatus.PREPARING, response.status());
+            assertEquals(CookingStatus.PREPARING, orderItem.getCookingStatus());
+            verifyNoInteractions(messagingTemplate);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
 
-        assertEquals(CookingStatus.PREPARING, response.status());
-        assertEquals(CookingStatus.PREPARING, orderItem.getCookingStatus());
+        var lockOrder = inOrder(kitchenTicketRepository, orderRepository);
+        lockOrder.verify(kitchenTicketRepository).findOwningOrderId("ticket-1");
+        lockOrder.verify(orderRepository).lockById("order-1");
+        lockOrder.verify(kitchenTicketRepository).findById("ticket-1");
         verify(messagingTemplate).convertAndSend(eq("/topic/kitchen/tickets"), any(KitchenTicketEvent.class));
         verify(messagingTemplate, never()).convertAndSend(eq("/topic/kitchen/completed"), any(KitchenCompletedMessage.class));
     }

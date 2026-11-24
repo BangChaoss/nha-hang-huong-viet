@@ -4,7 +4,9 @@ import com.huongViet.order.Order;
 import com.huongViet.order.OrderRepository;
 import com.huongViet.order.OrderStatus;
 import com.huongViet.order.OrderType;
+import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -162,6 +166,44 @@ class TableServiceTest {
         assertEquals(TableStatus.AVAILABLE, broadcasted.oldStatus());
         assertEquals(TableStatus.MAINTENANCE, broadcasted.newStatus());
         assertEquals("Sảnh Trong Nhà", broadcasted.zoneName());
+    }
+
+    @Test
+    void updateStatus_LegacyOrderOpenAcrossMergedTables_BlocksClosingOtherTable() {
+        sampleTable.setStatus(TableStatus.OCCUPIED);
+        Order order = new Order("order-1", "table-2", "staff-1", OrderType.DINE_IN);
+        LocalDate today = LocalDate.now();
+        Reservation reservation = new Reservation("reservation-1", null, "Khách", "0900000000", null, 5,
+            today, LocalTime.NOON, null, "zone-1");
+        reservation.setStatus(ReservationStatus.ARRIVED);
+        reservation.setTableId("table-1");
+        reservation.setMergedTableIds("table-2");
+        when(reservationRepository.findActiveReservationsForDate(any(LocalDate.class))).thenReturn(List.of(reservation));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(sampleTable));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1", "table-2"))).thenReturn(List.of(order));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> tableService.updateStatus("table-1", new UpdateTableStatusRequest(TableStatus.AVAILABLE)));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(TableStatus.OCCUPIED, sampleTable.getStatus());
+        verify(tableRepository, never()).save(any());
+        verifyNoInteractions(messagingTemplate);
+    }
+
+    @Test
+    void updateStatus_LegacyOrderOpenOnSingleTable_BlocksMovingToMaintenance() {
+        sampleTable.setStatus(TableStatus.OCCUPIED);
+        Order order = new Order("order-1", "table-1", "staff-1", OrderType.DINE_IN);
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(sampleTable));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(order));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> tableService.updateStatus("table-1", new UpdateTableStatusRequest(TableStatus.MAINTENANCE)));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(TableStatus.OCCUPIED, sampleTable.getStatus());
+        verify(tableRepository, never()).save(any());
     }
 
     @Test

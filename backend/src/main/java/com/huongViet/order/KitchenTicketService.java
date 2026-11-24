@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -79,8 +80,10 @@ public class KitchenTicketService {
     /**
      * BR-37/BR-39: cập nhật trạng thái phiếu bếp.
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public KitchenTicketResponse updateStatus(String id, UpdateTicketStatusRequest request) {
+        // Serialize kitchen transitions with POS edits before reading the ticket state.
+        kitchenTicketRepository.findOwningOrderId(id).ifPresent(orderRepository::lockById);
         KitchenTicket ticket = kitchenTicketRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy phiếu bếp."));
 
@@ -112,14 +115,14 @@ public class KitchenTicketService {
 
         logger.info("Updated kitchen ticket {} status from {} to {}", savedTicket.getId(), oldStatus, newStatus);
 
-        publishTicketEvent(new KitchenTicketEvent("UPDATED", KitchenTicketResponse.from(savedTicket)));
-
-        if (newStatus == CookingStatus.READY || newStatus == CookingStatus.SERVED) {
-            // Báo cho nhân viên phục vụ khi món sẵn sàng hoặc đã được giao.
-            publishCompletedMessage(buildCompletedMessage(savedTicket, newStatus));
-        }
-
-        return KitchenTicketResponse.from(savedTicket);
+        KitchenTicketResponse response = KitchenTicketResponse.from(savedTicket);
+        KitchenCompletedMessage completed = (newStatus == CookingStatus.READY || newStatus == CookingStatus.SERVED)
+            ? buildCompletedMessage(savedTicket, newStatus) : null;
+        KitchenNotifications.afterCommit(() -> {
+            publishTicketEvent(new KitchenTicketEvent("UPDATED", response));
+            if (completed != null) publishCompletedMessage(completed);
+        });
+        return response;
     }
 
     private KitchenCompletedMessage buildCompletedMessage(KitchenTicket ticket, CookingStatus status) {

@@ -79,6 +79,30 @@ class OrderControllerTest {
     }
 
     @Test
+    void adjustItems_DispatchesGroupAndCurrentStaff() throws Exception {
+        var request = new AdjustOrderItemsRequest(List.of("item-1", "item-2"),
+            AdjustOrderItemsRequest.Action.DECREMENT, CookingStatus.QUEUED, 3, null, null);
+        when(orderService.adjustItems("order-1", request, "staff-1")).thenReturn(orderResponse);
+
+        mockMvc.perform(patch("/api/orders/order-1/items")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value("order-1"));
+    }
+
+    @Test
+    void adjustItems_RejectsEmptyGroup() throws Exception {
+        var request = new AdjustOrderItemsRequest(List.of(),
+            AdjustOrderItemsRequest.Action.CANCEL, CookingStatus.QUEUED, 1, null, "Khách đổi món");
+        mockMvc.perform(patch("/api/orders/order-1/items")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isBadRequest());
+        verify(orderService, never()).adjustItems(any(), any(), any());
+    }
+
+    @Test
     @DisplayName("POST /api/orders - tạo đơn và gửi bếp trả về 201 kèm mã nhân viên")
     void create_Returns201() throws Exception {
         CreateOrderRequest request = new CreateOrderRequest(

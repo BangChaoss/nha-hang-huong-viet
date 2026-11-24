@@ -2,6 +2,7 @@ import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
 import type {
   AddOrderItemRequest,
+  AdjustOrderItemsRequest,
   CookingStatus,
   CreateOrderRequest,
   KitchenTicketResponse,
@@ -102,6 +103,12 @@ export const orderApi = {
     request<OrderResponse>(`/api/orders/${orderId}/items/${itemId}`, {
       method: "DELETE",
       body: JSON.stringify({ reason }),
+    }),
+
+  adjustItems: (orderId: string, payload: AdjustOrderItemsRequest): Promise<OrderResponse> =>
+    request<OrderResponse>(`/api/orders/${orderId}/items`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
     }),
 
   /** UC-18: thanh toán tiền mặt cho đơn được chọn. */

@@ -10,10 +10,10 @@ import { isUserManager, useSession } from "@/lib/auth-session";
 import type { CookingStatus, KitchenTicketResponse } from "@/features/order/types/order.types";
 import { orderCode } from "@/features/order/utils/order-code";
 
-const cols: { s: CookingStatus; title: string }[] = [
-  { s: "QUEUED", title: "Chờ Chế Biến" },
-  { s: "PREPARING", title: "Đang Nấu" },
-  { s: "READY", title: "Đã Xong - Chờ Phục Vụ" },
+const cols: { s: CookingStatus; title: string; next: CookingStatus; action: string }[] = [
+  { s: "QUEUED", title: "Chờ Chế Biến", next: "PREPARING", action: "Bắt đầu nấu" },
+  { s: "PREPARING", title: "Đang Nấu", next: "READY", action: "Báo món hoàn tất" },
+  { s: "READY", title: "Đã Xong - Chờ Phục Vụ", next: "SERVED", action: "Đánh dấu đã phục vụ" },
 ];
 
 /** Số phút đã trôi qua kể từ khi phiếu được tạo. */
@@ -73,7 +73,9 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
           toast.success(
             next === "PREPARING"
               ? `Bắt đầu nấu ${ticket.tableNumber}`
-              : `${ticket.tableNumber}: món đã sẵn sàng phục vụ`,
+              : next === "READY"
+                ? `${ticket.tableNumber}: món đã sẵn sàng phục vụ`
+                : `${ticket.tableNumber}: đã phục vụ ${ticket.itemName}`,
           );
         },
         onError: (err: Error) => {
@@ -168,14 +170,13 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
                       {Array.from(orders, ([id, items]) => (
                         <div key={id} className="mt-3 border-t pt-2">
                           <h4 className="text-sm font-semibold">
-                            {items[0].ticket.orderId ? `Đơn ${orderCode(id)}` : "Phiếu không có mã đơn"}
+                            {items[0]?.ticket.orderId ? `Đơn ${orderCode(id)}` : "Phiếu không có mã đơn"}
                           </h4>
                           <ul className="divide-y">
                             {items.map(({ ticket: t, position }) => {
                               const mins = elapsedMinutes(t.createdAt, now);
                               const waiting = c.s === "QUEUED";
                               const next = waiting && position === 1;
-                              const action = waiting ? "Bắt đầu nấu" : "Báo món hoàn tất";
                               return (
                                 <li key={t.id} className="space-y-2 py-2">
                                   <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-xs tabular-nums">
@@ -199,15 +200,15 @@ export function KitchenKDS({ readOnly = false }: { readOnly?: boolean }) {
                                       <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /> {t.note}
                                     </p>
                                   )}
-                                  {canUpdateStatus && (waiting || c.s === "PREPARING") && (
+                                  {canUpdateStatus && (
                                     <Button
                                       variant={next ? "default" : "outline"}
                                       className="min-h-11 w-full"
-                                      aria-label={`${action}: ${t.itemName}, ${tableNumber}${t.orderId ? `, đơn ${orderCode(t.orderId)}` : ""}`}
+                                      aria-label={`${c.action}: ${t.itemName}, ${tableNumber}${t.orderId ? `, đơn ${orderCode(t.orderId)}` : ""}`}
                                       disabled={updateStatus.isPending}
-                                      onClick={() => advance(t, waiting ? "PREPARING" : "READY")}
+                                      onClick={() => advance(t, c.next)}
                                     >
-                                      {action}
+                                      {c.action}
                                     </Button>
                                   )}
                                 </li>
