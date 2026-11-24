@@ -33,11 +33,11 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.Collections;
 
 @Service
 @Transactional(readOnly = true)
@@ -96,26 +96,8 @@ public class OrderService {
             return new ArrayList<>();
         }
 
-        LocalDate today = LocalDate.now();
-        List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(today);
-
-        for (Reservation r : activeReservations) {
-            if (r.getStatus() == ReservationStatus.ARRIVED) {
-                if (r.getMergedTableIds() != null && !r.getMergedTableIds().isBlank()) {
-                    List<String> mergedIds = Arrays.stream(r.getMergedTableIds().split(","))
-                            .map(String::trim)
-                            .filter(s -> !s.isEmpty())
-                            .distinct()
-                            .collect(Collectors.toList());
-                    if (mergedIds.contains(tableId)) {
-                        return mergedIds.stream().sorted().toList();
-                    }
-                } else if (tableId.equals(r.getTableId())) {
-                    return new ArrayList<>(Collections.singletonList(tableId));
-                }
-            }
-        }
-        return new ArrayList<>(Collections.singletonList(tableId));
+        return Reservation.relatedArrivedTableIds(tableId,
+            reservationRepository.findActiveReservationsForDate(LocalDate.now()));
     }
 
     /**
@@ -169,19 +151,19 @@ public class OrderService {
     public void releaseSeats(String orderId) {
         RestaurantTable table = lockTableForOrder(orderId);
         Order order = lockOrder(orderId);
-        if (order.getPartySize() == null) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn này không theo dõi chỗ ngồi riêng.");
-        }
-        if (!order.isSeated()) return;
+        boolean assignedSeats = order.getPartySize() != null;
+        if (assignedSeats ? !order.isSeated() : order.getStatus() != OrderStatus.IN_PROGRESS) return;
         if (order.getStatus() == OrderStatus.IN_PROGRESS) {
-            if (payableItems(orderId).size() > 0) {
+            assertNoPendingVnpay(orderId);
+            if (!payableItems(orderId).isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Hãy thanh toán đơn trước khi trả chỗ.");
             }
             order.setStatus(OrderStatus.CANCELLED);
             order.setClosedAt(LocalDateTime.now());
         }
-        order.releaseSeats();
+        if (assignedSeats) order.releaseSeats();
         orderRepository.save(order);
+        if (!assignedSeats) return; // No individual seats to release on a reserved or legacy order.
         boolean othersSeated = orderRepository.findSeatedOrdersByTableIds(List.of(table.getId())).stream()
             .anyMatch(other -> !other.getId().equals(orderId));
         if (!othersSeated && table.getStatus() == TableStatus.OCCUPIED) makeTableAvailable(table);
@@ -679,28 +661,84 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse adjustItems(String orderId, AdjustOrderItemsRequest request, String staffId) {
+        Order order = findEditableOrder(orderId);
+        var ids = new HashSet<>(request.itemIds());
+        List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(orderId).stream()
+                .filter(item -> ids.contains(item.getId())).toList();
+        if (items.isEmpty() || items.size() != ids.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy món trong đơn hàng.");
+        }
+
+        OrderItem first = items.getFirst();
+        int quantity = items.stream().mapToInt(OrderItem::getQuantity).sum();
+        if (quantity != request.expectedQuantity() || items.stream().anyMatch(item ->
+                item.getCookingStatus() != request.expectedStatus()
+                || !item.getMenuItemId().equals(first.getMenuItemId())
+                || item.getUnitPriceSnapshot().compareTo(first.getUnitPriceSnapshot()) != 0
+                || !Objects.equals(normalizeNote(item.getNote()), normalizeNote(first.getNote())))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Món đã thay đổi. Vui lòng kiểm tra lại đơn.");
+        }
+
+        switch (request.action()) {
+            case DECREMENT -> {
+                if (quantity <= 1) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Vui lòng xác nhận hủy phần cuối cùng.");
+                }
+                OrderItem latest = items.getLast();
+                KitchenTicket ticket = kitchenTicketRepository.findByOrderItemId(latest.getId()).orElse(null);
+                assertCancellable(latest, ticket);
+                if (latest.getQuantity() == 1) {
+                    cancelItem(latest, ticket, "Giảm số lượng", staffId);
+                } else {
+                    updateItem(latest, latest.getQuantity() - 1, null, staffId);
+                }
+            }
+            case UPDATE_NOTE -> {
+                items.forEach(this::assertEditable);
+                items.forEach(item -> updateItem(item, null, request.note() == null ? "" : request.note(), staffId));
+            }
+            case CANCEL -> {
+                List<KitchenTicket> tickets = items.stream()
+                        .map(item -> kitchenTicketRepository.findByOrderItemId(item.getId()).orElse(null)).toList();
+                for (int index = 0; index < items.size(); index++) {
+                    assertCancellable(items.get(index), tickets.get(index));
+                }
+                for (int index = 0; index < items.size(); index++) {
+                    cancelItem(items.get(index), tickets.get(index), request.reason(), staffId);
+                }
+            }
+        }
+        return toResponse(order);
+    }
+
+    @Transactional
     public OrderResponse updateItem(String orderId, String itemId, UpdateOrderItemRequest request, String staffId) {
         Order order = findEditableOrder(orderId);
         OrderItem item = findItemOfOrder(order, itemId);
         assertEditable(item);
+        updateItem(item, request.quantity(), request.note(), staffId);
+        return toResponse(order);
+    }
 
+    private void updateItem(OrderItem item, Integer quantity, String note, String staffId) {
         int oldQuantity = item.getQuantity();
         CookingStatus oldStatus = item.getCookingStatus();
         String oldNote = item.getNote();
 
-        if (request.quantity() != null) {
-            item.setQuantity(request.quantity());
-        }
-        if (request.note() != null) {
-            item.setNote(request.note().isBlank() ? null : request.note().trim());
-        }
+        if (quantity != null) item.setQuantity(quantity);
+        if (note != null) item.setNote(normalizeNote(note));
+        if (oldQuantity == item.getQuantity() && Objects.equals(oldNote, item.getNote())) return;
         OrderItem savedItem = orderItemRepository.save(item);
 
         writeAudit(savedItem.getId(), staffId, "UPDATE_ITEM", oldQuantity, savedItem.getQuantity(),
                 oldStatus, savedItem.getCookingStatus(), describeChange(oldQuantity, savedItem.getQuantity(), oldNote, savedItem.getNote()));
 
         syncKitchenTicket(savedItem);
-        return toResponse(order);
+    }
+
+    private String normalizeNote(String note) {
+        return note == null || note.isBlank() ? null : note.trim();
     }
 
     @Transactional
@@ -709,12 +747,16 @@ public class OrderService {
         OrderItem item = findItemOfOrder(order, itemId);
         KitchenTicket ticket = kitchenTicketRepository.findByOrderItemId(itemId).orElse(null);
         assertCancellable(item, ticket);
+        cancelItem(item, ticket, request.reason(), staffId);
+        return toResponse(order);
+    }
 
+    private void cancelItem(OrderItem item, KitchenTicket ticket, String requestedReason, String staffId) {
         int oldQuantity = item.getQuantity();
         CookingStatus oldStatus = item.getCookingStatus();
-        String reason = (request.reason() == null || request.reason().isBlank())
+        String reason = (requestedReason == null || requestedReason.isBlank())
                 ? "Khách đổi món"
-                : request.reason().trim();
+                : requestedReason.trim();
 
         item.setCookingStatus(CookingStatus.CANCELLED);
         item.setCancelReason(reason);
@@ -728,8 +770,6 @@ public class OrderService {
             KitchenTicket savedTicket = kitchenTicketRepository.save(ticket);
             publishTicketEvent(new KitchenTicketEvent("UPDATED", KitchenTicketResponse.from(savedTicket)));
         }
-
-        return toResponse(order);
     }
 
     private void assertCancellable(OrderItem item, KitchenTicket ticket) {
@@ -738,12 +778,9 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Món này đã được huỷ trước đó.");
         }
 
-        CookingStatus ticketStatus = (ticket != null) ? ticket.getStatus() : null;
-        boolean ticketStarted = ticketStatus != null
-                && ticketStatus != CookingStatus.QUEUED
-                && ticketStatus != CookingStatus.CANCELLED;
+        boolean ticketNotQueued = ticket != null && ticket.getStatus() != CookingStatus.QUEUED;
 
-        if (itemStatus != CookingStatus.QUEUED || ticketStarted) {
+        if (itemStatus != CookingStatus.QUEUED || ticketNotQueued) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Chỉ huỷ được món còn ở mục chờ chế biến.");
         }
     }
@@ -851,10 +888,12 @@ public class OrderService {
     }
 
     private void publishTicketEvent(KitchenTicketEvent event) {
-        try {
-            messagingTemplate.convertAndSend(KITCHEN_TICKETS_TOPIC, event);
-        } catch (Exception ex) {
-            logger.error("Failed to broadcast kitchen ticket event: ", ex);
-        }
+        KitchenNotifications.afterCommit(() -> {
+            try {
+                messagingTemplate.convertAndSend(KITCHEN_TICKETS_TOPIC, event);
+            } catch (Exception ex) {
+                logger.error("Failed to broadcast kitchen ticket event: ", ex);
+            }
+        });
     }
 }

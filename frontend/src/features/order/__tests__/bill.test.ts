@@ -17,14 +17,18 @@ const item = (overrides: Partial<OrderItemResponse>): OrderItemResponse => ({
 });
 
 describe("splitBillItems", () => {
-  it("cộng mọi món chưa huỷ vào tạm tính", () => {
+  it("gom các lượt gọi cùng đơn giá bất kể trạng thái, nhưng không gom khác giá", () => {
     const bill = splitBillItems([
       item({ id: "item-1" }),
-      item({ id: "item-2", cookingStatus: "PREPARING", lineTotal: 60000, quantity: 1 }),
+      item({ id: "item-2", cookingStatus: "PREPARING", lineTotal: 55000, quantity: 1 }),
+      item({ id: "item-3", unitPrice: 60000, lineTotal: 60000, quantity: 1 }),
     ]);
 
-    expect(bill.lines).toHaveLength(2);
-    expect(bill.subtotal).toBe(170000);
+    expect(bill.lines).toEqual([
+      { key: "item-1", label: "3 × Phở Bò", amount: 165000 },
+      { key: "item-3", label: "1 × Phở Bò", amount: 60000 },
+    ]);
+    expect(bill.subtotal).toBe(225000);
     expect(bill.cancelled).toHaveLength(0);
     expect(bill.cancelledAmount).toBe(0);
   });

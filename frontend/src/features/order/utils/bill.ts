@@ -2,7 +2,7 @@ import type { OrderItemResponse } from "../types/order.types";
 
 /** Một dòng trên hoá đơn thanh toán. */
 export type BillLine = {
-  /** Khoá React — id dòng món thật, hoặc id món của dữ liệu demo. */
+  /** ID của lượt gọi đầu tiên trong dòng đã gom. */
   key: string;
   label: string;
   amount: number;
@@ -27,7 +27,7 @@ export type BillBreakdown = {
  * thu ngân hiển thị đúng số tiền khách phải trả.
  */
 export function splitBillItems(items: OrderItemResponse[]): BillBreakdown {
-  const lines: BillLine[] = [];
+  const totals = new Map<string, { id: string; itemName: string; quantity: number; amount: number }>();
   const cancelled: OrderItemResponse[] = [];
   let subtotal = 0;
   let cancelledAmount = 0;
@@ -38,13 +38,16 @@ export function splitBillItems(items: OrderItemResponse[]): BillBreakdown {
       cancelledAmount += item.lineTotal;
       continue;
     }
-    lines.push({
-      key: item.id,
-      label: `${item.quantity} × ${item.itemName}`,
-      amount: item.lineTotal,
-    });
+    const key = JSON.stringify([item.menuItemId, item.unitPrice]);
+    const line = totals.get(key) ?? { id: item.id, itemName: item.itemName, quantity: 0, amount: 0 };
+    line.quantity += item.quantity;
+    line.amount += item.lineTotal;
+    totals.set(key, line);
     subtotal += item.lineTotal;
   }
+  const lines = Array.from(totals.values(), (line) => ({
+    key: line.id, label: `${line.quantity} × ${line.itemName}`, amount: line.amount,
+  }));
 
   return { lines, cancelled, subtotal, cancelledAmount };
 }

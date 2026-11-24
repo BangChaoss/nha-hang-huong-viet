@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { KitchenTicketResponse } from "../types/order.types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const tickets = [
+const tickets: [KitchenTicketResponse, KitchenTicketResponse] = [
   {
     id: "ticket-1",
     orderId: "order-1",
@@ -123,6 +123,21 @@ describe("KitchenKDS", () => {
       { id: "ticket-2", status: "READY" },
       expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     );
+  });
+
+  it("đánh dấu phiếu READY đã phục vụ, nhưng đầu bếp không được sửa", () => {
+    currentTickets = [{ ...tickets[0], status: "READY" }];
+    auth.role = "STAFF";
+    const { rerender } = renderKds();
+    fireEvent.click(screen.getByRole("button", { name: /Đánh dấu đã phục vụ: Phở Bò, Bàn 01/ }));
+    expect(mutate).toHaveBeenCalledExactlyOnceWith(
+      { id: "ticket-1", status: "SERVED" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+
+    auth.role = "CHEF";
+    rerender(<KitchenKDS />);
+    expect(screen.queryByRole("button", { name: /đánh dấu đã phục vụ/i })).not.toBeInTheDocument();
   });
 
   it("gom cùng bàn và đơn nhưng giữ lượt của món gọi thêm sau bàn khác", () => {

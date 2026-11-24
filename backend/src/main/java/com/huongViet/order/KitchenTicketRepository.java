@@ -22,6 +22,9 @@ public interface KitchenTicketRepository extends JpaRepository<KitchenTicket, St
 
     Optional<KitchenTicket> findByOrderItemId(String orderItemId);
 
+    @Query("SELECT i.orderId FROM OrderItem i WHERE i.id = (SELECT t.orderItemId FROM KitchenTicket t WHERE t.id = :id)")
+    Optional<String> findOwningOrderId(@Param("id") String id);
+
     boolean existsByOrderId(String orderId);
 
     @Query("""

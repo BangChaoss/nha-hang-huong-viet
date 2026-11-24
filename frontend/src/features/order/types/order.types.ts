@@ -80,6 +80,12 @@ export type UpdateOrderItemRequest = {
   note?: string | undefined;
 };
 
+export type AdjustOrderItemsRequest = {
+  itemIds: string[];
+  expectedStatus: CookingStatus;
+  expectedQuantity: number;
+} & ({ action: "DECREMENT" } | { action: "UPDATE_NOTE"; note: string } | { action: "CANCEL"; reason: string });
+
 /** Body của `POST /api/orders`. */
 export type CreateOrderRequest = {
   tableId: string;

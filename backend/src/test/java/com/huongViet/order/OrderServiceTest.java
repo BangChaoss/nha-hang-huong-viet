@@ -146,6 +146,32 @@ class OrderServiceTest {
     }
 
     @Test
+    void releaseSeats_LegacyOrderOnlyCancelsWhenEmpty_AndDoesNotChangeTableStatus() {
+        Order order = openOrder();
+        OrderItem row = queuedItem();
+        when(orderRepository.findTableIdByOrderId("order-1")).thenReturn(Optional.of("table-1"));
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(row));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> orderService.releaseSeats("order-1"));
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(OrderStatus.IN_PROGRESS, order.getStatus());
+        verify(orderRepository, never()).save(order);
+
+        row.setCookingStatus(CookingStatus.CANCELLED);
+        orderService.releaseSeats("order-1");
+        orderService.releaseSeats("order-1"); // Repeating the same request is harmless.
+
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        assertNotNull(order.getClosedAt());
+        assertEquals(TableStatus.OCCUPIED, occupiedTable.getStatus());
+        verify(orderRepository).save(order);
+        verify(tableRepository, never()).save(occupiedTable);
+        verifyNoInteractions(reservationRepository, messagingTemplate);
+    }
+
+    @Test
     @DisplayName("create - ném lỗi 409 CONFLICT nếu bàn không ở trạng thái OCCUPIED")
     void create_TableNotOccupied_ThrowsConflict() {
         RestaurantTable availableTable = new RestaurantTable("table-1", "zone-1", "Bàn 1", 4);
@@ -365,6 +391,115 @@ class OrderServiceTest {
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
         verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    private void stubGroup(OrderItem... items) {
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(items));
+    }
+
+    private KitchenTicket stubTicket(OrderItem item) {
+        KitchenTicket ticket = new KitchenTicket("ticket-" + item.getId(), item.getId(), item.getOrderId(),
+            "Bàn 1", pho.getItemName(), item.getQuantity(), item.getNote());
+        when(kitchenTicketRepository.findByOrderItemId(item.getId())).thenReturn(Optional.of(ticket));
+        return ticket;
+    }
+
+    @Test
+    void decrementGroup_CancelsNewestSinglePortionAndKeepsOlderTickets() {
+        OrderItem first = queuedItem();
+        OrderItem newest = item("item-2", "order-1", pho, 1, CookingStatus.QUEUED);
+        stubGroup(first, newest);
+        KitchenTicket latestTicket = stubTicket(newest);
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.save(latestTicket)).thenReturn(latestTicket);
+
+        OrderResponse response = orderService.adjustItems("order-1", new AdjustOrderItemsRequest(
+            List.of("item-2", "item-1"), AdjustOrderItemsRequest.Action.DECREMENT, CookingStatus.QUEUED, 3, null, null), "staff-1");
+
+        assertEquals(2, first.getQuantity());
+        assertEquals(CookingStatus.QUEUED, first.getCookingStatus());
+        assertEquals(CookingStatus.CANCELLED, latestTicket.getStatus());
+        assertEquals(new BigDecimal("110000"), response.subtotal());
+        assertEquals(new BigDecimal("55000"), response.cancelledAmount());
+        verify(kitchenTicketRepository).save(latestTicket);
+        verify(orderItemAuditRepository).save(argThat(audit -> audit.getOrderItemId().equals("item-2")
+            && audit.getAction().equals("CANCEL_ITEM") && audit.getReason().equals("Giảm số lượng")));
+    }
+
+    @Test
+    void decrementGroup_UpdatesQuantityInExistingTicket() {
+        OrderItem first = queuedItem();
+        stubGroup(first);
+        KitchenTicket ticket = stubTicket(first);
+        when(orderItemRepository.save(first)).thenReturn(first);
+        when(kitchenTicketRepository.save(ticket)).thenReturn(ticket);
+
+        OrderResponse response = orderService.adjustItems("order-1", new AdjustOrderItemsRequest(
+            List.of("item-1"), AdjustOrderItemsRequest.Action.DECREMENT, CookingStatus.QUEUED, 2, null, null), "staff-1");
+
+        assertEquals(1, first.getQuantity());
+        assertEquals(1, ticket.getQuantity());
+        assertEquals(CookingStatus.QUEUED, ticket.getStatus());
+        assertEquals(new BigDecimal("55000"), response.subtotal());
+    }
+
+    @Test
+    void decrementGroup_RejectsStaleQuantityAndRequiresConfirmationForLastPortion() {
+        stubGroup(item("item-1", "order-1", pho, 1, CookingStatus.QUEUED));
+        for (int displayedQuantity : List.of(2, 1)) {
+            ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderService.adjustItems("order-1", new AdjustOrderItemsRequest(List.of("item-1"),
+                    AdjustOrderItemsRequest.Action.DECREMENT, CookingStatus.QUEUED, displayedQuantity, null, null), "staff-1"));
+            assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        }
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    void cancelGroup_RejectsItemsOfAnotherOrder() {
+        stubGroup(queuedItem());
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.adjustItems("order-1", new AdjustOrderItemsRequest(List.of("item-1", "item-other-order"),
+                AdjustOrderItemsRequest.Action.CANCEL, CookingStatus.QUEUED, 3, null, "Khách đổi món"), "staff-1"));
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+    }
+
+    @Test
+    void cancelGroup_ValidatesEveryBatchBeforeMutatingAny() {
+        OrderItem first = queuedItem();
+        OrderItem second = item("item-2", "order-1", pho, 1, CookingStatus.QUEUED);
+        stubGroup(first, second);
+        stubTicket(first);
+        KitchenTicket started = stubTicket(second);
+        started.setStatus(CookingStatus.PREPARING);
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.adjustItems("order-1", new AdjustOrderItemsRequest(List.of("item-1", "item-2"),
+                AdjustOrderItemsRequest.Action.CANCEL, CookingStatus.QUEUED, 3, null, "Khách đổi món"), "staff-1"));
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        assertEquals(CookingStatus.QUEUED, first.getCookingStatus());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+        verifyNoInteractions(orderItemAuditRepository);
+    }
+
+    @Test
+    void updateGroupNote_SyncsEveryTicketWithoutChangingQuantity() {
+        OrderItem first = queuedItem();
+        OrderItem second = item("item-2", "order-1", pho, 1, CookingStatus.QUEUED);
+        stubGroup(first, second);
+        KitchenTicket firstTicket = stubTicket(first);
+        KitchenTicket secondTicket = stubTicket(second);
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
+        orderService.adjustItems("order-1", new AdjustOrderItemsRequest(List.of("item-1", "item-2"),
+            AdjustOrderItemsRequest.Action.UPDATE_NOTE, CookingStatus.QUEUED, 3, " Không hành ", null), "staff-1");
+
+        assertEquals("Không hành", firstTicket.getNote());
+        assertEquals("Không hành", secondTicket.getNote());
+        assertEquals(2, firstTicket.getQuantity());
+        assertEquals(1, secondTicket.getQuantity());
+        verify(orderItemAuditRepository, times(2)).save(any(OrderItemAudit.class));
     }
 
     @Test

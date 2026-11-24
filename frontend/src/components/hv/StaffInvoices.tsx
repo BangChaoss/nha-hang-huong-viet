@@ -18,12 +18,13 @@ import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
 import { formatVND } from "@/lib/restaurant-store";
-import { invoiceApi, type InvoiceRecord } from "@/lib/invoice-api";
+import { invoiceApi, type InvoiceItem, type InvoiceRecord } from "@/lib/invoice-api";
 
 export function StaffInvoices() {
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -61,6 +62,18 @@ export function StaffInvoices() {
     const totalDiscount = list.reduce((sum, inv) => sum + Number(inv.discountAmount || 0), 0);
     return { count, totalAmount, totalDiscount };
   }, [query.data]);
+
+  const previewItems = new Map<string, InvoiceItem>();
+  for (const item of previewInvoice?.items ?? []) {
+    const key = JSON.stringify([item.dishId, item.dishName, item.unitPrice]);
+    const line = previewItems.get(key);
+    if (line) {
+      line.quantity += item.quantity;
+      line.totalPrice += item.totalPrice;
+    } else {
+      previewItems.set(key, { ...item });
+    }
+  }
 
   // HÀM IN BẢO ĐẢM HIỂN THỊ ĐẦY ĐỦ 100% QUA IFRAME
   const handlePrint = () => {
@@ -331,6 +344,7 @@ export function StaffInvoices() {
                 In hóa đơn
               </Button>
             </div>
+            <DialogDescription className="sr-only">Chi tiết món và số tiền trên hóa đơn.</DialogDescription>
           </DialogHeader>
 
           {previewInvoice && (
@@ -381,7 +395,7 @@ export function StaffInvoices() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {previewInvoice.items?.map((it) => (
+                    {Array.from(previewItems.values(), (it) => (
                       <tr key={it.id}>
                         <td className="py-1.5 font-medium">{it.dishName}</td>
                         <td className="py-1.5 text-center tabular-nums">{it.quantity}</td>

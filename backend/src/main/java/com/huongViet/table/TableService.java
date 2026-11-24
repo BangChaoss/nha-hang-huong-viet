@@ -2,6 +2,7 @@ package com.huongViet.table;
 
 import com.huongViet.order.Order;
 import com.huongViet.order.OrderRepository;
+import com.huongViet.order.OrderStatus;
 import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
 import com.huongViet.reservation.ReservationService;
@@ -204,9 +205,18 @@ public class TableService {
     public TableResponse updateStatus(String id, UpdateTableStatusRequest request) {
         RestaurantTable table = tableRepository.lockActiveById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
-        if (request.status() != TableStatus.OCCUPIED &&
-            orderRepository.findSeatedOrdersByTableIds(List.of(id)).stream().anyMatch(Order::isSeated)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Hãy trả chỗ cho các đơn còn khách trước khi đổi trạng thái bàn.");
+        if (request.status() != TableStatus.OCCUPIED) {
+            List<String> tableIds = Reservation.relatedArrivedTableIds(id,
+                reservationRepository.findActiveReservationsForDate(LocalDate.now()));
+            List<Order> orders = orderRepository.findSeatedOrdersByTableIds(tableIds);
+            if (orders.stream().anyMatch(order -> order.getStatus() == OrderStatus.IN_PROGRESS && !order.isSeated())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Hãy thanh toán hoặc hủy đơn trống trước khi đổi trạng thái bàn.");
+            }
+            if (orders.stream().anyMatch(Order::isSeated)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Hãy trả chỗ cho các đơn còn khách trước khi đổi trạng thái bàn.");
+            }
         }
         TableStatus oldStatus = table.getStatus();
         table.setStatus(request.status());
