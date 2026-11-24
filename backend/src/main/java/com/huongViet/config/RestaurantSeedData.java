@@ -53,10 +53,32 @@ public class RestaurantSeedData implements CommandLineRunner {
         TableZone garden = createZone(ZONE_GARDEN, false);
         TableZone vip = createZone(ZONE_VIP, true);
 
-        int index = 0;
-        index = createTables(indoor, index, new int[]{4, 4, 6, 4, 8});
-        index = createTables(garden, index, new int[]{4, 6, 4, 8});
-        createTables(vip, index, new int[]{10, 12, 10});
+        // Trong Nhà (30 chỗ) - X in [60..540], Y in [70..290]
+        createTableWithLayout(indoor, "Bàn 01", 4, 60.0, 70.0, 90.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 02", 4, 180.0, 70.0, 90.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 03A", 2, 300.0, 70.0, 60.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 03B", 4, 370.0, 70.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 04", 4, 60.0, 190.0, 90.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 05A", 4, 180.0, 190.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 05B", 4, 270.0, 190.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(indoor, "Bàn 13", 2, 480.0, 70.0, 60.0, 60.0, FloorPlanShape.CIRCLE);
+        createTableWithLayout(indoor, "Bàn 14", 2, 480.0, 150.0, 60.0, 60.0, FloorPlanShape.CIRCLE);
+        createTableWithLayout(indoor, "Bàn 15", 2, 480.0, 230.0, 60.0, 60.0, FloorPlanShape.CIRCLE);
+
+        // Sân Vườn (22 chỗ) - X in [580..960], Y in [70..290]
+        createTableWithLayout(garden, "Bàn 06", 4, 580.0, 70.0, 90.0, 90.0, FloorPlanShape.CIRCLE);
+        createTableWithLayout(garden, "Bàn 07A", 2, 700.0, 70.0, 60.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(garden, "Bàn 07B", 4, 770.0, 70.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(garden, "Bàn 08", 4, 580.0, 190.0, 90.0, 90.0, FloorPlanShape.CIRCLE);
+        createTableWithLayout(garden, "Bàn 09A", 4, 700.0, 190.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(garden, "Bàn 09B", 4, 790.0, 190.0, 80.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(garden, "Bàn 16", 2, 900.0, 70.0, 60.0, 60.0, FloorPlanShape.CIRCLE);
+        createTableWithLayout(garden, "Bàn 17", 2, 900.0, 160.0, 60.0, 60.0, FloorPlanShape.CIRCLE);
+
+        // Phòng VIP (32 chỗ) - X in [60..520], Y in [385..505]
+        createTableWithLayout(vip, "Bàn 10", 10, 60.0, 400.0, 140.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(vip, "Bàn 11", 12, 230.0, 400.0, 140.0, 90.0, FloorPlanShape.RECTANGLE);
+        createTableWithLayout(vip, "Bàn 12", 10, 400.0, 385.0, 120.0, 120.0, FloorPlanShape.CIRCLE);
 
         logger.info("Seeded {} zones and {} tables.",
             zoneRepository.countByDeletedAtIsNull(), tableRepository.countByDeletedAtIsNull());
@@ -66,36 +88,24 @@ public class RestaurantSeedData implements CommandLineRunner {
         return zoneRepository.save(new TableZone(UUID.randomUUID().toString(), name, isVip));
     }
 
-    /**
-     * Creates a run of tables inside a zone and lays them out on a grid.
-     *
-     * @return the next free table index
-     */
-    private int createTables(TableZone zone, int startIndex, int[] capacities) {
-        int index = startIndex;
-        for (int capacity : capacities) {
-            index++;
-            RestaurantTable table = tableRepository.save(new RestaurantTable(
-                UUID.randomUUID().toString(),
-                zone.getId(),
-                String.format("Bàn %02d", index),
-                capacity
-            ));
+    private void createTableWithLayout(TableZone zone, String tableNumber, int capacity,
+                                       double x, double y, double w, double h, FloorPlanShape shape) {
+        RestaurantTable table = tableRepository.save(new RestaurantTable(
+            UUID.randomUUID().toString(),
+            zone.getId(),
+            tableNumber,
+            capacity
+        ));
 
-            // Bố trí lưới 3 cột x 4 hàng trên sơ đồ sàn.
-            int column = (index - 1) % 3;
-            int row = (index - 1) / 3;
-            floorPlanLayoutRepository.save(new FloorPlanLayout(
-                UUID.randomUUID().toString(),
-                table.getId(),
-                60.0 + column * 140.0,
-                60.0 + row * 120.0,
-                100.0,
-                90.0,
-                0.0,
-                FloorPlanShape.RECTANGLE
-            ));
-        }
-        return index;
+        floorPlanLayoutRepository.save(new FloorPlanLayout(
+            UUID.randomUUID().toString(),
+            table.getId(),
+            x,
+            y,
+            w,
+            h,
+            0.0,
+            shape
+        ));
     }
 }

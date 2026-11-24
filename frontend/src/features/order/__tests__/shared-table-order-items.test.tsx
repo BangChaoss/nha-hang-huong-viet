@@ -190,3 +190,43 @@ it("kết thúc đơn cũ trống trước khi đóng bàn", async () => {
   expect(await pos.findByRole("button", { name: "Đóng bàn (Trống)" })).toBeEnabled();
   expect(orderApi.releaseSeats).toHaveBeenCalledExactlyOnceWith(a);
 });
+
+it("chỉ hiển thị một lần đơn được trả về cho cả hai bàn con", async () => {
+  const left = { ...table, id: "left", tableNumber: "Bàn 01A" };
+  const right = { ...table, id: "right", tableNumber: "Bàn 01B" };
+  vi.mocked(tableApi.list).mockResolvedValue([left, right]);
+  orders = [{ ...order(a, [item("one")]), tableId: right.id }];
+
+  const pos = await openPos();
+  expect(await pos.findByRole("button", { name: /#AAAAAAAA ·/, pressed: true })).toBeInTheDocument();
+  expect(pos.getByText("1 × Phở bò")).toBeInTheDocument();
+  expect(orderApi.seatedAtTable).toHaveBeenCalledWith(left.id);
+  expect(orderApi.seatedAtTable).toHaveBeenCalledWith(right.id);
+});
+
+it("chọn bàn con đủ chỗ thay vì gửi đơn mới vào bàn con đã đầy", async () => {
+  const left = { ...table, id: "left", tableNumber: "Bàn 01A", availableSeats: 0 };
+  const right: TableResponse = { ...table, id: "right", tableNumber: "Bàn 01B", status: "AVAILABLE", availableSeats: 4 };
+  const opened = { ...right, status: "OCCUPIED" as const };
+  vi.mocked(tableApi.list).mockResolvedValue([left, right]);
+  vi.mocked(tableApi.updateStatus).mockImplementation(async () => {
+    vi.mocked(tableApi.list).mockResolvedValue([left, opened]);
+    return opened;
+  });
+  orders = [{ ...order(a, [item("one")]), tableId: left.id, partySize: 4 }];
+  vi.mocked(orderApi.seatedAtTable).mockImplementation(async (id) => orders.filter((entry) => entry.tableId === id));
+  vi.mocked(orderApi.openSeatedOrder).mockImplementation(async (id, size) => {
+    const entry = { ...order(b, []), tableId: id, partySize: size };
+    orders = [...orders, entry];
+    return entry;
+  });
+
+  const pos = await openPos();
+  const partySize = await pos.findByRole("spinbutton", { name: "Số khách của đơn mới" });
+  expect(partySize).toHaveAttribute("max", "4");
+  fireEvent.change(partySize, { target: { value: "4" } });
+  fireEvent.click(pos.getByRole("button", { name: "Mở đơn mới" }));
+  expect(await pos.findByRole("button", { name: /#BBBBBBBB · 4 khách/, pressed: true })).toBeInTheDocument();
+  expect(tableApi.updateStatus).toHaveBeenCalledExactlyOnceWith(right.id, "OCCUPIED");
+  expect(orderApi.openSeatedOrder).toHaveBeenCalledExactlyOnceWith(right.id, 4);
+});

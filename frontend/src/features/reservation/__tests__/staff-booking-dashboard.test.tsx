@@ -275,4 +275,61 @@ describe("StaffBookingDashboard", () => {
     expect(screen.queryByText("Lê Văn C")).toBeNull();
     expect(screen.queryByText("Phạm Văn D")).toBeNull();
   });
+
+  it("StaffBookingCard with PENDING_DEPOSIT shows 'Chờ cọc VIP ⏳', does NOT show 'Đã cọc 1tr ✅' and does NOT show premature 'Hoàn tất'", () => {
+    const vipPendingDeposit: ReservationResponse = {
+      ...mockPendingBooking,
+      id: "vip-pending-deposit-1",
+      status: "PENDING_DEPOSIT",
+      zoneIsVip: true,
+      depositAmount: 1000000,
+    };
+
+    render(
+      <StaffBookingCard
+        booking={vipPendingDeposit}
+        onOpenConfirm={vi.fn()}
+        onCheckIn={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    // Displays 'Chờ cọc VIP ⏳'
+    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
+    // Does NOT display duplicate 'Chờ đặt cọc' or 'Đã cọc 1tr ✅'
+    expect(screen.queryByText("Đã cọc 1tr ✅")).toBeNull();
+    expect(screen.queryByText("Chờ đặt cọc")).toBeNull();
+    // Does NOT display premature 'Hoàn tất'
+    expect(screen.queryByText("Hoàn tất")).toBeNull();
+    // Displays 'Chờ khách đặt cọc...'
+    expect(screen.getByText("Chờ khách đặt cọc...")).toBeInTheDocument();
+  });
+
+  it("StaffBookingRow with PENDING_DEPOSIT shows 'Chờ cọc VIP ⏳' and does NOT show 'Đã cọc 1tr ✅'", () => {
+    const vipPendingDeposit: ReservationResponse = {
+      ...mockPendingBooking,
+      id: "vip-pending-deposit-2",
+      status: "PENDING_DEPOSIT",
+      zoneIsVip: true,
+      depositAmount: 1000000,
+    };
+
+    render(
+      <Table>
+        <TableBody>
+          <StaffBookingRow
+            booking={vipPendingDeposit}
+            onOpenConfirm={vi.fn()}
+            onCheckIn={vi.fn()}
+            onCancel={vi.fn()}
+          />
+        </TableBody>
+      </Table>
+    );
+
+    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
+    expect(screen.queryByText("Đã cọc 1tr ✅")).toBeNull();
+    expect(screen.queryByText("Chờ đặt cọc")).toBeNull();
+    expect(screen.getByText("Chờ khách cọc")).toBeInTheDocument();
+  });
 });

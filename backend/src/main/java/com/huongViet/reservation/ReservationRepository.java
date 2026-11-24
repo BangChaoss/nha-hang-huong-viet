@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
@@ -63,7 +64,15 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         LEFT JOIN FETCH r.zone rz
         WHERE r.customerId = :customerId
           AND r.deletedAt IS NULL
-        ORDER BY r.reservationDate DESC, r.reservationTime DESC
+        ORDER BY 
+          CASE 
+            WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT THEN 1
+            WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD THEN 2
+            ELSE 3
+          END ASC,
+          r.reservationDate DESC, 
+          r.reservationTime DESC,
+          r.createdAt DESC
         """)
     List<Reservation> findByCustomerIdWithTableAndZone(@Param("customerId") String customerId);
 
@@ -81,7 +90,15 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
             OR LOWER(SUBSTRING(r.id, 1, 8)) = LOWER(:cleanCode)
           )
           AND r.deletedAt IS NULL
-        ORDER BY r.reservationDate DESC, r.reservationTime DESC
+        ORDER BY 
+          CASE 
+            WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT THEN 1
+            WHEN r.status = com.huongViet.reservation.ReservationStatus.PENDING_HOLD THEN 2
+            ELSE 3
+          END ASC,
+          r.reservationDate DESC, 
+          r.reservationTime DESC,
+          r.createdAt DESC
         """)
     List<Reservation> findByPhoneAndBookingCode(
         @Param("phone") String phone,
@@ -259,6 +276,71 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         @Param("today") LocalDate today,
         @Param("nowTime") LocalTime nowTime
     );
+
+    /**
+     * Calculates total booked seats for a specific table in a time window.
+     * Supports shared seating: returns SUM(partySize) of all active reservations
+     * assigned to this table (via tableId or mergedTableIds).
+     */
+    @Query("""
+        SELECT COALESCE(SUM(r.partySize), 0)
+        FROM Reservation r
+        WHERE (r.tableId = :tableId 
+               OR r.mergedTableIds LIKE CONCAT('%', :tableId, '%'))
+          AND r.reservationDate = :date
+          AND r.reservationTime BETWEEN :startTime AND :endTime
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.PENDING_HOLD,
+              com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT,
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED
+          )
+          AND r.deletedAt IS NULL
+        """)
+    int sumBookedPartySizeForTable(
+        @Param("tableId") String tableId,
+        @Param("date") LocalDate date,
+        @Param("startTime") LocalTime startTime,
+        @Param("endTime") LocalTime endTime
+    );
+
+    /**
+     * Calculates total booked seats for unassigned reservations in a zone within a time window.
+     * These are reservations holding seats in the zone that have not yet been assigned to specific tables.
+     */
+    @Query("""
+        SELECT COALESCE(SUM(r.partySize), 0)
+        FROM Reservation r
+        WHERE r.zoneId = :zoneId
+          AND r.tableId IS NULL
+          AND (r.mergedTableIds IS NULL OR r.mergedTableIds = '')
+          AND r.reservationDate = :date
+          AND r.reservationTime BETWEEN :startTime AND :endTime
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.PENDING_HOLD,
+              com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT,
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED
+          )
+          AND r.deletedAt IS NULL
+        """)
+    int sumUnassignedPartySizeForZone(
+        @Param("zoneId") String zoneId,
+        @Param("date") LocalDate date,
+        @Param("startTime") LocalTime startTime,
+        @Param("endTime") LocalTime endTime
+    );
+
+    /**
+     * Tìm đơn VIP PENDING_DEPOSIT quá hạn chưa đặt cọc.
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        WHERE r.status = com.huongViet.reservation.ReservationStatus.PENDING_DEPOSIT
+          AND r.deletedAt IS NULL
+          AND r.createdAt <= :cutoff
+        """)
+    List<Reservation> findExpiredPendingDeposit(@Param("cutoff") LocalDateTime cutoff);
 
     Optional<Reservation> findByIdAndDeletedAtIsNull(String id);
 }

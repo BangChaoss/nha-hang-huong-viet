@@ -71,13 +71,85 @@ function localDateString(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+export type ConsolidatedTable = TableResponse & {
+  baseTableNumber: string;
+  subTables: TableResponse[];
+};
+
+/**
+ * Gom các bàn bị chia tách (ví dụ: Bàn 02A + Bàn 02B) thành 1 bàn gốc chưa chia duy nhất (Bàn 02)
+ * với tổng sức chứa và trạng thái hợp nhất.
+ */
+export function consolidateTables(rawTables: TableResponse[]): ConsolidatedTable[] {
+  const map = new Map<string, TableResponse[]>();
+  const order: string[] = [];
+
+  for (const table of rawTables) {
+    // Tách hậu tố [A-Z] ở cuối nếu có (ví dụ "Bàn 03A" -> "Bàn 03", "Bàn 05B" -> "Bàn 05", "Bàn 20A" -> "Bàn 20")
+    const baseNumber = table.tableNumber.replace(/\s*[A-Z]$/, "").trim();
+    const key = `${table.zoneId || "none"}__${baseNumber}`;
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key)!.push(table);
+  }
+
+  return order.map((key) => {
+    const subList = map.get(key)!;
+    const first = subList[0]!;
+    const baseNumber = first.tableNumber.replace(/\s*[A-Z]$/, "").trim();
+
+    if (subList.length === 1 && first.tableNumber === baseNumber) {
+      return {
+        ...first,
+        baseTableNumber: baseNumber,
+        subTables: subList,
+      };
+    }
+
+    const totalCapacity = subList.reduce((sum, t) => sum + (t.capacity || 0), 0);
+    const hasOccupied = subList.some((t) => t.status === "OCCUPIED");
+    const hasReserved = subList.some((t) => t.status === "RESERVED");
+    const allMaintenance = subList.every((t) => t.status === "MAINTENANCE");
+
+    let status: TableStatus = "AVAILABLE";
+    if (hasOccupied) {
+      status = "OCCUPIED";
+    } else if (hasReserved) {
+      status = "RESERVED";
+    } else if (allMaintenance) {
+      status = "MAINTENANCE";
+    }
+
+    let totalAvailableSeats: number | null = null;
+    if (hasOccupied) {
+      totalAvailableSeats = subList.reduce((sum, t) => {
+        if (t.status === "AVAILABLE") return sum + t.capacity;
+        if (t.status === "OCCUPIED") return sum + (t.availableSeats ?? 0);
+        return sum;
+      }, 0);
+    }
+
+    return {
+      ...first,
+      tableNumber: baseNumber,
+      baseTableNumber: baseNumber,
+      capacity: totalCapacity,
+      availableSeats: totalAvailableSeats,
+      status,
+      subTables: subList,
+    };
+  });
+}
+
 /**
  * Màn hình phục vụ: chọn bàn để xem thực đơn, gọi món và chuyển sang thanh toán.
  */
 export function StaffPOS() {
   const queryClient = useQueryClient();
-  const [tableSelection, setSelectedTable] = useState<{ table: TableResponse; orderId?: string } | null>(null);
-  const [bill, setBill] = useState<{ table: TableResponse; order: OrderResponse } | null>(null);
+  const [tableSelection, setSelectedTable] = useState<{ table: ConsolidatedTable; orderId?: string } | null>(null);
+  const [bill, setBill] = useState<{ table: ConsolidatedTable; order: OrderResponse } | null>(null);
 
   const zonesQuery = useQuery({
     queryKey: ["zones"],
@@ -110,36 +182,46 @@ export function StaffPOS() {
     onFloorPlanChange: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
   });
 
+  const zones: ZoneResponse[] = zonesQuery.data ?? [];
+  const tables: TableResponse[] = tablesQuery.data ?? [];
+
+  // Gom các bàn bị chia tách lại thành bàn chưa chia (Consolidated Base Tables)
+  const consolidatedTables = useMemo(() => consolidateTables(tables), [tables]);
+
   // Map reservation theo tableId HOẶC các id trong mergedTableIds
-  const findReservationForTable = (table: TableResponse): ReservationResponse | undefined => {
+  const findReservationForTable = (table: TableResponse | ConsolidatedTable): ReservationResponse | undefined => {
     const list = reservationsQuery.data ?? [];
+    const subIds = (table as ConsolidatedTable).subTables?.map((t) => t.id) ?? [table.id];
     return list.find((r) => {
       if (!["CONFIRMED", "ARRIVED"].includes(r.status)) return false;
-      if (r.tableId === table.id) return true;
-      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).includes(table.id)) return true;
-      if (r.tableNumber && r.tableNumber.includes(table.tableNumber)) return true;
+      if (r.tableId && subIds.includes(r.tableId)) return true;
+      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).some((id) => subIds.includes(id))) return true;
+      if (r.tableNumber && (r.tableNumber.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id)))) return true;
       return false;
     });
   };
 
-  const zones: ZoneResponse[] = zonesQuery.data ?? [];
-  const tables: TableResponse[] = tablesQuery.data ?? [];
-  const selectedTable = tables.find((table) => table.id === tableSelection?.table.id) ?? tableSelection?.table;
+  const selectedTable = tableSelection && (consolidatedTables.find(
+    (table) => table.subTables.some((part) => part.id === tableSelection.table.id)
+  ) ?? tableSelection.table);
   const selectedReservation = selectedTable ? findReservationForTable(selectedTable) : undefined;
+  const exclusiveTable = selectedReservation?.status === "ARRIVED" ? selectedTable?.subTables.find((part) =>
+    part.status === "OCCUPIED" && (selectedReservation.tableId === part.id ||
+      selectedReservation.mergedTableIds?.split(",").some((id) => id.trim() === part.id))
+  ) : undefined;
   const updateSelectedTable = (updated: TableResponse) => {
     queryClient.setQueryData<TableResponse[]>(["tables"], (current) =>
       current?.map((table) => (table.id === updated.id ? updated : table)),
     );
-    setSelectedTable((current) => current?.table.id === updated.id ? { ...current, table: updated } : current);
   };
 
   const tablesByZone = useMemo(() => {
-    const map = new Map<string, TableResponse[]>();
+    const map = new Map<string, ConsolidatedTable[]>();
     for (const z of zones) {
       map.set(z.id, []);
     }
-    const defaultList: TableResponse[] = [];
-    for (const t of tables) {
+    const defaultList: ConsolidatedTable[] = [];
+    for (const t of consolidatedTables) {
       if (t.zoneId && map.has(t.zoneId)) {
         map.get(t.zoneId)!.push(t);
       } else {
@@ -150,9 +232,9 @@ export function StaffPOS() {
       map.set("other", defaultList);
     }
     return map;
-  }, [zones, tables]);
+  }, [zones, consolidatedTables]);
 
-  const counts = (status: TableStatus) => tables.filter((item) => item.status === status).length;
+  const counts = (status: TableStatus) => consolidatedTables.filter((item) => item.status === status).length;
 
   return (
     <div className="space-y-8">
@@ -254,7 +336,7 @@ export function StaffPOS() {
           key={selectedTable.id}
           table={selectedTable}
           initialOrderId={tableSelection?.orderId}
-          exclusive={selectedTable.availableSeats == null && !!selectedReservation}
+          exclusiveTableId={exclusiveTable?.id}
           onClose={() => setSelectedTable(null)}
           onTableUpdated={updateSelectedTable}
           onBill={(order) => {
@@ -287,11 +369,18 @@ function ReservationDialog({
 }) {
   const queryClient = useQueryClient();
 
+  const subTables: TableResponse[] = (table as any).subTables ?? [table];
+
   const changeStatusMutation = useMutation({
-    mutationFn: (payload: { id: string; status: TableStatus }) =>
-      tableApi.updateStatus(payload.id, payload.status),
+    mutationFn: async (payload: { id: string; status: TableStatus }) => {
+      let lastUpdated = table;
+      for (const st of subTables) {
+        lastUpdated = await tableApi.updateStatus(st.id, payload.status);
+      }
+      return lastUpdated;
+    },
     onSuccess: (updated) => {
-      toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
+      toast.success(`${table.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       if (onTableUpdated) onTableUpdated(updated);
     },
@@ -304,13 +393,15 @@ function ReservationDialog({
       if (reservation) {
         await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
       }
-      if (table.status !== "OCCUPIED") {
-        updatedTable = await tableApi.updateStatus(table.id, "OCCUPIED");
+      for (const st of subTables) {
+        if (st.status !== "OCCUPIED") {
+          updatedTable = await tableApi.updateStatus(st.id, "OCCUPIED");
+        }
       }
       return { updatedTable };
     },
     onSuccess: ({ updatedTable }) => {
-      toast.success(`Check-in thành công! Bàn ${updatedTable.tableNumber} đã chuyển sang Đang phục vụ.`);
+      toast.success(`Check-in thành công! Bàn ${table.tableNumber} đã chuyển sang Đang phục vụ.`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
       onTableUpdated?.(updatedTable);
@@ -377,19 +468,20 @@ function ReservationDialog({
 function OrderDialog({
   table,
   initialOrderId,
-  exclusive,
+  exclusiveTableId,
   onClose,
   onBill,
   onTableUpdated,
 }: {
-  table: TableResponse;
+  table: ConsolidatedTable;
   initialOrderId: string | undefined;
-  exclusive: boolean;
+  exclusiveTableId: string | undefined;
   onClose: () => void;
   onBill: (order: OrderResponse) => void;
   onTableUpdated?: (table: TableResponse) => void;
 }) {
   const queryClient = useQueryClient();
+  const exclusive = Boolean(exclusiveTableId);
   const [cart, setCart] = useState<CartLine[]>([]);
 
   const menuQuery = useQuery({
@@ -399,10 +491,14 @@ function OrderDialog({
   });
   const dishes = menuQuery.data?.categories.flatMap((c) => c.items ?? []) ?? [];
 
-  const seatedKey = ["orders", "table", table.id, "seated"];
+  const subIds = table.subTables.map((part) => part.id);
+  const seatedKey = ["orders", "table", table.id, "seated", subIds.join(",")];
   const seatedQuery = useQuery({
     queryKey: seatedKey,
-    queryFn: () => orderApi.seatedAtTable(table.id),
+    queryFn: async () => {
+      const results = await Promise.all(subIds.map((id) => orderApi.seatedAtTable(id)));
+      return [...new Map(results.flat().map((order) => [order.id, order])).values()];
+    },
     refetchInterval: 5000,
   });
   const orders = seatedQuery.data ?? [];
@@ -412,10 +508,22 @@ function OrderDialog({
     : orders.length === 1 ? orders[0] : undefined;
   const activeOrder = selectedOrder?.status === "IN_PROGRESS" ? selectedOrder : undefined;
   const [partySize, setPartySize] = useState("1");
-  const occupiedSeats = orders.reduce((used, order) => used + (order.partySize ?? table.capacity), 0);
-  const freeSeats = Math.max(0, table.capacity - occupiedSeats);
+  const seatingOptions = table.subTables.filter((part) => part.status === "AVAILABLE" || part.status === "OCCUPIED")
+    .map((part) => {
+      const used = orders.filter((order) => order.tableId === part.id)
+        .reduce((sum, order) => sum + (order.partySize ?? part.capacity), 0);
+      return { part, free: Math.max(0, part.capacity - used) };
+    });
+  const freeSeats = seatingOptions.reduce((sum, option) => sum + option.free, 0);
+  const maxPartySize = Math.max(0, ...seatingOptions.map((option) => option.free));
   const openOrder = useMutation({
-    mutationFn: () => orderApi.openSeatedOrder(table.id, Number(partySize)),
+    mutationFn: async ({ part, size }: { part: TableResponse; size: number }) => {
+      if (part.status === "AVAILABLE") {
+        const opened = await tableApi.updateStatus(part.id, "OCCUPIED");
+        onTableUpdated?.(opened);
+      }
+      return orderApi.openSeatedOrder(part.id, size);
+    },
     onSuccess: (order) => {
       queryClient.setQueryData<OrderResponse[]>(seatedKey, (current) => [
         ...(current ?? []).filter((other) => other.id !== order.id), order,
@@ -441,8 +549,8 @@ function OrderDialog({
     onError: (error: Error) => toast.error(error.message),
   });
   const createOrder = useCreateOrder();
-  const changeItems = useChangeOrderItems(table.id);
-  const saveNote = useChangeOrderItems(table.id);
+  const changeItems = useChangeOrderItems(table.id, seatedKey);
+  const saveNote = useChangeOrderItems(table.id, seatedKey);
   const changingQuantity = changeItems.isPending || releaseSeats.isPending || createOrder.isPending;
 
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -450,14 +558,18 @@ function OrderDialog({
   const [cancelReason, setCancelReason] = useState("Khách đổi món");
 
   const updateTableStatus = useMutation({
-    mutationFn: (payload: { id: string; status: TableStatus }) =>
-      tableApi.updateStatus(payload.id, payload.status),
-    onSuccess: (updated) => {
-      toast.success(`${updated.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
-      void queryClient.invalidateQueries({ queryKey: ["tables"] });
-      if (onTableUpdated) onTableUpdated(updated);
+    mutationFn: async (status: TableStatus) => {
+      const parts = status === "AVAILABLE" && table.status === "OCCUPIED"
+        ? table.subTables.filter((part) => part.status === "OCCUPIED")
+        : [table.subTables.find((part) => part.status === table.status) ?? table];
+      for (const part of parts) {
+        const updated = await tableApi.updateStatus(part.id, status);
+        onTableUpdated?.(updated);
+      }
     },
+    onSuccess: (_, status) => toast.success(`${table.tableNumber}: ${TABLE_STATUS_LABELS[status]}.`),
     onError: (error: Error) => toast.error(error.message),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
   });
 
   useKitchenCompleted((message) => {
@@ -491,7 +603,7 @@ function OrderDialog({
   const canSubmit = showMenu && legacyCart && cart.length > 0 && !createOrder.isPending;
   const hasPayableItems = activeOrder?.items.some((item) => item.cookingStatus !== "CANCELLED");
   const parsedPartySize = Number(partySize);
-  const canOpenOrder = isOccupied && !exclusive && seatedQuery.isSuccess && freeSeats > 0 && !openOrder.isPending;
+  const canOpenOrder = isOccupied && !exclusive && seatedQuery.isSuccess && maxPartySize > 0 && !openOrder.isPending && !updateTableStatus.isPending;
 
   const items = activeOrder?.items ?? [];
   const itemGroups = groupOrderItems(items);
@@ -589,7 +701,7 @@ function OrderDialog({
                 <Button
                   className="min-h-11 bg-primary hover:bg-primary-hover"
                   disabled={updateTableStatus.isPending}
-                  onClick={() => updateTableStatus.mutate({ id: table.id, status: "OCCUPIED" })}
+                  onClick={() => updateTableStatus.mutate("OCCUPIED")}
                 >
                   Mở bàn
                 </Button>
@@ -598,8 +710,8 @@ function OrderDialog({
                 <Button
                   className="min-h-11"
                   variant="outline"
-                  disabled={updateTableStatus.isPending}
-                  onClick={() => updateTableStatus.mutate({ id: table.id, status: "AVAILABLE" })}
+                  disabled={updateTableStatus.isPending || openOrder.isPending}
+                  onClick={() => updateTableStatus.mutate("AVAILABLE")}
                 >
                   Đóng bàn (Trống)
                 </Button>
@@ -611,10 +723,8 @@ function OrderDialog({
             <span className="text-xs text-muted-foreground">Chuyển trạng thái:</span>
             <Select
               value={table.status}
-              disabled={updateTableStatus.isPending}
-              onValueChange={(value) =>
-                updateTableStatus.mutate({ id: table.id, status: value as TableStatus })
-              }
+              disabled={updateTableStatus.isPending || openOrder.isPending}
+              onValueChange={(value) => updateTableStatus.mutate(value as TableStatus)}
             >
               <SelectTrigger className="h-8 w-[11rem] bg-card" aria-label="Chuyển trạng thái bàn">
                 <SelectValue />
@@ -665,16 +775,17 @@ function OrderDialog({
               ))}
             </div>
           )}
-          {isOccupied && !exclusive && seatedQuery.isSuccess && freeSeats > 0 && (
+          {isOccupied && !exclusive && seatedQuery.isSuccess && maxPartySize > 0 && (
             <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
               event.preventDefault();
-              if (canOpenOrder && Number.isInteger(parsedPartySize) && parsedPartySize >= 1 && parsedPartySize <= freeSeats) {
-                openOrder.mutate();
-              }
+              if (!canOpenOrder || !Number.isInteger(parsedPartySize) || parsedPartySize < 1) return;
+              const fits = seatingOptions.filter((option) => option.free >= parsedPartySize);
+              const target = fits.find((option) => option.part.status === "OCCUPIED") ?? fits[0];
+              if (target) openOrder.mutate({ part: target.part, size: parsedPartySize });
             }}>
               <label className="space-y-1 text-sm">
                 <span className="block">Số khách của đơn mới</span>
-                <Input className="h-11 w-32" type="number" min={1} max={freeSeats} required value={partySize}
+                <Input className="h-11 w-32" type="number" min={1} max={maxPartySize} required value={partySize}
                   onChange={(event) => setPartySize(event.target.value)} />
               </label>
               <Button className="min-h-11" type="submit" disabled={!canOpenOrder}>
@@ -866,7 +977,7 @@ function OrderDialog({
                 onClick={() => {
                   createOrder.mutate(
                     {
-                      tableId: table.id,
+                      tableId: exclusiveTableId ?? table.id,
                       items: cart.map((line) => ({
                         menuItemId: line.menuItemId,
                         quantity: line.quantity,

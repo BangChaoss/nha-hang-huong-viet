@@ -7,6 +7,8 @@ import com.huongViet.reservation.dto.UpdateReservationStatusRequest;
 import com.huongViet.reservation.dto.ZoneAvailabilityResponse;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
+import com.huongViet.table.TableResponse;
+import com.huongViet.table.TableStatus;
 import com.huongViet.table.TableZone;
 import com.huongViet.table.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,9 +18,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -32,6 +37,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class ReservationServiceTest {
 
     @Mock
@@ -235,16 +241,17 @@ class ReservationServiceTest {
         when(zoneRepository.findById("zone-1")).thenReturn(Optional.of(sampleZone));
         when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables); // capacity = 20
 
-        // Slot 18:00 has 18 confirmed seats -> remaining = 2 < 6 (over capacity)
-        when(reservationRepository.sumConfirmedPartySizeByZoneAndSlot(eq("zone-1"), eq(tomorrow), any(), any()))
+        // Slot 18:00 has booked seats leaving only 2 free seats (< 6 needed)
+        when(reservationRepository.sumBookedPartySizeForTable(any(), eq(tomorrow), any(), any()))
             .thenAnswer(invocation -> {
                 LocalTime start = invocation.getArgument(2);
                 LocalTime end = invocation.getArgument(3);
-                // If checking 18:00 window, return 18 confirmed seats
+                String tableId = invocation.getArgument(0);
                 if (start.isBefore(requestedSlot) && end.isAfter(requestedSlot)) {
-                    return 18;
+                    if ("tbl-1".equals(tableId)) return 4;
+                    if ("tbl-2".equals(tableId)) return 6;
+                    if ("tbl-3".equals(tableId)) return 8; // free = 2 < 6
                 }
-                // Other slots have 0 confirmed seats (available as suggestions)
                 return 0;
             });
 
@@ -354,7 +361,8 @@ class ReservationServiceTest {
 
         when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
         when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables);
-        when(reservationRepository.sumConfirmedPartySizeByZoneAndSlot(eq("zone-1"), eq(tomorrow), any(), any()))
+        // tbl-1 (cap 4) has 4 booked -> 0 free. tbl-2 (cap 6) and tbl-3 (cap 10) have 0 booked -> total free = 16
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), eq(tomorrow), any(), any()))
             .thenReturn(4);
 
         List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(tomorrow, 4);
@@ -376,15 +384,41 @@ class ReservationServiceTest {
 
         when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
         when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables); // capacity = 20
-        // Confirmed = 18 -> remaining = 2
-        when(reservationRepository.sumConfirmedPartySizeByZoneAndSlot(eq("zone-1"), eq(tomorrow), any(), any()))
-            .thenReturn(18);
+        // tbl-1 booked 4 (free 0), tbl-2 booked 6 (free 0), tbl-3 booked 8 (free 2) -> total free = 2
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), eq(tomorrow), any(), any()))
+            .thenReturn(4);
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-2"), eq(tomorrow), any(), any()))
+            .thenReturn(6);
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-3"), eq(tomorrow), any(), any()))
+            .thenReturn(8);
 
         // Requested party size = 4 > remaining 2 -> should be marked available = false
         List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(tomorrow, 4);
 
         assertFalse(result.get(0).timeSlots().get(0).available());
         assertEquals(2, result.get(0).timeSlots().get(0).remainingCapacity());
+    }
+
+    @Test
+    @DisplayName("10b. checkAvailability_unassignedReservationDeductsZoneFreeSeats - Đơn đặt chưa gán bàn cũng lập tức trừ số ghế khả dụng của khu vực")
+    void checkAvailability_unassignedReservationDeductsZoneFreeSeats() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+
+        when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
+        when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables); // capacity = 20
+        // Các bàn chưa gán ai
+        when(reservationRepository.sumBookedPartySizeForTable(any(), eq(tomorrow), any(), any()))
+            .thenReturn(0);
+        // Có đơn vừa đặt 6 khách đang ở trạng thái PENDING_HOLD (chưa gán bàn)
+        when(reservationRepository.sumUnassignedPartySizeForZone(eq("zone-1"), eq(tomorrow), any(), any()))
+            .thenReturn(6);
+
+        List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(tomorrow, 4);
+
+        // Tổng sức chứa 20, đã trừ 6 chỗ của đơn chưa gán bàn -> còn 14 chỗ
+        assertEquals(14, result.get(0).timeSlots().get(0).remainingCapacity());
+        assertEquals(6, result.get(0).timeSlots().get(0).confirmedSeats());
+        assertTrue(result.get(0).timeSlots().get(0).available());
     }
 
     @Test
@@ -410,7 +444,7 @@ class ReservationServiceTest {
 
         when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
         when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables);
-        when(reservationRepository.sumConfirmedPartySizeByZoneAndSlot(any(), any(), any(), any()))
+        when(reservationRepository.sumBookedPartySizeForTable(any(), any(), any(), any()))
             .thenReturn(0);
 
         List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(date, 4);
@@ -422,8 +456,8 @@ class ReservationServiceTest {
         assertTrue(slot13Resp.isPresent());
         assertTrue(slot13Resp.get().available());
 
-        verify(reservationRepository).sumConfirmedPartySizeByZoneAndSlot(
-            eq("zone-1"), eq(date), eq(LocalTime.of(11, 2)), eq(LocalTime.of(14, 58))
+        verify(reservationRepository, atLeastOnce()).sumBookedPartySizeForTable(
+            eq("tbl-1"), eq(date), eq(LocalTime.of(11, 2)), eq(LocalTime.of(14, 58))
         );
     }
 
@@ -752,5 +786,242 @@ class ReservationServiceTest {
             reservationService.cancelByCustomer("res-member-booking", "cust-other", req)
         );
         assertEquals(HttpStatus.FORBIDDEN, ex2.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("24. test_availability_tableAware - Tính toán khả dụng chính xác theo từng bàn (Table-Aware)")
+    void test_availability_tableAware() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+
+        when(zoneRepository.findAll()).thenReturn(List.of(sampleZone));
+        when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-1")).thenReturn(sampleTables);
+        // sampleTables: tbl-1 (cap 4), tbl-2 (cap 6), tbl-3 (cap 10)
+        // tbl-1 booked 2 -> free 2
+        // tbl-2 booked 6 -> free 0
+        // tbl-3 booked 0 -> free 10
+        // Total free = 12
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), eq(tomorrow), any(), any()))
+            .thenReturn(2);
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-2"), eq(tomorrow), any(), any()))
+            .thenReturn(6);
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-3"), eq(tomorrow), any(), any()))
+            .thenReturn(0);
+
+        List<ZoneAvailabilityResponse> result = reservationService.checkAvailability(tomorrow, 10);
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        var slot = result.get(0).timeSlots().get(0);
+        assertEquals(12, slot.remainingCapacity());
+        assertTrue(slot.available(), "Đoàn 10 người phải khả dụng khi còn 12 chỗ trống");
+
+        List<ZoneAvailabilityResponse> resultOver = reservationService.checkAvailability(tomorrow, 13);
+        assertFalse(resultOver.get(0).timeSlots().get(0).available(), "Đoàn 13 người không khả dụng khi chỉ còn 12 chỗ trống");
+    }
+
+    @Test
+    @DisplayName("25. test_sharedSeating_sameTable - Cho phép xếp 2 đoàn vào cùng 1 bàn nếu còn đủ ghế (Shared Seating)")
+    void test_sharedSeating_sameTable() {
+        Reservation reservation = new Reservation(
+            "res-shared-1", null, "Khách đoàn 2 người", "0911223344", null, 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-shared-1"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1")))
+            .thenReturn(List.of(t1));
+        // Bàn 4 chỗ đã có đơn khác ngồi 2 người -> còn 2 chỗ trống >= 2
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), any(), any(), any()))
+            .thenReturn(2);
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateReservationStatusRequest req = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1"), null
+        );
+
+        ReservationResponse response = reservationService.updateStatus("res-shared-1", req, "staff-1");
+        assertNotNull(response);
+        assertEquals(ReservationStatus.CONFIRMED, response.status());
+        assertEquals("tbl-1", response.tableId());
+    }
+
+    @Test
+    @DisplayName("26. test_sharedSeating_exceedCapacity - Từ chối xếp thêm khách vào bàn nếu vượt quá ghế trống còn lại")
+    void test_sharedSeating_exceedCapacity() {
+        Reservation reservation = new Reservation(
+            "res-shared-over", null, "Khách đoàn 2 người", "0911223344", null, 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-shared-over"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllById(List.of("tbl-1")))
+            .thenReturn(List.of(t1));
+        // Bàn 4 chỗ đã có đơn khác ngồi 3 người -> chỉ còn 1 chỗ trống < 2
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), any(), any(), any()))
+            .thenReturn(3);
+
+        UpdateReservationStatusRequest req = new UpdateReservationStatusRequest(
+            ReservationStatus.CONFIRMED, null, List.of("tbl-1"), null
+        );
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.updateStatus("res-shared-over", req, "staff-1")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("1 chỗ"));
+        assertTrue(ex.getReason().contains("không đủ cho đoàn 2"));
+    }
+
+    @Test
+    @DisplayName("27. test_availableTables_includesShared - Danh sách bàn gợi ý bao gồm bàn chia sẻ kèm availableSeats chính xác")
+    void test_availableTables_includesShared() {
+        Reservation reservation = new Reservation(
+            "res-find-tables", null, "Khách 2 người", "0911223344", null, 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+        t1.setZone(sampleZone);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-find-tables"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllActiveWithZone()).thenReturn(List.of(t1));
+        // tbl-1 đã booked 2 chỗ -> còn 2 chỗ trống >= 2
+        when(reservationRepository.sumBookedPartySizeForTable(eq("tbl-1"), any(), any(), any()))
+            .thenReturn(2);
+        when(reservationRepository.findOverlappingReservationsForTable(eq("tbl-1"), any(), any(), any()))
+            .thenReturn(List.of());
+
+        List<TableResponse> availableTables = reservationService.getAvailableTablesForReservation("res-find-tables");
+        assertNotNull(availableTables);
+        assertEquals(1, availableTables.size());
+        assertEquals("tbl-1", availableTables.get(0).id());
+        assertEquals(4, availableTables.get(0).capacity());
+        assertEquals(2, availableTables.get(0).availableSeats());
+    }
+
+    @Test
+    @DisplayName("27b. test_availableTables_returnsModularTablesForLargeGroup - Đoàn 6 khách nhận được các bàn modular còn chỗ để gộp bàn")
+    void test_availableTables_returnsModularTablesForLargeGroup() {
+        Reservation reservation = new Reservation(
+            "res-merge-6", null, "Đoàn 6 người", "0911223344", null, 6,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 30), null, "zone-indoor"
+        );
+
+        RestaurantTable t03A = new RestaurantTable("tbl-3a", "zone-indoor", "Bàn 03A", 2);
+        t03A.setZone(sampleZone);
+        RestaurantTable t03B = new RestaurantTable("tbl-3b", "zone-indoor", "Bàn 03B", 4);
+        t03B.setZone(sampleZone);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-merge-6"))
+            .thenReturn(Optional.of(reservation));
+        when(tableRepository.findAllActiveWithZone()).thenReturn(List.of(t03A, t03B));
+        when(reservationRepository.sumBookedPartySizeForTable(any(), any(), any(), any()))
+            .thenReturn(0);
+        when(reservationRepository.findOverlappingReservationsForTable(any(), any(), any(), any()))
+            .thenReturn(List.of());
+
+        List<TableResponse> availableTables = reservationService.getAvailableTablesForReservation("res-merge-6");
+        assertNotNull(availableTables);
+        assertEquals(2, availableTables.size());
+        assertEquals("tbl-3a", availableTables.get(0).id());
+        assertEquals(2, availableTables.get(0).availableSeats());
+        assertEquals("tbl-3b", availableTables.get(1).id());
+        assertEquals(4, availableTables.get(1).availableSeats());
+    }
+
+    @Test
+    @DisplayName("28. test_vip_createBooking_pendingDeposit - Đặt bàn khu VIP tạo đơn PENDING_DEPOSIT và không gửi mail ngay")
+    void test_vip_createBooking_pendingDeposit() {
+        TableZone vipZone = new TableZone("zone-vip", "Phòng VIP Hoàng Gia", false);
+        vipZone.setIsVip(true);
+
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalTime slot = LocalTime.of(19, 0);
+        CreateReservationRequest request = new CreateReservationRequest(
+            "Khách VIP",
+            "0909999999",
+            "vip@example.com",
+            tomorrow,
+            slot,
+            4,
+            "zone-vip",
+            "Cần phòng riêng yên tĩnh"
+        );
+
+        when(zoneRepository.findById("zone-vip")).thenReturn(Optional.of(vipZone));
+        when(tableRepository.findAllByZoneIdAndDeletedAtIsNull("zone-vip"))
+            .thenReturn(List.of(new RestaurantTable("tbl-vip-1", "zone-vip", "VIP 01", 10)));
+        when(reservationRepository.sumBookedPartySizeForTable(any(), any(), any(), any()))
+            .thenReturn(0);
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReservationResponse response = reservationService.createBooking(request, null);
+
+        assertNotNull(response);
+        assertEquals(ReservationStatus.PENDING_DEPOSIT, response.status());
+        assertEquals(new BigDecimal("1000000"), response.depositAmount());
+        assertNotNull(response.createdAt());
+        // BR-VIP: Không gửi email xác nhận đặt bàn trước khi cọc thành công
+        verify(emailService, never()).sendBookingConfirmation(any(Reservation.class), anyString());
+    }
+
+    @Test
+    @DisplayName("29. test_vip_confirmDeposit_success - Xác nhận cọc VIP chuyển đơn sang PENDING_HOLD và gửi mail xác nhận")
+    void test_vip_confirmDeposit_success() {
+        TableZone vipZone = new TableZone("zone-vip", "Phòng VIP Hoàng Gia", false);
+        vipZone.setIsVip(true);
+
+        Reservation vipReservation = new Reservation(
+            "res-vip-1", null, "Khách VIP", "0909999999", "vip@example.com", 4,
+            LocalDate.now().plusDays(1), LocalTime.of(19, 0), null, "zone-vip"
+        );
+        vipReservation.setZone(vipZone);
+        vipReservation.setStatus(ReservationStatus.PENDING_DEPOSIT);
+        vipReservation.setDepositAmount(new BigDecimal("1000000"));
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-vip-1"))
+            .thenReturn(Optional.of(vipReservation));
+        when(reservationRepository.save(any(Reservation.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReservationResponse response = reservationService.confirmDeposit("res-vip-1", "VNP14829304");
+
+        assertNotNull(response);
+        assertEquals(ReservationStatus.PENDING_HOLD, response.status());
+        verify(reservationAuditRepository, times(1)).save(argThat(audit ->
+            audit.getOldStatus() == ReservationStatus.PENDING_DEPOSIT &&
+            audit.getNewStatus() == ReservationStatus.PENDING_HOLD &&
+            audit.getReason().contains("VNP14829304")
+        ));
+        verify(emailService, times(1)).sendBookingConfirmation(any(Reservation.class), eq("Phòng VIP Hoàng Gia"));
+    }
+
+    @Test
+    @DisplayName("30. test_vip_confirmDeposit_wrongStatus_throwsBadRequest - Xác nhận cọc khi đơn không ở PENDING_DEPOSIT quăng lỗi 400")
+    void test_vip_confirmDeposit_wrongStatus_throwsBadRequest() {
+        Reservation reservation = new Reservation(
+            "res-confirmed", null, "Khách thường", "0901112222", null, 2,
+            LocalDate.now().plusDays(1), LocalTime.of(18, 0), null, "zone-1"
+        );
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-confirmed"))
+            .thenReturn(Optional.of(reservation));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+            reservationService.confirmDeposit("res-confirmed", "VNP999999")
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("không ở trạng thái chờ đặt cọc"));
     }
 }

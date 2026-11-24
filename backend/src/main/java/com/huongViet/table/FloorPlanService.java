@@ -2,6 +2,8 @@ package com.huongViet.table;
 
 import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationService;
+import com.huongViet.reservation.ReservationStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -52,7 +54,8 @@ public class FloorPlanService {
             tableRepository.findByIdActiveWithZone(layout.getTableId())
                 .ifPresent(table -> {
                     TableStatus dynamicStatus = tableService.calculateDynamicStatus(table, todayReservations, nowTime);
-                    responses.add(FloorPlanLayoutResponse.from(layout, table, dynamicStatus));
+                    int occupiedSeats = calculateOccupiedSeats(table, todayReservations, nowTime, dynamicStatus);
+                    responses.add(FloorPlanLayoutResponse.from(layout, table, dynamicStatus, occupiedSeats));
                 });
         }
 
@@ -95,12 +98,84 @@ public class FloorPlanService {
 
             FloorPlanLayout saved = layoutRepository.save(layout);
             TableStatus dynamicStatus = tableService.calculateDynamicStatus(table, todayReservations, nowTime);
-            responses.add(FloorPlanLayoutResponse.from(saved, table, dynamicStatus));
+            int occupiedSeats = calculateOccupiedSeats(table, todayReservations, nowTime, dynamicStatus);
+            responses.add(FloorPlanLayoutResponse.from(saved, table, dynamicStatus, occupiedSeats));
         }
 
         logger.info("Saved batch floor plan layout positions: count={}", responses.size());
         broadcastFloorPlanChange(responses);
         return responses;
+    }
+
+    public int calculateOccupiedSeats(RestaurantTable table, List<Reservation> todayReservations, LocalTime nowTime, TableStatus dynamicStatus) {
+        if (dynamicStatus == TableStatus.MAINTENANCE || dynamicStatus == TableStatus.CLEANING) {
+            return table.getCapacity();
+        }
+        int booked = 0;
+        if (todayReservations != null && !todayReservations.isEmpty()) {
+            // 1. Ưu tiên các đơn trong khung giờ ăn uống hiện tại (active dining window)
+            for (Reservation r : todayReservations) {
+                boolean matches = (table.getId().equals(r.getTableId()))
+                    || (r.getMergedTableIds() != null && r.getMergedTableIds().contains(table.getId()));
+                if (!matches) continue;
+
+                LocalTime bookingTime = r.getReservationTime();
+                LocalTime windowEnd = bookingTime.plus(ReservationService.DINING_WINDOW);
+
+                // Active dining window: 30 minutes before booking until dining end
+                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
+                    if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                        booked += calculatePartyForTable(table, r);
+                    }
+                }
+            }
+
+            // 2. Nếu ngoài khung giờ trực tiếp nhưng bàn đang ở trạng thái RESERVED hoặc CONFIRMED trong ngày:
+            // Hiển thị số ghế đặt tương ứng theo đơn đặt bàn trong ngày của bàn đó
+            if (booked == 0 && (table.getStatus() == TableStatus.RESERVED || dynamicStatus == TableStatus.RESERVED)) {
+                for (Reservation r : todayReservations) {
+                    boolean matches = (table.getId().equals(r.getTableId()))
+                        || (r.getMergedTableIds() != null && r.getMergedTableIds().contains(table.getId()));
+                    if (!matches) continue;
+
+                    if (r.getStatus() == ReservationStatus.CONFIRMED || r.getStatus() == ReservationStatus.ARRIVED) {
+                        booked += calculatePartyForTable(table, r);
+                        break;
+                    }
+                }
+            }
+        }
+        if (booked > 0) {
+            return Math.min(booked, table.getCapacity());
+        }
+        if (dynamicStatus == TableStatus.OCCUPIED) {
+            return table.getCapacity();
+        }
+        if (dynamicStatus == TableStatus.RESERVED || table.getStatus() == TableStatus.RESERVED) {
+            return table.getCapacity();
+        }
+        return 0;
+    }
+
+    public int calculatePartyForTable(RestaurantTable table, Reservation r) {
+        if (r.getMergedTableIds() == null || r.getMergedTableIds().isBlank()) {
+            return Math.min(r.getPartySize(), table.getCapacity());
+        }
+        String[] mergedIds = r.getMergedTableIds().split(",");
+        int remainingParty = r.getPartySize();
+        for (String idStr : mergedIds) {
+            String cleanId = idStr.trim();
+            if (cleanId.isEmpty()) continue;
+            if (cleanId.equals(table.getId())) {
+                return Math.min(remainingParty, table.getCapacity());
+            } else {
+                int otherCap = tableRepository.findById(cleanId)
+                    .map(RestaurantTable::getCapacity)
+                    .orElse(4);
+                remainingParty = Math.max(0, remainingParty - otherCap);
+            }
+        }
+        return Math.min(r.getPartySize(), table.getCapacity());
     }
 
     private void broadcastFloorPlanChange(List<FloorPlanLayoutResponse> layouts) {

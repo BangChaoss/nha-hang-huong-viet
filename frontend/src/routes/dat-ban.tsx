@@ -1,10 +1,24 @@
+import * as React from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, UtensilsCrossed } from "lucide-react";
+import { ArrowLeft, UtensilsCrossed, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { BookForm } from "@/features/reservation/components/book-form";
+import { BookingConfirmation } from "@/features/reservation/components/booking-confirmation";
+import { reservationApi } from "@/features/reservation/api/reservation-api";
+import type { ReservationResponse } from "@/features/reservation/types/reservation.types";
 import { AccountMenu } from "@/components/hv/AccountMenu";
 import { RestaurantProvider } from "@/lib/restaurant-store";
 
+interface DatBanSearch {
+  reservationId?: string;
+  depositStatus?: string;
+}
+
 export const Route = createFileRoute("/dat-ban")({
+  validateSearch: (search: Record<string, unknown>): DatBanSearch => ({
+    reservationId: typeof search.reservationId === "string" ? search.reservationId : undefined,
+    depositStatus: typeof search.depositStatus === "string" ? search.depositStatus : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Đặt Bàn Trực Tuyến — Hương Việt Ẩm Thực Cố Đô" },
@@ -19,6 +33,40 @@ export const Route = createFileRoute("/dat-ban")({
 });
 
 function DatBanPage() {
+  const search = Route.useSearch();
+  const [reservation, setReservation] = React.useState<ReservationResponse | null>(null);
+  const [isLoading, setIsLoading] = React.useState<boolean>(Boolean(search.reservationId));
+
+  React.useEffect(() => {
+    if (!search.reservationId) return;
+
+    let isMounted = true;
+    setIsLoading(true);
+
+    reservationApi
+      .getPublicBooking(search.reservationId)
+      .then((data) => {
+        if (!isMounted) return;
+        setReservation(data);
+        if (search.depositStatus === "success") {
+          toast.success("Đặt cọc thành công! Yêu cầu của bạn đang được xử lý.");
+        } else if (search.depositStatus === "failed") {
+          toast.error("Thanh toán đặt cọc thất bại. Quý khách vui lòng thử lại.");
+        }
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Không tìm thấy đơn đặt bàn";
+        toast.error(msg);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [search.reservationId, search.depositStatus]);
+
   return (
     <RestaurantProvider>
       <div className="min-h-screen bg-background">
@@ -50,7 +98,19 @@ function DatBanPage() {
             </Link>
           </div>
 
-          <BookForm />
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center p-12 space-y-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Đang tải thông tin đặt bàn...</p>
+            </div>
+          ) : reservation ? (
+            <BookingConfirmation
+              reservation={reservation}
+              onReset={() => setReservation(null)}
+            />
+          ) : (
+            <BookForm />
+          )}
         </main>
       </div>
     </RestaurantProvider>

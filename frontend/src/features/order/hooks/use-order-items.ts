@@ -8,9 +8,8 @@ type OrderItemsChange = { orderId: string } & (
   | { action: "ADJUST"; payload: AdjustOrderItemsRequest }
 );
 
-export function useChangeOrderItems(tableId: string) {
+export function useChangeOrderItems(tableId: string, seatedKey: readonly string[]) {
   const queryClient = useQueryClient();
-  const seatedKey = ["orders", "table", tableId, "seated"];
 
   return useMutation({
     scope: { id: `pos-order-items:${tableId}` },

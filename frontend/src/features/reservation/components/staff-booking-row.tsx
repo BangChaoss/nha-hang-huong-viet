@@ -122,9 +122,20 @@ export function StaffBookingRow({
       {/* Status Badge & Note */}
       <TableCell>
         <div className="flex flex-col gap-1">
-          <Badge variant="outline" className={`w-fit text-[11px] ${statusCfg.badgeCls}`}>
-            {statusCfg.label}
-          </Badge>
+          {booking.status === "PENDING_DEPOSIT" ? (
+            <Badge variant="outline" className="w-fit text-[10px] font-medium bg-orange-500/15 text-orange-700 border-orange-500/30 dark:text-orange-400">
+              Chờ cọc VIP ⏳
+            </Badge>
+          ) : (
+            <Badge variant="outline" className={`w-fit text-[11px] ${statusCfg.badgeCls}`}>
+              {statusCfg.label}
+            </Badge>
+          )}
+          {booking.status !== "PENDING_DEPOSIT" && booking.status !== "CANCELLED" && booking.depositAmount > 0 && (
+            <Badge variant="outline" className="w-fit text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-medium">
+              Đã cọc 1tr ✅
+            </Badge>
+          )}
           {booking.cancellationReason && (
             <span
               className="text-[10px] text-muted-foreground line-clamp-1"
@@ -217,7 +228,26 @@ export function StaffBookingRow({
             </div>
           )}
 
-          {!isPending && !isConfirmed && (
+          {booking.status === "PENDING_DEPOSIT" && (
+            <div className="flex items-center justify-end gap-1.5">
+              <span className="text-[11px] text-orange-600 dark:text-orange-400">
+                Chờ khách cọc
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => onCancel(booking)}
+                disabled={isActionPending}
+                className="h-7 text-xs text-destructive hover:bg-destructive/10"
+              >
+                <XCircle className="h-3.5 w-3.5 mr-1" />
+                Hủy
+              </Button>
+            </div>
+          )}
+
+          {!isPending && !isConfirmed && booking.status !== "PENDING_DEPOSIT" && (
             <span className="text-[11px] text-muted-foreground">—</span>
           )}
         </div>

@@ -78,6 +78,83 @@ export function getStandardDimensions(
   return { width: 140, height: 90 };
 }
 
+export type SeatPosition = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  headR: number;
+};
+
+/**
+ * Tính toán vị trí các biểu tượng người đại diện cho từng chỗ ngồi trên bàn
+ */
+export function computeSeatPositions(
+  capacity: number,
+  nodeWidth: number,
+  nodeHeight: number,
+  isSmall: boolean
+): SeatPosition[] {
+  const seats: SeatPosition[] = [];
+  if (capacity <= 0) return seats;
+
+  const w = isSmall ? 7 : 8;
+  const h = isSmall ? 10 : 11;
+  const headR = isSmall ? 2.2 : 2.5;
+  const gap = isSmall ? 2 : 3;
+
+  if (capacity > 6 && !isSmall) {
+    // 2 hàng cho bàn lớn (ví dụ VIP 10, VIP 12)
+    const row1Count = Math.ceil(capacity / 2);
+    const row2Count = capacity - row1Count;
+
+    const row1W = row1Count * w + (row1Count - 1) * gap;
+    const startX1 = (nodeWidth - row1W) / 2;
+    const startY1 = 47;
+
+    for (let i = 0; i < row1Count; i++) {
+      seats.push({
+        x: startX1 + i * (w + gap),
+        y: startY1,
+        w,
+        h,
+        headR,
+      });
+    }
+
+    const row2W = row2Count * w + (row2Count - 1) * gap;
+    const startX2 = (nodeWidth - row2W) / 2;
+    const startY2 = 61;
+
+    for (let i = 0; i < row2Count; i++) {
+      seats.push({
+        x: startX2 + i * (w + gap),
+        y: startY2,
+        w,
+        h,
+        headR,
+      });
+    }
+  } else {
+    // 1 hàng cho bàn 1–6 chỗ
+    const totalW = capacity * w + (capacity - 1) * gap;
+    const startX = (nodeWidth - totalW) / 2;
+    const startY = isSmall ? 35 : 49;
+
+    for (let i = 0; i < capacity; i++) {
+      seats.push({
+        x: startX + i * (w + gap),
+        y: startY,
+        w,
+        h,
+        headR,
+      });
+    }
+  }
+
+  return seats;
+}
+
 export type ZoneBox = {
   zoneName: string;
   isVip: boolean;
@@ -1200,6 +1277,39 @@ export function FloorPlanCanvas({
                 const isCircle = layout.shape === "CIRCLE";
                 const nodeWidth = layout.width;
                 const nodeHeight = layout.height;
+                const isSmall = nodeHeight <= 60;
+                const isVip = Boolean(
+                  item.zoneIsVip ||
+                  (item.tableNumber && item.tableNumber.toUpperCase().includes("VIP"))
+                );
+
+                // Tách tiền tố "Bàn " hoặc "Bn " để lấy mã số bàn ngắn gọn
+                let cleanNumber = (item.tableNumber ?? "").trim();
+                cleanNumber = cleanNumber.replace(/^(Bàn|Bn|Table)\s+/i, "");
+                if (isVip) {
+                  cleanNumber = cleanNumber.replace(/^VIP\s*/i, "");
+                }
+                if (!cleanNumber) {
+                  cleanNumber = item.tableNumber ?? "";
+                }
+
+                const typeLabel = isVip ? "VIP" : "BÀN";
+
+                // Tính số ghế đã đặt / phục vụ
+                const capacity = item.capacity ?? 4;
+                const occupiedCount = Math.min(
+                  capacity,
+                  Math.max(
+                    0,
+                    typeof item.occupiedSeats === "number"
+                      ? item.occupiedSeats
+                      : item.status === "OCCUPIED"
+                        ? capacity
+                        : 0
+                  )
+                );
+
+                const seatLayout = computeSeatPositions(capacity, nodeWidth, nodeHeight, isSmall);
 
                 // Màu sắc viền & đổ bóng theo trạng thái va chạm / chọn lựa
                 const strokeColor = isColliding
@@ -1234,7 +1344,7 @@ export function FloorPlanCanvas({
                         fill={isSelected ? "#2563eb" : statusMeta.bg}
                         stroke={strokeColor}
                         strokeWidth={strokeWidth}
-                        dash={isColliding ? [5, 4] : undefined}
+                        {...(isColliding ? { dash: [5, 4] } : {})}
                         shadowColor={shadowColor}
                         shadowBlur={shadowBlur}
                         shadowOffset={{ x: 2, y: 3 }}
@@ -1248,7 +1358,7 @@ export function FloorPlanCanvas({
                         fill={isSelected ? "#2563eb" : statusMeta.bg}
                         stroke={strokeColor}
                         strokeWidth={strokeWidth}
-                        dash={isColliding ? [5, 4] : undefined}
+                        {...(isColliding ? { dash: [5, 4] } : {})}
                         shadowColor={shadowColor}
                         shadowBlur={shadowBlur}
                         shadowOffset={{ x: 2, y: 3 }}
@@ -1272,30 +1382,58 @@ export function FloorPlanCanvas({
                       </Group>
                     )}
 
-                    {/* Số hiệu bàn */}
+                    {/* Tầng 1: Nhãn phân loại (BÀN hoặc VIP) */}
                     <Text
-                      text={item.tableNumber ?? ""}
+                      text={typeLabel}
                       x={0}
-                      y={nodeHeight / 2 - 16}
+                      y={isSmall ? 6 : isVip ? 11 : 13}
                       width={nodeWidth}
                       align="center"
-                      fontSize={15}
+                      fontSize={isSmall ? 9 : 10}
+                      fontFamily="sans-serif"
+                      fontStyle="bold"
+                      fill={isVip ? "#fde047" : "rgba(255, 255, 255, 0.75)"}
+                      letterSpacing={0.5}
+                    />
+
+                    {/* Tầng 2: Mã số bàn (ví dụ: 03A, 07A, 01, 10...) */}
+                    <Text
+                      text={cleanNumber}
+                      x={0}
+                      y={isSmall ? 17 : 26}
+                      width={nodeWidth}
+                      align="center"
+                      fontSize={isSmall ? 13 : cleanNumber.length > 3 ? 13 : 15}
                       fontFamily="sans-serif"
                       fontStyle="bold"
                       fill="#ffffff"
                     />
 
-                    {/* Sức chứa và biểu tượng VIP */}
-                    <Text
-                      text={`${item.capacity ?? 0}p${item.zoneIsVip ? " ★" : ""}`}
-                      x={0}
-                      y={nodeHeight / 2 + 3}
-                      width={nodeWidth}
-                      align="center"
-                      fontSize={11}
-                      fontFamily="sans-serif"
-                      fill="#ffffff"
-                    />
+                    {/* Tầng 3: Biểu tượng từng chỗ ngồi (Đỏ = Đã đặt/phục vụ, Trắng = Còn trống) */}
+                    {seatLayout.map((seat, sIdx) => {
+                      const isSeatOccupied = sIdx < occupiedCount;
+                      const seatColor = isSeatOccupied ? "#ef4444" : "#ffffff";
+                      return (
+                        <Group key={`seat-${item.tableId}-${sIdx}`} x={seat.x} y={seat.y}>
+                          {/* Đầu người */}
+                          <Circle
+                            x={seat.w / 2}
+                            y={seat.headR}
+                            radius={seat.headR}
+                            fill={seatColor}
+                          />
+                          {/* Thân người */}
+                          <Rect
+                            x={0}
+                            y={seat.headR * 2 + 1}
+                            width={seat.w}
+                            height={seat.h - (seat.headR * 2 + 1)}
+                            cornerRadius={[seat.w / 2, seat.w / 2, 1.5, 1.5]}
+                            fill={seatColor}
+                          />
+                        </Group>
+                      );
+                    })}
                   </Group>
                 );
               })}
@@ -1439,6 +1577,19 @@ export function FloorPlanCanvas({
                       <span className="text-[10px] text-muted-foreground font-mono">{st}</span>
                     </div>
                   ))}
+              </div>
+
+              {/* Chú thích biểu tượng chỗ ngồi */}
+              <div className="pt-2.5 mt-2 border-t space-y-1.5 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground text-[11px] block">Chỗ ngồi trên bàn:</span>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-500 shrink-0" />
+                  <span className="text-[11px]">Hình người đỏ: Đã có khách đặt / phục vụ</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-white border border-slate-400 shrink-0" />
+                  <span className="text-[11px]">Hình người trắng: Chỗ còn trống</span>
+                </div>
               </div>
             </div>
           </div>
