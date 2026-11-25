@@ -44,7 +44,7 @@ class DepositExpiredSchedulerTest {
             4, LocalDate.now().plusDays(1), LocalTime.of(19, 0), null, "zone-vip"
         );
         expiredRes.setStatus(ReservationStatus.PENDING_DEPOSIT);
-        expiredRes.setDepositAmount(new BigDecimal("1000000"));
+        expiredRes.setDepositAmount(new BigDecimal("250000"));
         expiredRes.setCreatedAt(LocalDateTime.now().minusMinutes(15));
 
         when(reservationRepository.findExpiredPendingDeposit(any(LocalDateTime.class)))
@@ -55,7 +55,7 @@ class DepositExpiredSchedulerTest {
         scheduler.cancelExpiredDeposits();
 
         assertEquals(ReservationStatus.CANCELLED, expiredRes.getStatus());
-        assertTrue(expiredRes.getCancellationReason().contains("Không đặt cọc"));
+        assertTrue(expiredRes.getCancellationReason().contains("Không thanh toán phí thu & cọc phòng VIP"));
         verify(reservationRepository, times(1)).save(expiredRes);
 
         ArgumentCaptor<ReservationAudit> auditCaptor = ArgumentCaptor.forClass(ReservationAudit.class);

@@ -78,10 +78,12 @@ export const reservationApi = {
   },
 
   // === VIP Deposit API ===
-  createDepositPayment: (id: string): Promise<{ paymentUrl: string; txnRef?: string }> =>
-    request<{ paymentUrl: string; txnRef?: string }>(`/api/reservations/${id}/deposit`, {
+  createDepositPayment: (id: string, returnPath?: string): Promise<{ paymentUrl: string; txnRef?: string }> => {
+    const params = returnPath ? `?returnPath=${encodeURIComponent(returnPath)}` : "";
+    return request<{ paymentUrl: string; txnRef?: string }>(`/api/reservations/${id}/deposit${params}`, {
       method: "POST",
-    }),
+    });
+  },
 
   getPublicBooking: (id: string): Promise<ReservationResponse> =>
     request<ReservationResponse>(`/api/reservations/${id}`),

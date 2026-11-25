@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { consolidateTables } from "@/components/hv/StaffPOS";
+import { consolidateTables, toIndividualTables } from "@/components/hv/StaffPOS";
 import type { TableResponse } from "@/lib/table-api";
 
 describe("StaffPOS consolidateTables", () => {
@@ -116,5 +116,40 @@ describe("StaffPOS consolidateTables", () => {
     expect(table07.tableNumber).toBe("Bàn 07");
     expect(table07.capacity).toBe(6);
     expect(table07.status).toBe("RESERVED");
+  });
+
+  it("toIndividualTables giữ nguyên từng bàn lẻ 20A, 20B với trạng thái riêng biệt trên POS", () => {
+    const rawTables: TableResponse[] = [
+      {
+        id: "t-20a",
+        tableNumber: "Bàn 20A",
+        capacity: 4,
+        status: "OCCUPIED",
+        availableSeats: 2,
+        zoneId: "zone-1",
+        zoneName: "Trong Nhà",
+        zoneIsVip: false,
+      },
+      {
+        id: "t-20b",
+        tableNumber: "Bàn 20B",
+        capacity: 4,
+        status: "AVAILABLE",
+        availableSeats: null,
+        zoneId: "zone-1",
+        zoneName: "Trong Nhà",
+        zoneIsVip: false,
+      },
+    ];
+
+    const result = toIndividualTables(rawTables);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]?.tableNumber).toBe("Bàn 20A");
+    expect(result[0]?.status).toBe("OCCUPIED");
+    expect(result[0]?.subTables).toHaveLength(1);
+    expect(result[1]?.tableNumber).toBe("Bàn 20B");
+    expect(result[1]?.status).toBe("AVAILABLE");
+    expect(result[1]?.subTables).toHaveLength(1);
   });
 });

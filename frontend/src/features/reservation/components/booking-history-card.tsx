@@ -47,7 +47,7 @@ export function BookingHistoryCard({
     if (e) e.stopPropagation();
     try {
       setIsRedirectingDeposit(true);
-      const res = await reservationApi.createDepositPayment(booking.id);
+      const res = await reservationApi.createDepositPayment(booking.id, "history");
       if (res?.paymentUrl) {
         window.location.href = res.paymentUrl;
       } else {
@@ -132,11 +132,11 @@ export function BookingHistoryCard({
           </div>
           <div className="flex items-center gap-1.5">
             <Badge variant="outline" className={statusCfg.badgeCls}>
-              {booking.status === "PENDING_DEPOSIT" ? "Chờ cọc VIP ⏳" : statusCfg.label}
+              {booking.status === "PENDING_DEPOSIT" ? "Chờ phí/cọc VIP ⏳" : statusCfg.label}
             </Badge>
             {booking.status !== "PENDING_DEPOSIT" && booking.status !== "CANCELLED" && booking.depositAmount > 0 && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
-                Đã cọc 1tr ✅
+                Đã thu phí/cọc VIP 250k ✅
               </Badge>
             )}
           </div>
@@ -204,7 +204,7 @@ export function BookingHistoryCard({
             <div className="flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-orange-600 dark:text-orange-400 shrink-0" />
               <span>
-                Đơn đặt bàn Phòng VIP đang chờ đặt cọc <strong>1.000.000đ</strong> để xác nhận giữ chỗ. Nhấn để tiếp tục thanh toán.
+                Đơn đặt bàn Phòng VIP đang chờ thanh toán phí thu &amp; cọc phòng VIP <strong>250.000đ</strong> để xác nhận giữ chỗ. Nhấn để tiếp tục thanh toán.
               </span>
             </div>
             <span className="font-semibold text-[11px] underline shrink-0 flex items-center gap-1 text-orange-700 dark:text-orange-400">
@@ -234,7 +234,7 @@ export function BookingHistoryCard({
                 ) : (
                   <CreditCard className="h-3.5 w-3.5" />
                 )}
-                Tiếp tục đặt cọc VNPay
+                Thanh toán phí/cọc VIP VNPay
               </Button>
             )}
             {/* 1. Nếu khách đang ở bàn (ARRIVED) nhưng chưa thanh toán: Hiển thị nhãn trạng thái, KHÔNG hiển thị nút đánh giá */}

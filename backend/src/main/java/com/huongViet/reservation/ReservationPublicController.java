@@ -163,13 +163,15 @@ public class ReservationPublicController {
     @PostMapping("/{id}/deposit")
     public ResponseEntity<Map<String, String>> createDepositPayment(
         @PathVariable String id,
+        @RequestParam(required = false, defaultValue = "book") String returnPath,
         HttpServletRequest servletRequest
     ) {
         Reservation reservation = reservationRepository.findActiveByIdWithTableAndZone(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy yêu cầu đặt bàn"));
 
         if (reservation.getStatus() != ReservationStatus.PENDING_DEPOSIT) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đơn đặt bàn không ở trạng thái chờ đặt cọc");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Đơn đặt bàn không ở trạng thái chờ thanh toán phí thu & cọc phòng VIP");
         }
 
         String ip = servletRequest.getHeader("X-Forwarded-For");
@@ -177,7 +179,7 @@ public class ReservationPublicController {
         if (ip == null || ip.isBlank()) ip = servletRequest.getRemoteAddr();
 
         Map<String, String> paymentResult = paymentService.createReservationDepositPayment(
-            reservation.getId(), reservation.getDepositAmount(), ip
+            reservation.getId(), reservation.getDepositAmount(), ip, returnPath
         );
         return ResponseEntity.ok(paymentResult);
     }
@@ -187,7 +189,8 @@ public class ReservationPublicController {
      * VNPay redirect callback sau khi thanh toán cọc.
      */
     @GetMapping("/deposit-callback")
-    public RedirectView depositCallback(@RequestParam Map<String, String> params) {
+    public RedirectView depositCallback(@RequestParam Map<String, String> params,
+                                        @RequestParam(required = false, defaultValue = "book") String returnPath) {
         String txnRef = params.getOrDefault("vnp_TxnRef", "");
         String reservationId = "";
         if (txnRef.startsWith("DEP_")) {
@@ -199,9 +202,14 @@ public class ReservationPublicController {
             reservationId = txnRef;
         }
 
+        // Only verify vnp_* parameters signed by VNPay (exclude custom query params like returnPath).
+        Map<String, String> vnpParams = params.entrySet().stream()
+            .filter(entry -> entry.getKey() != null && entry.getKey().startsWith("vnp_"))
+            .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
         String status = "failed";
         try {
-            if (paymentService.verify(params)) {
+            if (paymentService.verify(vnpParams)) {
                 String responseCode = params.getOrDefault("vnp_ResponseCode", "");
                 String transactionStatus = params.getOrDefault("vnp_TransactionStatus", "");
                 String transactionNo = params.getOrDefault("vnp_TransactionNo", "");
@@ -215,9 +223,14 @@ public class ReservationPublicController {
             status = "failed";
         }
 
-        String redirectUrl = frontendUrl.replaceAll("/$", "") + "/?tab=history&reservationId=" +
-            java.net.URLEncoder.encode(reservationId, java.nio.charset.StandardCharsets.UTF_8) +
-            "&depositStatus=" + status;
+        String base = frontendUrl.replaceAll("/$", "");
+        String encodedId = java.net.URLEncoder.encode(reservationId, java.nio.charset.StandardCharsets.UTF_8);
+        String redirectUrl;
+        if ("history".equals(returnPath)) {
+            redirectUrl = base + "/?tab=history&reservationId=" + encodedId + "&depositStatus=" + status;
+        } else {
+            redirectUrl = base + "/?tab=book&reservationId=" + encodedId + "&depositStatus=" + status;
+        }
         return new RedirectView(redirectUrl);
     }
 }

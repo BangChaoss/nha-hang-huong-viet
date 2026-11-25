@@ -87,6 +87,22 @@ export type SeatPosition = {
 };
 
 /**
+ * Chọn màu biểu tượng người theo trạng thái bàn và trạng thái ghế để không trùng màu nền bàn.
+ */
+export function getSeatColor(status: TableStatus, isSeatOccupied: boolean): string {
+  if (!isSeatOccupied) {
+    return status === "OCCUPIED" ? "rgba(255, 255, 255, 0.35)" : "#ffffff";
+  }
+  if (status === "RESERVED") {
+    return "#f59e0b";
+  }
+  if (status === "OCCUPIED") {
+    return "#ffffff";
+  }
+  return "#ef4444";
+}
+
+/**
  * Tính toán vị trí các biểu tượng người đại diện cho từng chỗ ngồi trên bàn
  */
 export function computeSeatPositions(
@@ -1409,10 +1425,10 @@ export function FloorPlanCanvas({
                       fill="#ffffff"
                     />
 
-                    {/* Tầng 3: Biểu tượng từng chỗ ngồi (Đỏ = Đã đặt/phục vụ, Trắng = Còn trống) */}
+                    {/* Tầng 3: Biểu tượng từng chỗ ngồi */}
                     {seatLayout.map((seat, sIdx) => {
                       const isSeatOccupied = sIdx < occupiedCount;
-                      const seatColor = isSeatOccupied ? "#ef4444" : "#ffffff";
+                      const seatColor = getSeatColor(item.status, isSeatOccupied);
                       return (
                         <Group key={`seat-${item.tableId}-${sIdx}`} x={seat.x} y={seat.y}>
                           {/* Đầu người */}
@@ -1583,12 +1599,12 @@ export function FloorPlanCanvas({
               <div className="pt-2.5 mt-2 border-t space-y-1.5 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground text-[11px] block">Chỗ ngồi trên bàn:</span>
                 <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-red-500 shrink-0" />
-                  <span className="text-[11px]">Hình người đỏ: Đã có khách đặt / phục vụ</span>
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500 shrink-0" />
+                  <span className="text-[11px]">Hình người cam: Đã có khách đặt trước</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-white border border-slate-400 shrink-0" />
-                  <span className="text-[11px]">Hình người trắng: Chỗ còn trống</span>
+                  <span className="text-[11px]">Hình người trắng: Chỗ trống / Đang phục vụ</span>
                 </div>
               </div>
             </div>

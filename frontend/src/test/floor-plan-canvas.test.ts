@@ -5,6 +5,7 @@ import {
   computeZoneBoxes,
   computeZoneCollisions,
   computeSeatPositions,
+  getSeatColor,
   type LocalTableLayout,
   type ZoneBox,
 } from "@/components/hv/FloorPlanCanvas";
@@ -241,5 +242,19 @@ describe("FloorPlanCanvas Seat Positions Computation", () => {
 
     // Tổng số người đỏ trên cả 2 bàn = đúng 5 khách
     expect(colorsA.filter((c) => c === "#ef4444").length + colorsB.filter((c) => c === "#ef4444").length).toBe(5);
+  });
+
+  it("should choose distinct seat colors for RESERVED (#f59e0b) and OCCUPIED (#ffffff) without colliding with table backgrounds", () => {
+    // RESERVED table (bg #eab308): occupied seats = amber #f59e0b, empty seats = white #ffffff
+    expect(getSeatColor("RESERVED", true)).toBe("#f59e0b");
+    expect(getSeatColor("RESERVED", false)).toBe("#ffffff");
+
+    // OCCUPIED table (bg #ef4444): occupied seats = white #ffffff, empty seats remain distinct translucent white
+    expect(getSeatColor("OCCUPIED", true)).toBe("#ffffff");
+    expect(getSeatColor("OCCUPIED", false)).toBe("rgba(255, 255, 255, 0.35)");
+
+    // AVAILABLE table (e.g. previewing seat allocation in ConfirmBookingDialog): red vs white
+    expect(getSeatColor("AVAILABLE", true)).toBe("#ef4444");
+    expect(getSeatColor("AVAILABLE", false)).toBe("#ffffff");
   });
 });

@@ -102,7 +102,7 @@ export const RESERVATION_STATUS_CONFIG: Record<
     badgeCls: "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-400",
   },
   PENDING_DEPOSIT: {
-    label: "Chờ đặt cọc",
+    label: "Chờ phí/cọc VIP",
     badgeCls: "bg-orange-500/15 text-orange-700 border-orange-500/30 dark:text-orange-400",
   },
   CONFIRMED: {

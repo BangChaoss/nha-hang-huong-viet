@@ -40,7 +40,7 @@ function DepositCountdown({ createdAt }: { createdAt: string }) {
   }, [createdAt]);
 
   if (timeLeft <= 0) {
-    return <span className="font-semibold text-destructive">Đã hết hạn đặt cọc</span>;
+    return <span className="font-semibold text-destructive">Đã hết hạn thanh toán phí/cọc VIP</span>;
   }
 
   const minutes = Math.floor(timeLeft / 60);
@@ -69,7 +69,7 @@ export function BookingConfirmation({
   const handleVnpayDeposit = async () => {
     try {
       setIsRedirecting(true);
-      const res = await reservationApi.createDepositPayment(reservation.id);
+      const res = await reservationApi.createDepositPayment(reservation.id, "book");
       if (res?.paymentUrl) {
         window.location.href = res.paymentUrl;
       } else {
@@ -206,11 +206,11 @@ export function BookingConfirmation({
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
               <h3 className="font-bold text-orange-800 dark:text-orange-300">
-                Yêu Cầu Đặt Cọc — Phòng VIP
+                Yêu Cầu Phí Thu &amp; Cọc — Phòng VIP
               </h3>
             </div>
             <p className="text-sm text-orange-700 dark:text-orange-400">
-              Đơn đặt bàn Phòng VIP yêu cầu đặt cọc <strong>1.000.000đ</strong> qua VNPay để xác nhận giữ chỗ. Vui lòng thanh toán trong vòng <strong>10 phút</strong>.
+              Đơn đặt bàn Phòng VIP yêu cầu thanh toán phí thu &amp; cọc phòng VIP <strong>250.000đ</strong> qua VNPay để xác nhận giữ chỗ. Vui lòng thanh toán trong vòng <strong>10 phút</strong>.
             </p>
             <div className="flex items-center gap-2 text-xs text-orange-600 dark:text-orange-400">
               <Clock className="h-3.5 w-3.5" />
@@ -227,22 +227,22 @@ export function BookingConfirmation({
                   Đang chuyển tới VNPay...
                 </>
               ) : (
-                "💳 Đặt Cọc 1.000.000đ qua VNPay"
+                "💳 Thanh Toán Phí & Cọc VIP 250.000đ qua VNPay"
               )}
             </Button>
             <p className="text-[11px] text-muted-foreground">
-              * Cọc sẽ được trừ vào hóa đơn khi dùng bữa. Nếu không đến (No-show), cọc không được hoàn lại.
+              * Khoản 250.000đ là phí thu &amp; cọc phòng VIP (không trừ vào hóa đơn món ăn khi dùng bữa). Nếu không đến (No-show), khoản này không được hoàn lại.
             </p>
           </div>
         )}
 
-        {/* Đã cọc thành công */}
+        {/* Đã thanh toán phí thu & cọc VIP thành công */}
         {reservation.status === "PENDING_HOLD" && reservation.depositAmount > 0 && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
               <span className="font-semibold text-emerald-800 dark:text-emerald-300">
-                Đã đặt cọc thành công: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(reservation.depositAmount)}
+                Đã thanh toán phí thu &amp; cọc phòng VIP: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(reservation.depositAmount)} (không trừ vào hóa đơn món ăn)
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">

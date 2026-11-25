@@ -5,6 +5,7 @@ import com.huongViet.menu.MenuItemRepository;
 import com.huongViet.auth.SystemUserInitializer;
 import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
+import com.huongViet.reservation.ReservationService;
 import com.huongViet.reservation.ReservationStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import com.huongViet.table.RestaurantTable;
@@ -33,9 +34,11 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -45,6 +48,7 @@ public class OrderService {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
     private static final String KITCHEN_TICKETS_TOPIC = "/topic/kitchen/tickets";
+    public static final BigDecimal VIP_ROOM_FEE = ReservationService.VIP_DEPOSIT_AMOUNT;
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -268,13 +272,17 @@ public class OrderService {
 
     @Transactional
     public BigDecimal prepareVnpayCheckout(String orderId, String tableId) {
-        lockTable(tableId);
+        RestaurantTable table = lockTable(tableId);
         Order order = findEditableOrder(orderId);
         if (!order.getTableId().equals(tableId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn không thuộc bàn đã chọn.");
         }
+        List<String> relatedTableIds = order.getPartySize() == null
+            ? findRelatedTableIds(table.getId()) : List.of(table.getId());
+        VipBillingInfo vipInfo = resolveVipBillingInfo(table, List.of(order), relatedTableIds);
         BigDecimal subtotal = subtotal(payableItems(orderId));
-        return subtotal.add(vat(subtotal));
+        BigDecimal taxableSubtotal = subtotal.add(vipInfo.vipFeeAmount());
+        return taxableSubtotal.add(vat(taxableSubtotal));
     }
 
     private CashCheckoutResponse checkoutOrder(String orderId, CashCheckoutRequest request, String staffId,
@@ -354,9 +362,11 @@ public class OrderService {
         if (!legacyTableCheckout && billItems.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Đơn chưa có món để thanh toán.");
         }
+        VipBillingInfo vipInfo = resolveVipBillingInfo(table, openOrders, relatedTableIds);
         BigDecimal subtotal = subtotal(billItems);
-        BigDecimal vat = vat(subtotal);
-        BigDecimal beforeDiscount = subtotal.add(vat);
+        BigDecimal taxableSubtotal = subtotal.add(vipInfo.vipFeeAmount());
+        BigDecimal vat = vat(taxableSubtotal);
+        BigDecimal beforeDiscount = taxableSubtotal.add(vat);
 
         String phone = request.phoneNumber() == null ? "" : request.phoneNumber().replaceAll("[\\s()-]", "").trim();
         String voucherCode = request.voucherCode() == null ? "" : request.voucherCode().trim().toUpperCase(java.util.Locale.ROOT);
@@ -458,7 +468,8 @@ public class OrderService {
         String effectiveStaffId = (staffId != null && !staffId.isBlank()) ? staffId : SystemUserInitializer.SYSTEM_USER_ID;
 
         String voucherInvoiceId = createCheckoutInvoices(
-                openOrders, actualCustomerId, actualCustomerPhone, phone, voucherId, voucherCode, discount, pointsDiscountAmount, pointsAwarded, effectiveStaffId
+                openOrders, actualCustomerId, actualCustomerPhone, phone, voucherId, voucherCode, discount,
+                pointsDiscountAmount, pointsAwarded, vipInfo.vipFeeAmount(), vipInfo.vipDepositPaid(), effectiveStaffId
         );
 
         if (!voucherCode.isBlank()) {
@@ -487,8 +498,71 @@ public class OrderService {
         }
 
         return new CashCheckoutResponse(
-                tableId, subtotal, vat, discount, pointsRedeemed, total, pointsAwarded, displayTableNumber
+                tableId, subtotal, vat, discount, pointsRedeemed, total, pointsAwarded, displayTableNumber,
+                vipInfo.vipFeeAmount(), vipInfo.vipDepositPaid()
         );
+    }
+
+    private record VipBillingInfo(BigDecimal vipFeeAmount, BigDecimal vipDepositPaid) {}
+
+    private boolean isVipTable(RestaurantTable table, List<String> relatedTableIds) {
+        if (table != null && table.getZone() != null && Boolean.TRUE.equals(table.getZone().getIsVip())) {
+            return true;
+        }
+        for (String id : relatedTableIds) {
+            var withZone = tableRepository.findByIdActiveWithZone(id);
+            if (withZone.isPresent() && withZone.get().getZone() != null
+                && Boolean.TRUE.equals(withZone.get().getZone().getIsVip())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private VipBillingInfo resolveVipBillingInfo(RestaurantTable table, List<Order> targetOrders,
+                                                 List<String> relatedTableIds) {
+        if (!isVipTable(table, relatedTableIds)) {
+            return new VipBillingInfo(BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(LocalDate.now());
+        for (Reservation r : activeReservations) {
+            if (r.getStatus() == ReservationStatus.ARRIVED
+                && relatedTableIds.stream().anyMatch(r::includesTable)
+                && r.getDepositAmount() != null
+                && r.getDepositAmount().compareTo(BigDecimal.ZERO) > 0) {
+                return new VipBillingInfo(BigDecimal.ZERO, r.getDepositAmount().setScale(2, RoundingMode.HALF_UP));
+            }
+        }
+
+        Set<String> targetOrderIds = targetOrders.stream().map(Order::getId).collect(Collectors.toSet());
+        List<String> otherCompletedSeatedIds = orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream()
+            .filter(o -> o.getStatus() == OrderStatus.COMPLETED && !targetOrderIds.contains(o.getId()))
+            .map(Order::getId)
+            .toList();
+
+        if (hasPaidVipFeeInvoice(otherCompletedSeatedIds)) {
+            return new VipBillingInfo(BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        return new VipBillingInfo(VIP_ROOM_FEE.setScale(2, RoundingMode.HALF_UP), BigDecimal.ZERO);
+    }
+
+    private boolean hasPaidVipFeeInvoice(List<String> orderIds) {
+        if (orderIds == null || orderIds.isEmpty()) {
+            return false;
+        }
+        try {
+            String placeholders = String.join(",", Collections.nCopies(orderIds.size(), "?"));
+            Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM invoices WHERE order_id IN (" + placeholders + ") AND vip_fee_amount > 0 AND status = 'PAID'",
+                Integer.class,
+                orderIds.toArray()
+            );
+            return count != null && count > 0;
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     private void makeTableAvailable(RestaurantTable table) {
@@ -509,6 +583,7 @@ public class OrderService {
                                           String loyaltyPhone, String voucherId,
                                           String voucherCode, BigDecimal voucherDiscount,
                                           BigDecimal pointsDiscountAmount, BigDecimal pointsAwarded,
+                                          BigDecimal vipFeeAmount, BigDecimal vipDepositPaid,
                                           String staffId) {
         String voucherInvoiceId = null;
         boolean first = true;
@@ -520,10 +595,13 @@ public class OrderService {
             BigDecimal itemSubtotal = items.stream()
                     .map(i -> i.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                     .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal tax = itemSubtotal.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal invoiceVipFee = first && vipFeeAmount != null ? vipFeeAmount : BigDecimal.ZERO;
+            BigDecimal invoiceVipDepositPaid = first && vipDepositPaid != null ? vipDepositPaid : BigDecimal.ZERO;
+            BigDecimal taxable = itemSubtotal.add(invoiceVipFee);
+            BigDecimal tax = taxable.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
             BigDecimal invoiceVoucherDiscount = first ? voucherDiscount : BigDecimal.ZERO;
             BigDecimal invoicePointsDiscount = first ? pointsDiscountAmount : BigDecimal.ZERO;
-            BigDecimal finalAmount = itemSubtotal.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePointsDiscount)
+            BigDecimal finalAmount = taxable.add(tax).subtract(invoiceVoucherDiscount).subtract(invoicePointsDiscount)
                     .max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
             String invoiceId = UUID.randomUUID().toString();
             String invoiceCode = "HV-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
@@ -535,19 +613,29 @@ public class OrderService {
             try {
                 jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, loyalty_phone, voucher_id, " +
                         "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
-                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                        "final_amount, vip_fee_amount, vip_deposit_paid, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
                 invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, effectiveLoyaltyPhone, currentVoucherId,
                 currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
-                tax, finalAmount, earned);
+                tax, finalAmount, invoiceVipFee, invoiceVipDepositPaid, earned);
             } catch (Exception ex) {
-                jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, voucher_id, " +
-                        "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
-                        "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
-                invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, currentVoucherId,
-                currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
-                tax, finalAmount, earned);
+                try {
+                    jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, loyalty_phone, voucher_id, " +
+                            "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                            "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                    invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, effectiveLoyaltyPhone, currentVoucherId,
+                    currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
+                    tax, finalAmount, earned);
+                } catch (Exception legacyEx) {
+                    jdbcTemplate.update("INSERT INTO invoices (id, invoice_code, order_id, customer_id, staff_id, customer_phone, voucher_id, " +
+                            "voucher_code_snapshot, voucher_discount_amount, subtotal_amount, discount_amount, tax_amount, " +
+                            "final_amount, deposit_deducted, loyalty_points_earned, status, paid_at) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PAID', CURRENT_TIMESTAMP(6))",
+                    invoiceId, invoiceCode, order.getId(), customerId, staffId, customerPhone, currentVoucherId,
+                    currentVoucherCode, invoiceVoucherDiscount, itemSubtotal, invoiceVoucherDiscount.add(invoicePointsDiscount),
+                    tax, finalAmount, earned);
+                }
             }
 
             for (OrderItem item : items) {
@@ -621,7 +709,14 @@ public class OrderService {
 
     private OrderResponse toResponse(Order order) {
         List<OrderItem> items = orderItemRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
-        return OrderResponse.from(order, items, displayTableNumber(order));
+        VipBillingInfo vipInfo = new VipBillingInfo(BigDecimal.ZERO, BigDecimal.ZERO);
+        if (order.getStatus() == OrderStatus.IN_PROGRESS && order.getTableId() != null) {
+            List<String> relatedTableIds = order.getPartySize() == null
+                ? findRelatedTableIds(order.getTableId())
+                : List.of(order.getTableId());
+            vipInfo = resolveVipBillingInfo(order.getTable(), List.of(order), relatedTableIds);
+        }
+        return OrderResponse.from(order, items, displayTableNumber(order), vipInfo.vipFeeAmount(), vipInfo.vipDepositPaid());
     }
 
     private String displayTableNumber(Order order) {

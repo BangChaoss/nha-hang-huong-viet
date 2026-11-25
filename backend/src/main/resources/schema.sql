@@ -463,6 +463,8 @@ CREATE TABLE invoices (
     discount_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     tax_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     final_amount DECIMAL(12, 2) NOT NULL,
+    vip_fee_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    vip_deposit_paid DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     deposit_deducted DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     loyalty_points_earned INT NOT NULL DEFAULT 0,
     status ENUM('UNPAID', 'PAID', 'REFUNDED') NOT NULL DEFAULT 'UNPAID',

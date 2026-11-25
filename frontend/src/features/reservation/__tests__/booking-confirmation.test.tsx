@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { BookingConfirmation } from "../components/booking-confirmation";
+import { reservationApi } from "../api/reservation-api";
 import type { ReservationResponse } from "../types/reservation.types";
 
 describe("BookingConfirmation", () => {
@@ -52,5 +53,32 @@ describe("BookingConfirmation", () => {
     fireEvent.click(copyBtn);
 
     expect(writeTextMock).toHaveBeenCalledWith("HV-24589D89");
+  });
+
+  it("displays 250.000đ deposit copy for VIP PENDING_DEPOSIT and sends returnPath='book'", async () => {
+    const vipReservation: ReservationResponse = {
+      ...sampleReservation,
+      status: "PENDING_DEPOSIT",
+      zoneIsVip: true,
+      zoneName: "Phòng VIP",
+      depositAmount: 250000,
+    };
+
+    const depositSpy = vi
+      .spyOn(reservationApi, "createDepositPayment")
+      .mockResolvedValue({ paymentUrl: "" });
+
+    render(<BookingConfirmation reservation={vipReservation} onReset={() => {}} />);
+
+    expect(screen.getAllByText(/250\.000đ/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/không trừ vào hóa đơn món ăn/i)).toBeInTheDocument();
+    const depositBtn = screen.getByRole("button", { name: /Thanh Toán Phí & Cọc VIP 250\.000đ qua VNPay/i });
+    expect(depositBtn).toBeInTheDocument();
+
+    fireEvent.click(depositBtn);
+
+    await waitFor(() => {
+      expect(depositSpy).toHaveBeenCalledWith(vipReservation.id, "book");
+    });
   });
 });

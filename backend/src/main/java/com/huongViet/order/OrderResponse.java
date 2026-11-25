@@ -23,13 +23,23 @@ public record OrderResponse(
     BigDecimal cancelledAmount,
     List<OrderItemResponse> items,
     Integer partySize,
-    boolean seated
+    boolean seated,
+    BigDecimal vipFeeAmount,
+    BigDecimal vipDepositPaid
 ) {
     public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
                          OrderStatus status, String createdAt, String closedAt, BigDecimal subtotal,
                          BigDecimal cancelledAmount, List<OrderItemResponse> items) {
         this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
-            items, null, false);
+            items, null, false, BigDecimal.ZERO, BigDecimal.ZERO);
+    }
+
+    public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
+                         OrderStatus status, String createdAt, String closedAt, BigDecimal subtotal,
+                         BigDecimal cancelledAmount, List<OrderItemResponse> items,
+                         Integer partySize, boolean seated) {
+        this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
+            items, partySize, seated, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 
     public static OrderResponse from(Order order, List<OrderItem> items) {
@@ -38,6 +48,11 @@ public record OrderResponse(
     }
 
     public static OrderResponse from(Order order, List<OrderItem> items, String tableNumber) {
+        return from(order, items, tableNumber, BigDecimal.ZERO, BigDecimal.ZERO);
+    }
+
+    public static OrderResponse from(Order order, List<OrderItem> items, String tableNumber,
+                                     BigDecimal vipFeeAmount, BigDecimal vipDepositPaid) {
         List<OrderItemResponse> itemResponses = items != null
             ? items.stream().map(OrderItemResponse::from).toList()
             : List.of();
@@ -65,7 +80,9 @@ public record OrderResponse(
             cancelledAmount,
             itemResponses,
             order.getPartySize(),
-            order.isSeated()
+            order.isSeated(),
+            vipFeeAmount != null ? vipFeeAmount : BigDecimal.ZERO,
+            vipDepositPaid != null ? vipDepositPaid : BigDecimal.ZERO
         );
     }
 }

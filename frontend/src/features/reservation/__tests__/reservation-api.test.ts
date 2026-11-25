@@ -247,4 +247,25 @@ describe("reservationApi", () => {
       }),
     ).rejects.toThrow("Khung giờ đã đầy cho khu vực này");
   });
+
+  it("createDepositPayment() should POST /api/reservations/:id/deposit with returnPath param when provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ paymentUrl: "https://sandbox.vnpayment.vn/pay" }),
+    } as unknown as Response);
+
+    const historyRes = await reservationApi.createDepositPayment("res-vip-1", "history");
+    expect(historyRes.paymentUrl).toBe("https://sandbox.vnpayment.vn/pay");
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/reservations/res-vip-1/deposit?returnPath=history"),
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    await reservationApi.createDepositPayment("res-vip-1", "book");
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      expect.stringContaining("/api/reservations/res-vip-1/deposit?returnPath=book"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });
