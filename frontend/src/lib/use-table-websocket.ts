@@ -11,16 +11,18 @@ if (typeof window !== "undefined" && !(window as unknown as { global?: unknown }
 export type UseTableWebSocketOptions = {
   onTableStatusChange?: (message: TableStatusMessage) => void;
   onFloorPlanChange?: (layouts: FloorPlanLayoutResponse[]) => void;
+  onReservationChange?: () => void;
   enabled?: boolean;
 };
 
 export function useTableWebSocket(options: UseTableWebSocketOptions = {}) {
-  const { onTableStatusChange, onFloorPlanChange, enabled = true } = options;
+  const { onTableStatusChange, onFloorPlanChange, onReservationChange, enabled = true } = options;
   const [isConnected, setIsConnected] = useState(false);
 
   // Giữ ref callback mới nhất để tránh reconnect không cần thiết khi callback thay đổi
   const onTableStatusRef = useRef(onTableStatusChange);
   const onFloorPlanRef = useRef(onFloorPlanChange);
+  const onReservationRef = useRef(onReservationChange);
 
   useEffect(() => {
     onTableStatusRef.current = onTableStatusChange;
@@ -29,6 +31,10 @@ export function useTableWebSocket(options: UseTableWebSocketOptions = {}) {
   useEffect(() => {
     onFloorPlanRef.current = onFloorPlanChange;
   }, [onFloorPlanChange]);
+
+  useEffect(() => {
+    onReservationRef.current = onReservationChange;
+  }, [onReservationChange]);
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") {
@@ -90,6 +96,10 @@ export function useTableWebSocket(options: UseTableWebSocketOptions = {}) {
               } catch {
                 // Bỏ qua nếu message payload lỗi định dạng
               }
+            });
+
+            client?.subscribe("/topic/reservations", () => {
+              onReservationRef.current?.();
             });
           },
           onDisconnect: () => {

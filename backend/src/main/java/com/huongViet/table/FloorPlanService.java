@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -113,18 +114,22 @@ public class FloorPlanService {
         }
         int booked = 0;
         if (todayReservations != null && !todayReservations.isEmpty()) {
-            // 1. Ưu tiên các đơn trong khung giờ ăn uống hiện tại (active dining window)
+            LocalDateTime nowDateTime = LocalDateTime.of(LocalDate.now(), nowTime);
+            // 1. Ưu tiên các đơn trong khung giờ giữ bàn / ăn uống hiện tại
             for (Reservation r : todayReservations) {
-                boolean matches = (table.getId().equals(r.getTableId()))
-                    || (r.getMergedTableIds() != null && r.getMergedTableIds().contains(table.getId()));
-                if (!matches) continue;
+                if (!r.includesTable(table.getId())) continue;
 
-                LocalTime bookingTime = r.getReservationTime();
-                LocalTime windowEnd = bookingTime.plus(ReservationService.DINING_WINDOW);
+                LocalDate resDate = r.getReservationDate() != null ? r.getReservationDate() : LocalDate.now();
+                LocalDateTime bookingDateTime = LocalDateTime.of(resDate, r.getReservationTime());
+                LocalDateTime windowEnd = bookingDateTime.plus(ReservationService.DINING_WINDOW);
 
-                // Active dining window: 30 minutes before booking until dining end
-                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
-                    if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                if (r.getStatus() == ReservationStatus.ARRIVED) {
+                    if (!nowDateTime.isBefore(bookingDateTime.minusMinutes(30)) && !nowDateTime.isAfter(windowEnd)) {
+                        booked += calculatePartyForTable(table, r);
+                    }
+                } else if (r.getStatus() == ReservationStatus.CONFIRMED) {
+                    if (!nowDateTime.isBefore(bookingDateTime.minusMinutes(ReservationService.RESERVE_BEFORE_MINUTES))
+                        && !nowDateTime.isAfter(windowEnd)) {
                         booked += calculatePartyForTable(table, r);
                     }
                 }

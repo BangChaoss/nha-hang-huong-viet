@@ -75,22 +75,27 @@ public class NoShowScheduler {
                 targetTableIds.add(reservation.getTableId().trim());
             }
 
-            // Giải phóng triệt để toàn bộ bàn về AVAILABLE
+            // Giải phóng bàn về AVAILABLE nếu bàn đang RESERVED và không còn khách đang ngồi
             for (String tableId : targetTableIds) {
                 tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(table -> {
                     TableStatus oldTableStatus = table.getStatus();
-                    if (oldTableStatus != TableStatus.MAINTENANCE) {
-                        if (oldTableStatus != TableStatus.AVAILABLE) {
+                    if (oldTableStatus == TableStatus.RESERVED && !tableRepository.hasSeatedGuests(tableId)) {
+                        boolean otherConfirmedInWindow = reservationRepository.findActiveReservationsForDate(LocalDate.now()).stream()
+                            .anyMatch(r -> !r.getId().equals(reservation.getId())
+                                && r.getStatus() == ReservationStatus.CONFIRMED
+                                && r.includesTable(tableId)
+                                && ReservationService.isWithinReservationWindow(r.getReservationDate(), r.getReservationTime()));
+                        if (!otherConfirmedInWindow) {
                             table.setStatus(TableStatus.AVAILABLE);
                             tableRepository.save(table);
-                        }
-                        try {
-                            String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
-                            messagingTemplate.convertAndSend("/topic/table-status",
-                                new TableStatusMessage(table.getId(), table.getTableNumber(),
-                                    oldTableStatus, TableStatus.AVAILABLE, zoneName));
-                        } catch (Exception ex) {
-                            logger.warn("Không thể phát sự kiện giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
+                            try {
+                                String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+                                messagingTemplate.convertAndSend("/topic/table-status",
+                                    new TableStatusMessage(table.getId(), table.getTableNumber(),
+                                        oldTableStatus, TableStatus.AVAILABLE, zoneName));
+                            } catch (Exception ex) {
+                                logger.warn("Không thể phát sự kiện giải phóng bàn {}: {}", table.getTableNumber(), ex.getMessage());
+                            }
                         }
                     }
                 });
@@ -110,6 +115,15 @@ public class NoShowScheduler {
                 "No-show: Quá 15 phút grace period"
             );
             auditRepository.save(audit);
+
+            try {
+                messagingTemplate.convertAndSend("/topic/reservations", java.util.Map.of(
+                    "reservationId", reservation.getId(),
+                    "status", ReservationStatus.NO_SHOW.name()
+                ));
+            } catch (Exception ex) {
+                logger.warn("Không thể phát sự kiện no-show đặt bàn {}: {}", reservation.getId(), ex.getMessage());
+            }
 
             logger.info("No-show processed: reservation={}, guest={}", reservation.getId(), reservation.getGuestName());
         }

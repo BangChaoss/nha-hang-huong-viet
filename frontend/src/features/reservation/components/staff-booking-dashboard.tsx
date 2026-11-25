@@ -115,13 +115,25 @@ function formatDisplayDate(dateStr: string): string {
   }
 }
 
-export function StaffBookingDashboard() {
+export interface StaffBookingDashboardProps {
+  onOpenInPos?: (tableId: string, orderId?: string) => void;
+  initialTabFilter?: { tab?: "needs-action" | "today"; nonce?: number } | null;
+}
+
+export function StaffBookingDashboard({ onOpenInPos, initialTabFilter }: StaffBookingDashboardProps = {}) {
   const todayStr = React.useMemo(() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }, []);
 
   const [activeTab, setActiveTab] = React.useState<DashboardTab>("needs-action");
+
+  React.useEffect(() => {
+    if (initialTabFilter?.tab) {
+      setActiveTab(initialTabFilter.tab);
+      setSelectedStatus("ALL");
+    }
+  }, [initialTabFilter?.nonce, initialTabFilter?.tab]);
   const [viewMode, setViewMode] = React.useState<ViewMode>(() => {
     return (localStorage.getItem("staff_booking_view_mode") as ViewMode) || "cards";
   });
@@ -315,7 +327,7 @@ export function StaffBookingDashboard() {
   const handleCheckIn = async (booking: ReservationResponse) => {
     const code = booking.id ? booking.id.substring(0, 8).toUpperCase() : "";
     try {
-      await updateStatusMutation.mutateAsync({
+      const updated = await updateStatusMutation.mutateAsync({
         id: booking.id,
         payload: {
           status: "ARRIVED",
@@ -325,6 +337,10 @@ export function StaffBookingDashboard() {
         `Check-in thành công cho đơn HV-${code}. Bàn đã chuyển sang trạng thái Đang Phục Vụ.`,
       );
       void upcomingQuery.refetch();
+      const targetTableId = updated?.tableId ?? booking.tableId;
+      if (targetTableId && onOpenInPos) {
+        onOpenInPos(targetTableId);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Check-in thất bại";
       toast.error(msg);
@@ -652,6 +668,7 @@ export function StaffBookingDashboard() {
                     onOpenConfirm={handleOpenConfirm}
                     onCheckIn={(b) => void handleCheckIn(b)}
                     onCancel={handleOpenCancel}
+                    onOpenInPos={onOpenInPos}
                     isActionPending={updateStatusMutation.isPending}
                   />
                 ))}
@@ -697,6 +714,7 @@ export function StaffBookingDashboard() {
                           onOpenConfirm={handleOpenConfirm}
                           onCheckIn={(b) => void handleCheckIn(b)}
                           onCancel={handleOpenCancel}
+                          onOpenInPos={onOpenInPos}
                           isActionPending={updateStatusMutation.isPending}
                         />
                       ))}

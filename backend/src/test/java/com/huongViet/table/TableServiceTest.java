@@ -343,4 +343,26 @@ class TableServiceTest {
         assertEquals(10, response.capacity());
         verify(tableRepository, times(1)).save(any(RestaurantTable.class));
     }
+
+    @Test
+    @DisplayName("calculateDynamicStatus - CONFIRMED giữ RESERVED trước giờ hẹn 120 phút, ngoài 120 phút giữ AVAILABLE")
+    void calculateDynamicStatus_120MinuteWindow() {
+        LocalDate today = LocalDate.now();
+        Reservation within2h = new Reservation(
+            "res-soon", null, "Khách 1", "0900000001", null, 4,
+            today, LocalTime.now().plusMinutes(90), null, "zone-1"
+        );
+        within2h.setStatus(ReservationStatus.CONFIRMED);
+        within2h.setTableId("table-1");
+
+        Reservation laterToday = new Reservation(
+            "res-later", null, "Khách 2", "0900000002", null, 4,
+            today, LocalTime.now().plusMinutes(180), null, "zone-1"
+        );
+        laterToday.setStatus(ReservationStatus.CONFIRMED);
+        laterToday.setTableId("table-1");
+
+        assertEquals(TableStatus.RESERVED, tableService.calculateDynamicStatus(sampleTable, List.of(within2h), LocalTime.now()));
+        assertEquals(TableStatus.AVAILABLE, tableService.calculateDynamicStatus(sampleTable, List.of(laterToday), LocalTime.now()));
+    }
 }

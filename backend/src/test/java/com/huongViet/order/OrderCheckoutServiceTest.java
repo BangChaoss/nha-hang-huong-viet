@@ -725,4 +725,131 @@ class OrderCheckoutServiceTest {
         assertEquals(BigDecimal.ZERO, invoice.getValue()[14]);
         assertEquals(new BigDecimal("250000.00"), invoice.getValue()[15]);
     }
+
+    @Test
+    @DisplayName("checkoutOrderCash - đơn tại bàn có partySize từ đặt bàn ARRIVED chuyển reservation sang PAID và releaseSeats mở lại bàn")
+    void checkoutOrderCash_SeatedReservationOrder_TransitionsToPaidAndReleaseSeatsFreesTable() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order order = lockSeatedOrder("order-res-1");
+        order.setPartySize(4);
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-res-1")).thenReturn(List.of(
+            item("item-1", "order-res-1", pho, 2, CookingStatus.SERVED)
+        ));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+
+        Reservation reservation = new Reservation(
+            "res-1", "cust-1", "Khách A", "0901234567", null, 4,
+            java.time.LocalDate.now(), java.time.LocalTime.of(12, 0), null
+        );
+        reservation.setTableId("table-1");
+        reservation.setStatus(ReservationStatus.ARRIVED);
+        when(reservationRepository.findActiveReservationsForDate(any())).thenReturn(List.of(reservation));
+
+        CashCheckoutResponse response = orderService.checkoutOrderCash("order-res-1", null, "staff-1");
+
+        assertEquals(0, new BigDecimal("121000.00").compareTo(response.total()));
+        assertEquals(ReservationStatus.PAID, reservation.getStatus());
+        verify(reservationRepository).save(reservation);
+        assertEquals(TableStatus.OCCUPIED, occupiedTable.getStatus());
+
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(order));
+        orderService.releaseSeats("order-res-1");
+
+        assertFalse(order.isSeated());
+        assertEquals(TableStatus.AVAILABLE, occupiedTable.getStatus());
+    }
+
+    @Test
+    @DisplayName("releaseSeats - đơn đặt gộp bàn đã PAID giải phóng đầy đủ tất cả các bàn trong cụm gộp")
+    void releaseSeats_PaidMergedReservation_ReleasesAllMergedTables() {
+        RestaurantTable table2 = new RestaurantTable("table-2", "zone-1", "Bàn 2", 4);
+        table2.setStatus(TableStatus.OCCUPIED);
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        when(tableRepository.findByIdAndDeletedAtIsNull("table-2")).thenReturn(Optional.of(table2));
+
+        Order order = lockSeatedOrder("order-merged");
+        order.setReservationId("res-merged");
+        order.setStatus(OrderStatus.COMPLETED);
+
+        Reservation paidMerged = new Reservation(
+            "res-merged", null, "Đoàn 8 người", "0901234567", null, 8,
+            java.time.LocalDate.now(), java.time.LocalTime.of(12, 0), null
+        );
+        paidMerged.setTableId("table-1");
+        paidMerged.setMergedTableIds("table-1,table-2");
+        paidMerged.setStatus(ReservationStatus.PAID);
+
+        when(reservationRepository.findActiveOrPaidReservationsForDate(any())).thenReturn(List.of(paidMerged));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1", "table-2"))).thenReturn(List.of(order));
+
+        orderService.releaseSeats("order-merged");
+
+        assertFalse(order.isSeated());
+        assertEquals(TableStatus.AVAILABLE, occupiedTable.getStatus());
+        assertEquals(TableStatus.AVAILABLE, table2.getStatus());
+        verify(tableRepository).save(occupiedTable);
+        verify(tableRepository).save(table2);
+    }
+
+    @Test
+    @DisplayName("releaseSeats - hủy đơn trống từ Check-in đồng bộ hủy hoặc hoàn tác đơn đặt bàn ARRIVED")
+    void releaseSeats_CancelledEmptyReservationOrder_SyncsReservationStatus() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order order = lockSeatedOrder("order-empty");
+        order.setReservationId("res-arrived");
+        order.setStatus(OrderStatus.IN_PROGRESS);
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-empty")).thenReturn(List.of());
+
+        Reservation res = new Reservation(
+            "res-arrived", null, "Khách Đặt", "0901234567", null, 4,
+            java.time.LocalDate.now(), java.time.LocalTime.now(), null
+        );
+        res.setTableId("table-1");
+        res.setStatus(ReservationStatus.ARRIVED);
+
+        when(orderRepository.findByReservationId("res-arrived")).thenReturn(List.of(order));
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-arrived")).thenReturn(Optional.of(res));
+        when(reservationRepository.findActiveOrPaidReservationsForDate(any())).thenReturn(List.of(res));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(order));
+
+        orderService.releaseSeats("order-empty", "CANCEL", "staff-1");
+
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        assertEquals(ReservationStatus.CANCELLED, res.getStatus());
+        assertEquals(TableStatus.AVAILABLE, occupiedTable.getStatus());
+        verify(reservationRepository).save(res);
+    }
+
+    @Test
+    @DisplayName("sharedSeating - 2 đơn cùng ăn trên 1 bàn (1 đặt bàn + 1 ngồi ghép): thanh toán từng đơn tạo hóa đơn riêng và không đóng nhầm đặt bàn")
+    void checkoutOrderCash_SharedWalkInAndReservation_SettlesSeparately() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order resOrder = lockSeatedOrder("order-res");
+        resOrder.setReservationId("res-1");
+        Order walkInOrder = lockSeatedOrder("order-walkin");
+
+        Reservation arrivedRes = new Reservation(
+            "res-1", null, "Khách Đặt", "0901234567", null, 2,
+            java.time.LocalDate.now(), java.time.LocalTime.now(), null
+        );
+        arrivedRes.setTableId("table-1");
+        arrivedRes.setStatus(ReservationStatus.ARRIVED);
+
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(resOrder, walkInOrder));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-walkin"))
+            .thenReturn(List.of(item("i-w", "order-walkin", bunCha, 1, CookingStatus.SERVED)));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-res"))
+            .thenReturn(List.of(item("i-r", "order-res", pho, 1, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-1")).thenReturn(Optional.of(arrivedRes));
+
+        CashCheckoutResponse walkInBill = orderService.checkoutOrderCash("order-walkin", null, "staff-1");
+        assertEquals(0, new BigDecimal("49500.00").compareTo(walkInBill.total()));
+        assertEquals(ReservationStatus.ARRIVED, arrivedRes.getStatus());
+
+        CashCheckoutResponse resBill = orderService.checkoutOrderCash("order-res", null, "staff-1");
+        assertEquals(0, new BigDecimal("60500.00").compareTo(resBill.total()));
+        assertEquals(ReservationStatus.PAID, arrivedRes.getStatus());
+        verify(jdbcTemplate, times(2)).update(startsWith("INSERT INTO invoices ("), any(Object[].class));
+    }
 }

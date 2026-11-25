@@ -225,8 +225,10 @@ public class Reservation {
     }
 
     public boolean blocksSharedSeating(String tableId) {
-        boolean exclusive = status == ReservationStatus.ARRIVED ||
-            (status == ReservationStatus.CONFIRMED && mergedTableIds != null && mergedTableIds.contains(","));
+        boolean isMerged = mergedTableIds != null && mergedTableIds.contains(",");
+        boolean isVip = zone != null && Boolean.TRUE.equals(zone.getIsVip());
+        boolean exclusive = (status == ReservationStatus.ARRIVED && (isMerged || isVip))
+            || (status == ReservationStatus.CONFIRMED && isMerged);
         return exclusive && includesTable(tableId);
     }
 

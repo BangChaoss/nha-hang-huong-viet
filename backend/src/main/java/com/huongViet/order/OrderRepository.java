@@ -22,6 +22,10 @@ public interface OrderRepository extends JpaRepository<Order, String> {
 
     Optional<Order> findFirstByTableIdAndStatusOrderByCreatedAtDesc(String tableId, OrderStatus status);
 
+    Optional<Order> findFirstByReservationIdAndStatusOrderByCreatedAtDesc(String reservationId, OrderStatus status);
+
+    List<Order> findByReservationId(String reservationId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.id = :id")
     Optional<Order> lockById(@Param("id") String id);

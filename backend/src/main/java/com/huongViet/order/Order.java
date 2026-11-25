@@ -1,5 +1,6 @@
 package com.huongViet.order;
 
+import com.huongViet.reservation.Reservation;
 import com.huongViet.table.RestaurantTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -38,6 +39,10 @@ public class Order {
     @Column(name = "staff_id", length = 36, columnDefinition = "CHAR(36)")
     private String staffId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reservation_id", length = 36, columnDefinition = "CHAR(36)")
+    private String reservationId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "order_type", nullable = false, length = 20)
     private OrderType orderType = OrderType.DINE_IN;
@@ -65,6 +70,10 @@ public class Order {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "table_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
     private RestaurantTable table;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reservation_id", insertable = false, updatable = false, columnDefinition = "CHAR(36)")
+    private Reservation reservation;
 
     protected Order() {}
 
@@ -95,6 +104,22 @@ public class Order {
 
     public void setStaffId(String staffId) {
         this.staffId = staffId;
+    }
+
+    public String getReservationId() {
+        return reservationId;
+    }
+
+    public void setReservationId(String reservationId) {
+        this.reservationId = reservationId;
+    }
+
+    public Reservation getReservation() {
+        return reservation;
+    }
+
+    public void setReservation(Reservation reservation) {
+        this.reservation = reservation;
     }
 
     public OrderType getOrderType() {

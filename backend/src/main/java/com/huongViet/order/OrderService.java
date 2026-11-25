@@ -4,9 +4,12 @@ import com.huongViet.menu.MenuItem;
 import com.huongViet.menu.MenuItemRepository;
 import com.huongViet.auth.SystemUserInitializer;
 import com.huongViet.reservation.Reservation;
+import com.huongViet.reservation.ReservationAudit;
+import com.huongViet.reservation.ReservationAuditRepository;
 import com.huongViet.reservation.ReservationRepository;
 import com.huongViet.reservation.ReservationService;
 import com.huongViet.reservation.ReservationStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import com.huongViet.table.RestaurantTable;
 import com.huongViet.table.TableRepository;
@@ -63,6 +66,7 @@ public class OrderService {
     private final JdbcTemplate jdbcTemplate;
     private final ReservationRepository reservationRepository;
     private final PaymentOrderRepository paymentOrderRepository;
+    private final ReservationAuditRepository reservationAuditRepository;
 
     public OrderService(OrderRepository orderRepository,
                         OrderItemRepository orderItemRepository,
@@ -77,6 +81,26 @@ public class OrderService {
                         JdbcTemplate jdbcTemplate,
                         ReservationRepository reservationRepository,
                         PaymentOrderRepository paymentOrderRepository) {
+        this(orderRepository, orderItemRepository, kitchenTicketRepository, orderItemAuditRepository,
+            menuItemRepository, tableRepository, messagingTemplate, loyaltyAccounts, loyaltySettings,
+            voucherService, jdbcTemplate, reservationRepository, paymentOrderRepository, null);
+    }
+
+    @Autowired
+    public OrderService(OrderRepository orderRepository,
+                        OrderItemRepository orderItemRepository,
+                        KitchenTicketRepository kitchenTicketRepository,
+                        OrderItemAuditRepository orderItemAuditRepository,
+                        MenuItemRepository menuItemRepository,
+                        TableRepository tableRepository,
+                        SimpMessagingTemplate messagingTemplate,
+                        LoyaltyAccountRepository loyaltyAccounts,
+                        LoyaltySettingsRepository loyaltySettings,
+                        VoucherService voucherService,
+                        JdbcTemplate jdbcTemplate,
+                        ReservationRepository reservationRepository,
+                        PaymentOrderRepository paymentOrderRepository,
+                        ReservationAuditRepository reservationAuditRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.kitchenTicketRepository = kitchenTicketRepository;
@@ -90,6 +114,7 @@ public class OrderService {
         this.jdbcTemplate = jdbcTemplate;
         this.reservationRepository = reservationRepository;
         this.paymentOrderRepository = paymentOrderRepository;
+        this.reservationAuditRepository = reservationAuditRepository;
     }
 
     /**
@@ -153,10 +178,17 @@ public class OrderService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void releaseSeats(String orderId) {
+        releaseSeats(orderId, null, null);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void releaseSeats(String orderId, String reservationAction, String staffId) {
         RestaurantTable table = lockTableForOrder(orderId);
         Order order = lockOrder(orderId);
         boolean assignedSeats = order.getPartySize() != null;
         if (assignedSeats ? !order.isSeated() : order.getStatus() != OrderStatus.IN_PROGRESS) return;
+
+        boolean cancelledEmptyOrder = false;
         if (order.getStatus() == OrderStatus.IN_PROGRESS) {
             assertNoPendingVnpay(orderId);
             if (!payableItems(orderId).isEmpty()) {
@@ -164,13 +196,63 @@ public class OrderService {
             }
             order.setStatus(OrderStatus.CANCELLED);
             order.setClosedAt(LocalDateTime.now());
+            cancelledEmptyOrder = true;
         }
         if (assignedSeats) order.releaseSeats();
         orderRepository.save(order);
+
+        boolean revertedToConfirmed = false;
+        if (cancelledEmptyOrder && order.getReservationId() != null && !order.getReservationId().isBlank()) {
+            boolean hasOtherOrders = orderRepository.findByReservationId(order.getReservationId()).stream()
+                .anyMatch(o -> !o.getId().equals(orderId) && o.getStatus() != OrderStatus.CANCELLED);
+            if (!hasOtherOrders) {
+                Reservation res = reservationRepository.findActiveByIdWithTableAndZone(order.getReservationId()).orElse(null);
+                if (res != null && res.getStatus() == ReservationStatus.ARRIVED) {
+                    String actor = (staffId != null && !staffId.isBlank()) ? staffId : SystemUserInitializer.SYSTEM_USER_ID;
+                    if ("REVERT_CONFIRMED".equalsIgnoreCase(reservationAction)) {
+                        res.setStatus(ReservationStatus.CONFIRMED);
+                        reservationRepository.save(res);
+                        recordReservationAudit(res.getId(), actor, ReservationStatus.ARRIVED, ReservationStatus.CONFIRMED,
+                            res.getTableId(), res.getTableId(), "Hoàn tác Check-in từ POS");
+                        broadcastReservationChange(res);
+                        revertedToConfirmed = true;
+                    } else {
+                        res.setStatus(ReservationStatus.CANCELLED);
+                        res.setCancellationReason("Hủy đơn và trả chỗ trên POS");
+                        reservationRepository.save(res);
+                        recordReservationAudit(res.getId(), actor, ReservationStatus.ARRIVED, ReservationStatus.CANCELLED,
+                            res.getTableId(), null, "Hủy đơn và trả chỗ trên POS");
+                        broadcastReservationChange(res);
+                    }
+                }
+            }
+        }
+
         if (!assignedSeats) return; // No individual seats to release on a reserved or legacy order.
-        boolean othersSeated = orderRepository.findSeatedOrdersByTableIds(List.of(table.getId())).stream()
+
+        List<Reservation> todayReservations = reservationRepository.findActiveOrPaidReservationsForDate(LocalDate.now());
+        List<String> relatedTableIds = todayReservations.stream()
+            .filter(r -> (order.getReservationId() != null && order.getReservationId().equals(r.getId()))
+                || ((r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.PAID)
+                    && r.includesTable(table.getId())))
+            .findFirst()
+            .map(r -> java.util.stream.Stream.concat(
+                    java.util.stream.Stream.ofNullable(r.getTableId()),
+                    java.util.Arrays.stream(r.getMergedTableIds() == null ? new String[0] : r.getMergedTableIds().split(",")))
+                .map(String::trim).filter(id -> !id.isEmpty()).distinct().sorted().toList())
+            .orElseGet(() -> List.of(table.getId()));
+        boolean othersSeated = orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream()
             .anyMatch(other -> !other.getId().equals(orderId));
-        if (!othersSeated && table.getStatus() == TableStatus.OCCUPIED) makeTableAvailable(table);
+        if (!othersSeated) {
+            for (String relId : relatedTableIds) {
+                RestaurantTable target = relId.equals(table.getId())
+                    ? table
+                    : tableRepository.findByIdAndDeletedAtIsNull(relId).orElse(null);
+                if (target != null && target.getStatus() == TableStatus.OCCUPIED) {
+                    releaseOrReserveTable(target, todayReservations, revertedToConfirmed ? null : order.getReservationId());
+                }
+            }
+        }
     }
 
     private RestaurantTable lockTable(String tableId) {
@@ -289,7 +371,7 @@ public class OrderService {
                                                PaymentOrder payment) {
         RestaurantTable table = lockTableForOrder(orderId);
         Order order = payment == null ? findEditableOrder(orderId) : findOpenOrderOrThrow(orderId);
-        List<String> relatedTableIds = order.getPartySize() == null ? findRelatedTableIds(table.getId()) : List.of(table.getId());
+        List<String> relatedTableIds = findRelatedTableIds(table.getId());
         boolean releaseLegacyTable = order.getPartySize() == null &&
             orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream().noneMatch(o -> !o.getId().equals(orderId));
         return settle(table, relatedTableIds, List.of(order), request, staffId, releaseLegacyTable, false, payment);
@@ -436,18 +518,47 @@ public class OrderService {
             if (!ids.isEmpty()) voucherId = ids.get(0);
         }
 
-        List<Reservation> activeReservations = releaseLegacyTable
-            ? reservationRepository.findActiveReservationsForDate(LocalDate.now()) : List.of();
+        String effectiveStaffId = (staffId != null && !staffId.isBlank()) ? staffId : SystemUserInitializer.SYSTEM_USER_ID;
+
         Reservation matchingReservation = null;
-        for (Reservation r : activeReservations) {
-            if (relatedTableIds.stream().noneMatch(r::includesTable)) continue;
-            if (!legacyTableCheckout && r.getStatus() != ReservationStatus.ARRIVED) continue;
-            if (matchingReservation == null) matchingReservation = r;
-            if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
-                r.setStatus(ReservationStatus.PAID);
-                reservationRepository.save(r);
+        String linkedReservationId = openOrders.stream()
+            .map(Order::getReservationId)
+            .filter(id -> id != null && !id.isBlank())
+            .findFirst()
+            .orElse(null);
+        if (linkedReservationId != null) {
+            matchingReservation = reservationRepository.findActiveByIdWithTableAndZone(linkedReservationId).orElse(null);
+            if (matchingReservation != null && (matchingReservation.getStatus() == ReservationStatus.ARRIVED
+                || matchingReservation.getStatus() == ReservationStatus.CONFIRMED)) {
+                ReservationStatus prevStatus = matchingReservation.getStatus();
+                matchingReservation.setStatus(ReservationStatus.PAID);
+                reservationRepository.save(matchingReservation);
+                recordReservationAudit(matchingReservation.getId(), effectiveStaffId, prevStatus, ReservationStatus.PAID,
+                    matchingReservation.getTableId(), matchingReservation.getTableId(), "Thanh toán hóa đơn tại POS");
+                broadcastReservationChange(matchingReservation);
             }
-            if (!legacyTableCheckout) break;
+        }
+
+        boolean allowLegacyTableReservationMatch = openOrders.stream().anyMatch(o -> o.getPartySize() == null)
+            || !legacyTableCheckout && linkedReservationId == null && orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream()
+                .noneMatch(o -> o.getReservationId() != null && !o.getReservationId().isBlank());
+
+        if (matchingReservation == null && (legacyTableCheckout || allowLegacyTableReservationMatch)) {
+            List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(LocalDate.now());
+            for (Reservation r : activeReservations) {
+                if (relatedTableIds.stream().noneMatch(r::includesTable)) continue;
+                if (!legacyTableCheckout && r.getStatus() != ReservationStatus.ARRIVED) continue;
+                if (matchingReservation == null) matchingReservation = r;
+                if (r.getStatus() == ReservationStatus.ARRIVED || r.getStatus() == ReservationStatus.CONFIRMED) {
+                    ReservationStatus prevStatus = r.getStatus();
+                    r.setStatus(ReservationStatus.PAID);
+                    reservationRepository.save(r);
+                    recordReservationAudit(r.getId(), effectiveStaffId, prevStatus, ReservationStatus.PAID,
+                        r.getTableId(), r.getTableId(), "Thanh toán hóa đơn tại POS");
+                    broadcastReservationChange(r);
+                }
+                if (!legacyTableCheckout) break;
+            }
         }
 
         String actualCustomerId = null;
@@ -464,8 +575,6 @@ public class OrderService {
             actualCustomerPhone = phone;
             actualCustomerId = findCustomerIdByPhone(phone);
         }
-
-        String effectiveStaffId = (staffId != null && !staffId.isBlank()) ? staffId : SystemUserInitializer.SYSTEM_USER_ID;
 
         String voucherInvoiceId = createCheckoutInvoices(
                 openOrders, actualCustomerId, actualCustomerPhone, phone, voucherId, voucherCode, discount,
@@ -525,6 +634,16 @@ public class OrderService {
             return new VipBillingInfo(BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
+        for (Order targetOrder : targetOrders) {
+            if (targetOrder.getReservationId() != null && !targetOrder.getReservationId().isBlank()) {
+                Reservation linked = reservationRepository.findActiveByIdWithTableAndZone(targetOrder.getReservationId()).orElse(null);
+                if (linked != null && linked.getDepositAmount() != null
+                    && linked.getDepositAmount().compareTo(BigDecimal.ZERO) > 0) {
+                    return new VipBillingInfo(BigDecimal.ZERO, linked.getDepositAmount().setScale(2, RoundingMode.HALF_UP));
+                }
+            }
+        }
+
         List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(LocalDate.now());
         for (Reservation r : activeReservations) {
             if (r.getStatus() == ReservationStatus.ARRIVED
@@ -562,6 +681,56 @@ public class OrderService {
             return count != null && count > 0;
         } catch (Exception ex) {
             return false;
+        }
+    }
+
+    private void releaseOrReserveTable(RestaurantTable table, List<Reservation> todayReservations, String excludeReservationId) {
+        boolean hasConfirmedInWindow = todayReservations != null && todayReservations.stream().anyMatch(r ->
+            (excludeReservationId == null || !excludeReservationId.equals(r.getId()))
+            && r.getStatus() == ReservationStatus.CONFIRMED
+            && r.includesTable(table.getId())
+            && ReservationService.isWithinReservationWindow(r.getReservationDate(), r.getReservationTime())
+        );
+        if (hasConfirmedInWindow) {
+            TableStatus oldStatus = table.getStatus();
+            table.setStatus(TableStatus.RESERVED);
+            tableRepository.save(table);
+            try {
+                String zoneName = table.getZone() != null ? table.getZone().getZoneName() : null;
+                messagingTemplate.convertAndSend("/topic/table-status",
+                    new com.huongViet.table.TableStatusMessage(table.getId(), table.getTableNumber(), oldStatus,
+                        TableStatus.RESERVED, zoneName));
+            } catch (Exception ex) {
+                logger.warn("Không thể broadcast giữ bàn {}: {}", table.getTableNumber(), ex.getMessage());
+            }
+            return;
+        }
+        makeTableAvailable(table);
+    }
+
+    private void recordReservationAudit(String reservationId, String changedBy,
+                                        ReservationStatus oldStatus, ReservationStatus newStatus,
+                                        String oldTableId, String newTableId, String reason) {
+        if (reservationAuditRepository == null || reservationId == null) return;
+        try {
+            reservationAuditRepository.save(new ReservationAudit(
+                UUID.randomUUID().toString(), reservationId, changedBy, oldStatus, newStatus,
+                oldTableId, newTableId, reason
+            ));
+        } catch (Exception ex) {
+            logger.warn("Không thể ghi audit đặt bàn {}: {}", reservationId, ex.getMessage());
+        }
+    }
+
+    private void broadcastReservationChange(Reservation reservation) {
+        if (messagingTemplate == null || reservation == null) return;
+        try {
+            messagingTemplate.convertAndSend("/topic/reservations", java.util.Map.of(
+                "reservationId", reservation.getId(),
+                "status", reservation.getStatus().name()
+            ));
+        } catch (Exception ex) {
+            logger.warn("Không thể broadcast cập nhật đặt bàn {}: {}", reservation.getId(), ex.getMessage());
         }
     }
 
@@ -716,7 +885,55 @@ public class OrderService {
                 : List.of(order.getTableId());
             vipInfo = resolveVipBillingInfo(order.getTable(), List.of(order), relatedTableIds);
         }
-        return OrderResponse.from(order, items, displayTableNumber(order), vipInfo.vipFeeAmount(), vipInfo.vipDepositPaid());
+
+        String resId = order.getReservationId();
+        String resCode = null;
+        String resGuestName = null;
+        String resGuestPhone = null;
+        String resTime = null;
+        String resNotes = null;
+        String resTableNumber = null;
+        BigDecimal resDeposit = null;
+
+        if (resId != null && !resId.isBlank()) {
+            Reservation res = order.getReservation();
+            if (res == null) {
+                res = reservationRepository.findActiveByIdWithTableAndZone(resId).orElse(null);
+            }
+            if (res != null) {
+                resCode = res.getBookingCode();
+                resGuestName = res.getGuestName();
+                resGuestPhone = res.getGuestPhone();
+                resTime = res.getReservationTime() != null ? res.getReservationTime().toString().substring(0, 5) : null;
+                resNotes = res.getSpecialRequests();
+                resDeposit = res.getDepositAmount();
+                resTableNumber = resolveReservationTableNumber(res);
+            }
+        }
+
+        return OrderResponse.from(
+            order, items, displayTableNumber(order), vipInfo.vipFeeAmount(), vipInfo.vipDepositPaid(),
+            resId, resCode, resGuestName, resGuestPhone, resTime, resNotes, resTableNumber, resDeposit
+        );
+    }
+
+    private String resolveReservationTableNumber(Reservation res) {
+        if (res.getMergedTableIds() != null && !res.getMergedTableIds().isBlank()) {
+            List<String> ids = java.util.Arrays.stream(res.getMergedTableIds().split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toList();
+            if (ids.size() > 1) {
+                return tableRepository.findAllById(ids).stream()
+                    .map(RestaurantTable::getTableNumber)
+                    .collect(Collectors.joining(" + "));
+            }
+        }
+        if (res.getTable() != null) {
+            return res.getTable().getTableNumber();
+        }
+        if (res.getTableId() != null) {
+            return tableRepository.findById(res.getTableId()).map(RestaurantTable::getTableNumber).orElse(null);
+        }
+        return null;
     }
 
     private String displayTableNumber(Order order) {

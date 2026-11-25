@@ -25,13 +25,22 @@ public record OrderResponse(
     Integer partySize,
     boolean seated,
     BigDecimal vipFeeAmount,
-    BigDecimal vipDepositPaid
+    BigDecimal vipDepositPaid,
+    String reservationId,
+    String reservationCode,
+    String reservationGuestName,
+    String reservationGuestPhone,
+    String reservationTime,
+    String reservationSpecialRequests,
+    String reservationTableNumber,
+    BigDecimal reservationDepositAmount
 ) {
     public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
                          OrderStatus status, String createdAt, String closedAt, BigDecimal subtotal,
                          BigDecimal cancelledAmount, List<OrderItemResponse> items) {
         this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
-            items, null, false, BigDecimal.ZERO, BigDecimal.ZERO);
+            items, null, false, BigDecimal.ZERO, BigDecimal.ZERO,
+            null, null, null, null, null, null, null, null);
     }
 
     public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
@@ -39,7 +48,18 @@ public record OrderResponse(
                          BigDecimal cancelledAmount, List<OrderItemResponse> items,
                          Integer partySize, boolean seated) {
         this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
-            items, partySize, seated, BigDecimal.ZERO, BigDecimal.ZERO);
+            items, partySize, seated, BigDecimal.ZERO, BigDecimal.ZERO,
+            null, null, null, null, null, null, null, null);
+    }
+
+    public OrderResponse(String id, String tableId, String tableNumber, String staffId, OrderType orderType,
+                         OrderStatus status, String createdAt, String closedAt, BigDecimal subtotal,
+                         BigDecimal cancelledAmount, List<OrderItemResponse> items,
+                         Integer partySize, boolean seated,
+                         BigDecimal vipFeeAmount, BigDecimal vipDepositPaid) {
+        this(id, tableId, tableNumber, staffId, orderType, status, createdAt, closedAt, subtotal, cancelledAmount,
+            items, partySize, seated, vipFeeAmount, vipDepositPaid,
+            null, null, null, null, null, null, null, null);
     }
 
     public static OrderResponse from(Order order, List<OrderItem> items) {
@@ -53,6 +73,16 @@ public record OrderResponse(
 
     public static OrderResponse from(Order order, List<OrderItem> items, String tableNumber,
                                      BigDecimal vipFeeAmount, BigDecimal vipDepositPaid) {
+        return from(order, items, tableNumber, vipFeeAmount, vipDepositPaid,
+            null, null, null, null, null, null, null, null);
+    }
+
+    public static OrderResponse from(Order order, List<OrderItem> items, String tableNumber,
+                                     BigDecimal vipFeeAmount, BigDecimal vipDepositPaid,
+                                     String reservationId, String reservationCode,
+                                     String reservationGuestName, String reservationGuestPhone,
+                                     String reservationTime, String reservationSpecialRequests,
+                                     String reservationTableNumber, BigDecimal reservationDepositAmount) {
         List<OrderItemResponse> itemResponses = items != null
             ? items.stream().map(OrderItemResponse::from).toList()
             : List.of();
@@ -82,7 +112,15 @@ public record OrderResponse(
             order.getPartySize(),
             order.isSeated(),
             vipFeeAmount != null ? vipFeeAmount : BigDecimal.ZERO,
-            vipDepositPaid != null ? vipDepositPaid : BigDecimal.ZERO
+            vipDepositPaid != null ? vipDepositPaid : BigDecimal.ZERO,
+            reservationId,
+            reservationCode,
+            reservationGuestName,
+            reservationGuestPhone,
+            reservationTime,
+            reservationSpecialRequests,
+            reservationTableNumber,
+            reservationDepositAmount
         );
     }
 }

@@ -7,8 +7,10 @@ import com.huongViet.reservation.Reservation;
 import com.huongViet.reservation.ReservationRepository;
 import com.huongViet.reservation.ReservationService;
 import com.huongViet.reservation.ReservationStatus;
+import com.huongViet.reservation.dto.UpdateReservationStatusRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,7 @@ public class TableService {
     private final ReservationRepository reservationRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final OrderRepository orderRepository;
+    private final ReservationService reservationService;
 
     public TableService(TableRepository tableRepository,
                         ZoneRepository zoneRepository,
@@ -45,12 +48,25 @@ public class TableService {
                         ReservationRepository reservationRepository,
                         SimpMessagingTemplate messagingTemplate,
                         OrderRepository orderRepository) {
+        this(tableRepository, zoneRepository, floorPlanLayoutRepository, reservationRepository,
+            messagingTemplate, orderRepository, null);
+    }
+
+    @Autowired
+    public TableService(TableRepository tableRepository,
+                        ZoneRepository zoneRepository,
+                        FloorPlanLayoutRepository floorPlanLayoutRepository,
+                        ReservationRepository reservationRepository,
+                        SimpMessagingTemplate messagingTemplate,
+                        OrderRepository orderRepository,
+                        ReservationService reservationService) {
         this.tableRepository = tableRepository;
         this.zoneRepository = zoneRepository;
         this.floorPlanLayoutRepository = floorPlanLayoutRepository;
         this.reservationRepository = reservationRepository;
         this.messagingTemplate = messagingTemplate;
         this.orderRepository = orderRepository;
+        this.reservationService = reservationService;
     }
 
     public List<TableResponse> listAll() {
@@ -95,23 +111,23 @@ public class TableService {
             return TableStatus.AVAILABLE;
         }
 
+        LocalDateTime nowDateTime = LocalDateTime.of(LocalDate.now(), nowTime);
         for (Reservation r : todayReservations) {
-            boolean matchesTable = (table.getId().equals(r.getTableId()))
-                || (r.getMergedTableIds() != null && r.getMergedTableIds().contains(table.getId()));
-
-            if (!matchesTable) {
+            if (!r.includesTable(table.getId())) {
                 continue;
             }
 
-            LocalTime bookingTime = r.getReservationTime();
-            LocalTime windowEnd = bookingTime.plus(ReservationService.DINING_WINDOW);
+            LocalDate resDate = r.getReservationDate() != null ? r.getReservationDate() : LocalDate.now();
+            LocalDateTime bookingDateTime = LocalDateTime.of(resDate, r.getReservationTime());
+            LocalDateTime windowEnd = bookingDateTime.plus(ReservationService.DINING_WINDOW);
 
             if (r.getStatus() == ReservationStatus.ARRIVED) {
-                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
+                if (!nowDateTime.isBefore(bookingDateTime.minusMinutes(30)) && !nowDateTime.isAfter(windowEnd)) {
                     return TableStatus.OCCUPIED;
                 }
             } else if (r.getStatus() == ReservationStatus.CONFIRMED) {
-                if (!nowTime.isBefore(bookingTime.minusMinutes(30)) && !nowTime.isAfter(windowEnd)) {
+                if (!nowDateTime.isBefore(bookingDateTime.minusMinutes(ReservationService.RESERVE_BEFORE_MINUTES))
+                    && !nowDateTime.isAfter(windowEnd)) {
                     return TableStatus.RESERVED;
                 }
             }
@@ -285,11 +301,18 @@ public class TableService {
      */
     @Transactional
     public TableResponse updateStatus(String id, UpdateTableStatusRequest request) {
+        return updateStatus(id, request, null);
+    }
+
+    @Transactional
+    public TableResponse updateStatus(String id, UpdateTableStatusRequest request, String actorId) {
         RestaurantTable table = tableRepository.lockActiveById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy bàn."));
+        List<Reservation> todayReservations = reservationRepository != null
+            ? reservationRepository.findActiveReservationsForDate(LocalDate.now())
+            : List.of();
         if (request.status() != TableStatus.OCCUPIED) {
-            List<String> tableIds = Reservation.relatedArrivedTableIds(id,
-                reservationRepository.findActiveReservationsForDate(LocalDate.now()));
+            List<String> tableIds = Reservation.relatedArrivedTableIds(id, todayReservations);
             List<Order> orders = orderRepository.findSeatedOrdersByTableIds(tableIds);
             if (orders.stream().anyMatch(order -> order.getStatus() == OrderStatus.IN_PROGRESS && !order.isSeated())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -301,6 +324,72 @@ public class TableService {
             }
         }
         TableStatus oldStatus = table.getStatus();
+        TableStatus effectiveStatus = calculateDynamicStatus(table, todayReservations, LocalTime.now());
+
+        if (reservationService != null && !todayReservations.isEmpty()) {
+            Reservation matchingConfirmed = todayReservations.stream()
+                .filter(r -> r.getStatus() == ReservationStatus.CONFIRMED && r.includesTable(id))
+                .filter(r -> request.reservationId() == null || request.reservationId().isBlank()
+                    || r.getId().equals(request.reservationId()))
+                .filter(r -> request.status() == TableStatus.MAINTENANCE
+                    || ReservationService.isWithinReservationWindow(r.getReservationDate(), r.getReservationTime()))
+                .findFirst()
+                .orElse(null);
+
+            if (request.status() == TableStatus.OCCUPIED
+                && (oldStatus == TableStatus.RESERVED || effectiveStatus == TableStatus.RESERVED)
+                && matchingConfirmed != null) {
+                String note = (request.reason() != null && !request.reason().isBlank())
+                    ? request.reason()
+                    : "Check-in từ đổi trạng thái bàn trên POS";
+                reservationService.updateStatus(
+                    matchingConfirmed.getId(),
+                    new UpdateReservationStatusRequest(ReservationStatus.ARRIVED, null, null, note),
+                    actorId
+                );
+                RestaurantTable refreshed = tableRepository.findByIdActiveWithZone(id).orElse(table);
+                return TableResponse.from(refreshed, TableStatus.OCCUPIED);
+            }
+
+            if (request.status() == TableStatus.AVAILABLE
+                && (oldStatus == TableStatus.RESERVED || effectiveStatus == TableStatus.RESERVED)
+                && matchingConfirmed != null) {
+                ReservationStatus targetResStatus;
+                if ("NO_SHOW".equalsIgnoreCase(request.reservationAction())) {
+                    targetResStatus = ReservationStatus.NO_SHOW;
+                } else if ("CANCEL".equalsIgnoreCase(request.reservationAction())) {
+                    targetResStatus = ReservationStatus.CANCELLED;
+                } else {
+                    LocalDateTime bookingDt = LocalDateTime.of(
+                        matchingConfirmed.getReservationDate(), matchingConfirmed.getReservationTime());
+                    targetResStatus = LocalDateTime.now().isAfter(bookingDt)
+                        ? ReservationStatus.NO_SHOW
+                        : ReservationStatus.CANCELLED;
+                }
+                String note = (request.reason() != null && !request.reason().isBlank())
+                    ? request.reason()
+                    : (targetResStatus == ReservationStatus.NO_SHOW
+                        ? "Khách không đến (cập nhật từ trạng thái bàn trên POS)"
+                        : "Nhân viên trả bàn trống từ màn hình Phục vụ & Thu ngân");
+                reservationService.updateStatus(
+                    matchingConfirmed.getId(),
+                    new UpdateReservationStatusRequest(targetResStatus, null, null, note),
+                    actorId
+                );
+                RestaurantTable refreshed = tableRepository.findByIdActiveWithZone(id).orElse(table);
+                return TableResponse.from(refreshed, refreshed.getStatus());
+            }
+
+            if (request.status() == TableStatus.MAINTENANCE) {
+                List<Reservation> confirmedOnTable = todayReservations.stream()
+                    .filter(r -> r.getStatus() == ReservationStatus.CONFIRMED && r.includesTable(id))
+                    .toList();
+                for (Reservation r : confirmedOnTable) {
+                    reservationService.unassignTablesForMaintenance(r, id, actorId);
+                }
+            }
+        }
+
         table.setStatus(request.status());
         RestaurantTable saved = tableRepository.save(table);
         if (saved == null) {

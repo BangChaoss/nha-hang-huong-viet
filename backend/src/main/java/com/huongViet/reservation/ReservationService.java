@@ -1,5 +1,9 @@
 package com.huongViet.reservation;
 
+import com.huongViet.order.Order;
+import com.huongViet.order.OrderRepository;
+import com.huongViet.order.OrderStatus;
+import com.huongViet.order.OrderType;
 import com.huongViet.reservation.dto.CancelReservationRequest;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
@@ -61,6 +65,7 @@ public class ReservationService {
 
     public static final List<LocalTime> TIME_SLOTS = generateContinuousTimeSlots();
     public static final Duration DINING_WINDOW = Duration.ofMinutes(119);
+    public static final int RESERVE_BEFORE_MINUTES = 120;
     public static final BigDecimal VIP_DEPOSIT_AMOUNT = new BigDecimal("250000");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
@@ -81,6 +86,7 @@ public class ReservationService {
     private final ReservationAuditRepository reservationAuditRepository;
     private final ReservationEmailService emailService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final OrderRepository orderRepository;
 
     @Autowired
     public ReservationService(ReservationRepository reservationRepository,
@@ -88,13 +94,15 @@ public class ReservationService {
                               TableRepository tableRepository,
                               ReservationAuditRepository reservationAuditRepository,
                               ReservationEmailService emailService,
-                              SimpMessagingTemplate messagingTemplate) {
+                              SimpMessagingTemplate messagingTemplate,
+                              OrderRepository orderRepository) {
         this.reservationRepository = reservationRepository;
         this.zoneRepository = zoneRepository;
         this.tableRepository = tableRepository;
         this.reservationAuditRepository = reservationAuditRepository;
         this.emailService = emailService;
         this.messagingTemplate = messagingTemplate;
+        this.orderRepository = orderRepository;
     }
 
     public void validateTransition(ReservationStatus from, ReservationStatus to) {
@@ -173,6 +181,7 @@ public class ReservationService {
         if (!isVipZone) {
             emailService.sendBookingConfirmation(saved, zone.getZoneName());
         }
+        broadcastReservationChange(saved);
         return toResponse(saved, zone.getId(), zone.getZoneName(), zone.getIsVip());
     }
 
@@ -432,9 +441,8 @@ public class ReservationService {
             reservation.setZoneId(primaryZoneId);
             reservation.setMergedTableIds(String.join(",", targetTableIds));
 
-            // ĐỒNG BỘ: Nếu đơn đặt bàn diễn ra trong ngày hôm nay, lập tức đổi các bàn sang RESERVED
-            LocalDate today = LocalDate.now();
-            if (reservation.getReservationDate().isEqual(today)) {
+            // ĐỒNG BỘ: Chỉ chuyển bàn sang RESERVED khi đã nằm trong cửa sổ 2 tiếng (120 phút) trước giờ hẹn
+            if (isWithinReservationWindow(reservation.getReservationDate(), reservation.getReservationTime())) {
                 int remainingParty = reservation.getPartySize();
                 for (RestaurantTable tbl : assignedTables) {
                     int partyForTbl = Math.min(remainingParty, tbl.getCapacity());
@@ -475,15 +483,42 @@ public class ReservationService {
             }
 
             targetTableIds.sort(String::compareTo);
+            boolean isMergedBooking = targetTableIds.size() > 1;
             int remainingParty = reservation.getPartySize();
             for (String tId : targetTableIds) {
                 final int currentRemaining = remainingParty;
                 tableRepository.lockActiveById(tId).ifPresent(t -> {
-                    if (tableRepository.hasSeatedGuests(tId)) {
-                        throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
-                    }
                     int take = Math.min(currentRemaining, t.getCapacity());
+                    if (isMergedBooking) {
+                        if (tableRepository.hasSeatedGuests(tId)) {
+                            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
+                        }
+                    } else {
+                        List<Order> seatedOrders = orderRepository.findSeatedOrdersByTableIds(List.of(tId));
+                        if (seatedOrders.isEmpty() && tableRepository.hasSeatedGuests(tId)) {
+                            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
+                        }
+                        if (!seatedOrders.isEmpty()) {
+                            List<Reservation> todayActive = reservationRepository.findActiveReservationsForDate(LocalDate.now());
+                            boolean hasExclusiveSeated = seatedOrders.stream().anyMatch(o -> o.getPartySize() == null)
+                                || todayActive.stream().anyMatch(r -> !r.getId().equals(reservation.getId())
+                                    && r.getStatus() == ReservationStatus.ARRIVED
+                                    && r.getMergedTableIds() != null && r.getMergedTableIds().contains(",")
+                                    && r.includesTable(tId));
+                            if (hasExclusiveSeated) {
+                                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                    "Bàn " + t.getTableNumber() + " còn khách đang ngồi. Vui lòng xếp bàn khác trước khi check-in.");
+                            }
+                            int freeSeats = Order.availableSeats(t.getCapacity(), seatedOrders);
+                            if (freeSeats < take) {
+                                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                    String.format("Bàn %s chỉ còn %d chỗ trống, không đủ cho đoàn %d khách.",
+                                        t.getTableNumber(), freeSeats, reservation.getPartySize()));
+                            }
+                        }
+                    }
                     TableStatus oldTStatus = t.getStatus();
                     t.setStatus(TableStatus.OCCUPIED);
                     tableRepository.save(t);
@@ -492,6 +527,21 @@ public class ReservationService {
                 RestaurantTable locked = tableRepository.findById(tId).orElse(null);
                 if (locked != null) {
                     remainingParty = Math.max(0, remainingParty - locked.getCapacity());
+                }
+            }
+
+            String primaryTableId = reservation.getTableId() != null
+                ? reservation.getTableId()
+                : (targetTableIds.isEmpty() ? null : targetTableIds.get(0));
+            if (primaryTableId != null) {
+                boolean hasOpenOrderForReservation = orderRepository
+                    .findFirstByReservationIdAndStatusOrderByCreatedAtDesc(reservation.getId(), OrderStatus.IN_PROGRESS)
+                    .isPresent();
+                if (!hasOpenOrderForReservation) {
+                    Order dineInOrder = new Order(UUID.randomUUID().toString(), primaryTableId, changedBy, OrderType.DINE_IN);
+                    dineInOrder.setReservationId(reservation.getId());
+                    dineInOrder.setPartySize(reservation.getPartySize());
+                    orderRepository.save(dineInOrder);
                 }
             }
         }
@@ -530,6 +580,7 @@ public class ReservationService {
             emailService.sendBookingCancelledEmail(saved, cancelReason, response.zoneName());
         }
 
+        broadcastReservationChange(saved);
         return response;
     }
 
@@ -597,6 +648,7 @@ public class ReservationService {
 
         ReservationResponse response = toResponse(saved);
         emailService.sendBookingCancelledEmail(saved, reason, response.zoneName());
+        broadcastReservationChange(saved);
         return response;
     }
 
@@ -620,6 +672,10 @@ public class ReservationService {
             tableRepository.lockActiveById(tableId).ifPresent(t -> {
                 TableStatus oldStatus = t.getStatus();
                 if (oldStatus == TableStatus.RESERVED) {
+                    if (hasOtherConfirmedInWindow(tableId, reservation.getId())) {
+                        broadcastTableStatus(t, TableStatus.RESERVED, TableStatus.RESERVED, 0);
+                        return;
+                    }
                     t.setStatus(TableStatus.AVAILABLE);
                     tableRepository.save(t);
                     broadcastTableStatus(t, oldStatus, TableStatus.AVAILABLE, 0);
@@ -697,6 +753,7 @@ public class ReservationService {
 
         String zoneName = (saved.getZone() != null) ? saved.getZone().getZoneName() : "Khu vực VIP";
         emailService.sendBookingConfirmation(saved, zoneName);
+        broadcastReservationChange(saved);
 
         return toResponse(saved);
     }
@@ -713,6 +770,90 @@ public class ReservationService {
             }
         }
         return alternatives;
+    }
+
+    public static boolean isWithinReservationWindow(LocalDate reservationDate, LocalTime reservationTime) {
+        if (reservationDate == null || reservationTime == null) {
+            return false;
+        }
+        LocalDateTime bookingDateTime = LocalDateTime.of(reservationDate, reservationTime);
+        LocalDateTime now = LocalDateTime.now();
+        return !now.isBefore(bookingDateTime.minusMinutes(RESERVE_BEFORE_MINUTES))
+            && !now.isAfter(bookingDateTime.plus(DINING_WINDOW));
+    }
+
+    public boolean hasOtherConfirmedInWindow(String tableId, String excludeReservationId) {
+        List<Reservation> todayActive = reservationRepository.findActiveReservationsForDate(LocalDate.now());
+        if (todayActive == null || todayActive.isEmpty()) {
+            return false;
+        }
+        return todayActive.stream().anyMatch(r ->
+            !r.getId().equals(excludeReservationId)
+            && r.getStatus() == ReservationStatus.CONFIRMED
+            && r.includesTable(tableId)
+            && isWithinReservationWindow(r.getReservationDate(), r.getReservationTime())
+        );
+    }
+
+    @Transactional
+    public void unassignTablesForMaintenance(Reservation reservation, String maintenanceTableId, String changedBy) {
+        if (reservation == null || reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            return;
+        }
+        String oldTableId = reservation.getTableId();
+        Set<String> targetTableIds = new HashSet<>();
+        if (reservation.getMergedTableIds() != null && !reservation.getMergedTableIds().isBlank()) {
+            Arrays.stream(reservation.getMergedTableIds().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .forEach(targetTableIds::add);
+        }
+        if (oldTableId != null && !oldTableId.isBlank()) {
+            targetTableIds.add(oldTableId.trim());
+        }
+
+        for (String tId : targetTableIds) {
+            if (tId.equals(maintenanceTableId)) continue;
+            tableRepository.lockActiveById(tId).ifPresent(t -> {
+                if (t.getStatus() == TableStatus.RESERVED && !hasOtherConfirmedInWindow(tId, reservation.getId())) {
+                    TableStatus prev = t.getStatus();
+                    t.setStatus(TableStatus.AVAILABLE);
+                    tableRepository.save(t);
+                    broadcastTableStatus(t, prev, TableStatus.AVAILABLE, 0);
+                }
+            });
+        }
+
+        ReservationStatus oldStatus = reservation.getStatus();
+        reservation.setStatus(ReservationStatus.PENDING_HOLD);
+        reservation.setTableId(null);
+        reservation.setMergedTableIds(null);
+        Reservation saved = reservationRepository.save(reservation);
+
+        String actor = (changedBy != null && !changedBy.isBlank()) ? changedBy : com.huongViet.auth.SystemUserInitializer.SYSTEM_USER_ID;
+        reservationAuditRepository.save(new ReservationAudit(
+            UUID.randomUUID().toString(),
+            saved.getId(),
+            actor,
+            oldStatus,
+            ReservationStatus.PENDING_HOLD,
+            oldTableId,
+            null,
+            "Bàn chuyển sang bảo trì — chờ xếp bàn mới"
+        ));
+        broadcastReservationChange(saved);
+    }
+
+    private void broadcastReservationChange(Reservation reservation) {
+        if (messagingTemplate == null || reservation == null) return;
+        try {
+            messagingTemplate.convertAndSend("/topic/reservations", Map.of(
+                "reservationId", reservation.getId(),
+                "status", reservation.getStatus().name()
+            ));
+        } catch (Exception ex) {
+            logger.warn("Không thể phát sự kiện cập nhật đặt bàn {}: {}", reservation.getId(), ex.getMessage());
+        }
     }
 
     private void broadcastTableStatus(RestaurantTable table, TableStatus oldStatus, TableStatus newStatus) {

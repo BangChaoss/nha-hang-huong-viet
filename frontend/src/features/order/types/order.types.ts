@@ -45,6 +45,14 @@ export type OrderResponse = {
   seated?: boolean;
   vipFeeAmount?: number;
   vipDepositPaid?: number;
+  reservationId?: string | null;
+  reservationCode?: string | null;
+  reservationGuestName?: string | null;
+  reservationGuestPhone?: string | null;
+  reservationTime?: string | null;
+  reservationSpecialRequests?: string | null;
+  reservationTableNumber?: string | null;
+  reservationDepositAmount?: number | null;
 };
 
 /** Một phiếu bếp (một dòng món được đẩy xuống bếp). */

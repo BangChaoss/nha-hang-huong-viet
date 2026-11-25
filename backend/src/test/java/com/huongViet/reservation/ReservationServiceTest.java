@@ -1,6 +1,10 @@
 package com.huongViet.reservation;
 
 import com.huongViet.reservation.dto.CancelReservationRequest;
+import com.huongViet.order.Order;
+import com.huongViet.order.OrderRepository;
+import com.huongViet.order.OrderStatus;
+import com.huongViet.order.OrderType;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
 import com.huongViet.reservation.dto.UpdateReservationStatusRequest;
@@ -56,6 +60,8 @@ class ReservationServiceTest {
     private ReservationEmailService emailService;
     @Mock
     private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
+    @Mock
+    private OrderRepository orderRepository;
 
     private ReservationService reservationService;
 
@@ -70,7 +76,8 @@ class ReservationServiceTest {
             tableRepository,
             reservationAuditRepository,
             emailService,
-            messagingTemplate
+            messagingTemplate,
+            orderRepository
         );
 
         sampleZone = new TableZone("zone-1", "Tầng trệt trong nhà", false);
@@ -520,6 +527,11 @@ class ReservationServiceTest {
         when(reservationRepository.save(any(Reservation.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
 
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("tbl-1")))
+            .thenReturn(List.of());
+        when(orderRepository.save(any(Order.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
         UpdateReservationStatusRequest checkInReq = new UpdateReservationStatusRequest(
             ReservationStatus.ARRIVED, null, null, null
         );
@@ -527,6 +539,15 @@ class ReservationServiceTest {
         ReservationResponse response = reservationService.updateStatus("res-valid", checkInReq, "staff-1");
         assertNotNull(response);
         assertEquals(ReservationStatus.ARRIVED, response.status());
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order createdOrder = orderCaptor.getValue();
+        assertEquals("tbl-1", createdOrder.getTableId());
+        assertEquals("staff-1", createdOrder.getStaffId());
+        assertEquals(OrderType.DINE_IN, createdOrder.getOrderType());
+        assertEquals(OrderStatus.IN_PROGRESS, createdOrder.getStatus());
+        assertEquals(4, createdOrder.getPartySize());
     }
 
     @Test
@@ -1023,5 +1044,94 @@ class ReservationServiceTest {
         );
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
         assertTrue(ex.getReason().contains("chờ thanh toán phí thu & cọc phòng VIP"));
+    }
+
+    @Test
+    @DisplayName("31. confirm_moreThan2HoursBefore_doesNotLockTableReserved - Xác nhận đơn trước > 2 tiếng chưa khóa bàn RESERVED")
+    void confirm_moreThan2HoursBefore_doesNotLockTableReserved() {
+        LocalDateTime later = LocalDateTime.now().plusHours(3);
+        Reservation res = new Reservation(
+            "res-3h", null, "Khách Tối", "0901112233", null, 4,
+            later.toLocalDate(), later.toLocalTime(), null, "zone-1"
+        );
+        res.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+        t1.setStatus(TableStatus.AVAILABLE);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-3h")).thenReturn(Optional.of(res));
+        when(tableRepository.findAllById(List.of("tbl-1"))).thenReturn(List.of(t1));
+        when(reservationRepository.save(any(Reservation.class))).thenAnswer(i -> i.getArgument(0));
+
+        ReservationResponse resp = reservationService.updateStatus(
+            "res-3h", new UpdateReservationStatusRequest(ReservationStatus.CONFIRMED, "tbl-1", null), "staff-1"
+        );
+
+        assertEquals(ReservationStatus.CONFIRMED, resp.status());
+        assertEquals(TableStatus.AVAILABLE, t1.getStatus());
+        verify(tableRepository, never()).save(t1);
+    }
+
+    @Test
+    @DisplayName("32. confirm_within2Hours_locksTableReserved - Xác nhận đơn trong vòng <= 2 tiếng lập tức khóa bàn RESERVED")
+    void confirm_within2Hours_locksTableReserved() {
+        LocalDateTime soon = LocalDateTime.now().plusMinutes(60);
+        Reservation res = new Reservation(
+            "res-1h", null, "Khách Sắp Đến", "0901112233", null, 4,
+            soon.toLocalDate(), soon.toLocalTime(), null, "zone-1"
+        );
+        res.setStatus(ReservationStatus.PENDING_HOLD);
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+        t1.setStatus(TableStatus.AVAILABLE);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-1h")).thenReturn(Optional.of(res));
+        when(tableRepository.findAllById(List.of("tbl-1"))).thenReturn(List.of(t1));
+        when(reservationRepository.save(any(Reservation.class))).thenAnswer(i -> i.getArgument(0));
+
+        ReservationResponse resp = reservationService.updateStatus(
+            "res-1h", new UpdateReservationStatusRequest(ReservationStatus.CONFIRMED, "tbl-1", null), "staff-1"
+        );
+
+        assertEquals(ReservationStatus.CONFIRMED, resp.status());
+        assertEquals(TableStatus.RESERVED, t1.getStatus());
+        verify(tableRepository).save(t1);
+    }
+
+    @Test
+    @DisplayName("33. checkIn_sharedSeatingTwoReservations_createsSecondLinkedOrder - Hai đơn đặt bàn ngồi ghép cùng bàn đều check-in được")
+    void checkIn_sharedSeatingTwoReservations_createsSecondLinkedOrder() {
+        LocalDateTime now = LocalDateTime.now();
+        Reservation res2 = new Reservation(
+            "res-shared-2", null, "Khách 2", "0902223333", null, 2,
+            now.toLocalDate(), now.toLocalTime(), null, "zone-1"
+        );
+        res2.setStatus(ReservationStatus.CONFIRMED);
+        res2.setTableId("tbl-1");
+
+        RestaurantTable t1 = new RestaurantTable("tbl-1", "zone-1", "Bàn 01", 4);
+        t1.setStatus(TableStatus.OCCUPIED);
+
+        Order existingOrder = new Order("ord-1", "tbl-1", "staff-1", OrderType.DINE_IN);
+        existingOrder.setReservationId("res-shared-1");
+        existingOrder.setPartySize(2);
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-shared-2")).thenReturn(Optional.of(res2));
+        when(tableRepository.lockActiveById("tbl-1")).thenReturn(Optional.of(t1));
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("tbl-1"))).thenReturn(List.of(existingOrder));
+        when(orderRepository.findFirstByReservationIdAndStatusOrderByCreatedAtDesc("res-shared-2", OrderStatus.IN_PROGRESS))
+            .thenReturn(Optional.empty());
+        when(reservationRepository.save(any(Reservation.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+        ReservationResponse resp = reservationService.updateStatus(
+            "res-shared-2", new UpdateReservationStatusRequest(ReservationStatus.ARRIVED, null, null), "staff-1"
+        );
+
+        assertEquals(ReservationStatus.ARRIVED, resp.status());
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertEquals("res-shared-2", orderCaptor.getValue().getReservationId());
+        assertEquals(2, orderCaptor.getValue().getPartySize());
     }
 }

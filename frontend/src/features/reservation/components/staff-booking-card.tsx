@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Copy,
   Check,
+  ArrowRightLeft,
+  Store,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,7 @@ interface StaffBookingCardProps {
   onOpenConfirm: (booking: ReservationResponse) => void;
   onCheckIn: (booking: ReservationResponse) => void;
   onCancel: (booking: ReservationResponse) => void;
+  onOpenInPos?: ((tableId: string, orderId?: string) => void) | undefined;
   isActionPending?: boolean;
 }
 
@@ -33,6 +36,7 @@ export function StaffBookingCard({
   onOpenConfirm,
   onCheckIn,
   onCancel,
+  onOpenInPos,
   isActionPending = false,
 }: StaffBookingCardProps) {
   const [copied, setCopied] = React.useState(false);
@@ -304,6 +308,17 @@ export function StaffBookingCard({
                 <Button
                   type="button"
                   size="sm"
+                  variant="outline"
+                  onClick={() => onOpenConfirm(booking)}
+                  disabled={isActionPending}
+                  className="h-8 px-2.5 text-xs"
+                >
+                  <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
+                  Đổi bàn
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
                   onClick={() => onCheckIn(booking)}
                   disabled={isActionPending || !checkInTiming.allowed}
                   title={checkInTiming.reason ?? "Xác nhận khách nhận bàn"}
@@ -351,9 +366,23 @@ export function StaffBookingCard({
             )}
 
             {booking.status === "ARRIVED" && (
-              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                Đang dùng bữa
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                  Đang dùng bữa
+                </span>
+                {onOpenInPos && booking.tableId && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onOpenInPos(booking.tableId!)}
+                    className="h-8 px-2.5 text-xs font-medium text-primary border-primary/30 hover:bg-primary/10"
+                  >
+                    <Store className="h-3.5 w-3.5 mr-1" />
+                    Mở bàn trên POS
+                  </Button>
+                )}
+              </div>
             )}
 
             {booking.status === "CANCELLED" && (
