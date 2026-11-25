@@ -162,7 +162,7 @@ function Page() {
               <TabsList className="grid w-full max-w-2xl grid-cols-4">
                 <TabsTrigger value="pos" className="flex items-center gap-2">
                   <Store className="h-4 w-4" />
-                  <span>Thu Ngân / POS</span>
+                  <span>Phục vụ & Thu ngân</span>
                 </TabsTrigger>
                 <TabsTrigger value="bookings" className="flex items-center gap-2">
                   <CalendarCheck className="h-4 w-4" />
