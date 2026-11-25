@@ -220,6 +220,10 @@ public class PaymentService {
     }
 
     public Map<String, String> createReservationDepositPayment(String reservationId, BigDecimal amount, String clientIp) {
+        return createReservationDepositPayment(reservationId, amount, clientIp, null);
+    }
+
+    public Map<String, String> createReservationDepositPayment(String reservationId, BigDecimal amount, String clientIp, String returnPath) {
         if (tmnCode == null || tmnCode.isBlank() || hashSecret == null || hashSecret.isBlank()) {
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
@@ -236,11 +240,15 @@ public class PaymentService {
         params.put("vnp_CurrCode", "VND");
         params.put("vnp_TxnRef", txnRef);
         String shortId = reservationId.length() >= 8 ? reservationId.substring(0, 8).toUpperCase() : reservationId;
-        params.put("vnp_OrderInfo", "Dat coc phong VIP HV-" + shortId);
+        params.put("vnp_OrderInfo", "Phi thu va coc phong VIP HV-" + shortId);
         params.put("vnp_OrderType", "other");
         params.put("vnp_Locale", "vn");
 
         String depReturnUrl = returnUrl.replace("/api/payments/vnpay/return", "/api/reservations/deposit-callback");
+        if (returnPath != null && !returnPath.isBlank()) {
+            depReturnUrl += (depReturnUrl.contains("?") ? "&" : "?") + "returnPath=" +
+                    URLEncoder.encode(returnPath, StandardCharsets.UTF_8);
+        }
         params.put("vnp_ReturnUrl", depReturnUrl);
         params.put("vnp_IpAddr", normalizeIp(clientIp));
 

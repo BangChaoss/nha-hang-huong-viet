@@ -124,7 +124,7 @@ export function StaffBookingRow({
         <div className="flex flex-col gap-1">
           {booking.status === "PENDING_DEPOSIT" ? (
             <Badge variant="outline" className="w-fit text-[10px] font-medium bg-orange-500/15 text-orange-700 border-orange-500/30 dark:text-orange-400">
-              Chờ cọc VIP ⏳
+              Chờ phí/cọc VIP ⏳
             </Badge>
           ) : (
             <Badge variant="outline" className={`w-fit text-[11px] ${statusCfg.badgeCls}`}>
@@ -133,7 +133,7 @@ export function StaffBookingRow({
           )}
           {booking.status !== "PENDING_DEPOSIT" && booking.status !== "CANCELLED" && booking.depositAmount > 0 && (
             <Badge variant="outline" className="w-fit text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-medium">
-              Đã cọc 1tr ✅
+              Đã thu phí/cọc VIP 250k ✅
             </Badge>
           )}
           {booking.cancellationReason && (
@@ -231,7 +231,7 @@ export function StaffBookingRow({
           {booking.status === "PENDING_DEPOSIT" && (
             <div className="flex items-center justify-end gap-1.5">
               <span className="text-[11px] text-orange-600 dark:text-orange-400">
-                Chờ khách cọc
+                Chờ phí/cọc VIP
               </span>
               <Button
                 type="button"

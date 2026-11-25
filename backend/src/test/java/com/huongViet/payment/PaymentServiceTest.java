@@ -595,6 +595,51 @@ class PaymentServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("Tạo thanh toán đặt cọc VIP (createReservationDepositPayment)")
+    class DepositPaymentTests {
+
+        @Test
+        @DisplayName("Tạo link cọc VIP 250.000đ với returnPath=history nhúng đúng vnp_Amount=25000000 và vnp_ReturnUrl")
+        void testCreateDepositPayment_WithHistoryReturnPath() {
+            Map<String, String> result = paymentService.createReservationDepositPayment(
+                    "res-vip-1234",
+                    new BigDecimal("250000"),
+                    "127.0.0.1",
+                    "history"
+            );
+
+            assertNotNull(result.get("txnRef"));
+            assertTrue(result.get("txnRef").startsWith("DEP_res-vip-1234_"));
+            String paymentUrl = result.get("paymentUrl");
+            assertNotNull(paymentUrl);
+            assertTrue(paymentUrl.contains("vnp_Amount=25000000&"));
+            assertTrue(paymentUrl.contains("vnp_OrderInfo=Phi+thu+va+coc+phong+VIP+HV-RES-VIP-"));
+            assertTrue(paymentUrl.contains(
+                    URLEncoder.encode("http://localhost:8080/api/reservations/deposit-callback?returnPath=history", StandardCharsets.UTF_8)
+            ));
+        }
+
+        @Test
+        @DisplayName("Tạo link cọc VIP 250.000đ với returnPath=book nhúng đúng returnPath=book")
+        void testCreateDepositPayment_WithBookReturnPath() {
+            Map<String, String> result = paymentService.createReservationDepositPayment(
+                    "res-vip-5678",
+                    new BigDecimal("250000"),
+                    "::1",
+                    "book"
+            );
+
+            String paymentUrl = result.get("paymentUrl");
+            assertNotNull(paymentUrl);
+            assertTrue(paymentUrl.contains("vnp_Amount=25000000&"));
+            assertTrue(paymentUrl.contains("vnp_IpAddr=127.0.0.1"));
+            assertTrue(paymentUrl.contains(
+                    URLEncoder.encode("http://localhost:8080/api/reservations/deposit-callback?returnPath=book", StandardCharsets.UTF_8)
+            ));
+        }
+    }
+
     // Helper functions để tính hash chuẩn HMAC SHA-512 giống PaymentService
     private static String buildQueryString(Map<String, String> params) {
         StringJoiner joiner = new StringJoiner("&");

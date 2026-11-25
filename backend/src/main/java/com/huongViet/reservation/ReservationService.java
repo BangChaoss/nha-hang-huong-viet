@@ -61,7 +61,7 @@ public class ReservationService {
 
     public static final List<LocalTime> TIME_SLOTS = generateContinuousTimeSlots();
     public static final Duration DINING_WINDOW = Duration.ofMinutes(119);
-    public static final BigDecimal VIP_DEPOSIT_AMOUNT = new BigDecimal("1000000");
+    public static final BigDecimal VIP_DEPOSIT_AMOUNT = new BigDecimal("250000");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final Map<ReservationStatus, Set<ReservationStatus>> ALLOWED_TRANSITIONS = Map.of(
@@ -670,7 +670,7 @@ public class ReservationService {
     }
 
     /**
-     * Xác nhận đặt cọc VNPay thành công → chuyển PENDING_DEPOSIT → PENDING_HOLD.
+     * Xác nhận thanh toán phí thu & cọc phòng VIP VNPay thành công → chuyển PENDING_DEPOSIT → PENDING_HOLD.
      */
     @Transactional
     public ReservationResponse confirmDeposit(String reservationId, String transactionRef) {
@@ -680,7 +680,7 @@ public class ReservationService {
 
         if (reservation.getStatus() != ReservationStatus.PENDING_DEPOSIT) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Đơn đặt bàn không ở trạng thái chờ đặt cọc");
+                "Đơn đặt bàn không ở trạng thái chờ thanh toán phí thu & cọc phòng VIP");
         }
 
         reservation.setStatus(ReservationStatus.PENDING_HOLD);
@@ -691,7 +691,7 @@ public class ReservationService {
             UUID.randomUUID().toString(), saved.getId(), null,
             ReservationStatus.PENDING_DEPOSIT, ReservationStatus.PENDING_HOLD,
             null, null,
-            "Đặt cọc VNPay thành công. Mã GD: " + transactionRef
+            "Thanh toán phí thu & cọc phòng VIP VNPay thành công. Mã GD: " + transactionRef
         );
         reservationAuditRepository.save(audit);
 

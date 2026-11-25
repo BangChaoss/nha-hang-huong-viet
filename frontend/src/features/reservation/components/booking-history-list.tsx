@@ -45,6 +45,8 @@ function sortBookingsByPriority(list: ReservationResponse[]): ReservationRespons
 export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps) {
   const { session } = useSession();
   const isAuthenticated = Boolean(session?.token);
+  const [selectedSubTab, setSelectedSubTab] = React.useState<string | null>(null);
+  const activeSubTab = isAuthenticated ? (selectedSubTab ?? "member") : "guest";
 
   const { data: memberBookings, isLoading: isMemberLoading, refetch } = useBookingHistory();
 
@@ -110,7 +112,7 @@ export function BookingHistoryList({ onLeaveFeedback }: BookingHistoryListProps)
         </div>
       </div>
 
-      <Tabs defaultValue={isAuthenticated ? "member" : "guest"} className="space-y-6">
+      <Tabs value={activeSubTab} onValueChange={setSelectedSubTab} className="space-y-6">
         <TabsList className="grid w-full grid-cols-2">
           {isAuthenticated && <TabsTrigger value="member">Lịch Sử Của Tôi</TabsTrigger>}
           <TabsTrigger value="guest" className={!isAuthenticated ? "col-span-2" : ""}>

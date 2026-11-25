@@ -412,6 +412,20 @@ export function StaffInvoices() {
                     <span className="text-zinc-500">Tạm tính (chưa VAT):</span>
                     <span className="tabular-nums font-medium">{formatVND(previewInvoice.subtotalAmount)}</span>
                   </div>
+                  {(previewInvoice.vipFeeAmount ?? 0) > 0 && (
+                    <div className="flex justify-between text-amber-800">
+                      <span>Phí thu phòng VIP:</span>
+                      <span className="tabular-nums font-medium">+{formatVND(previewInvoice.vipFeeAmount!)}</span>
+                    </div>
+                  )}
+                  {(previewInvoice.vipDepositPaid ?? 0) > 0 && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>Phí thu &amp; cọc phòng VIP:</span>
+                      <span className="tabular-nums font-medium">
+                        Đã thanh toán {formatVND(previewInvoice.vipDepositPaid!)} (không trừ hóa đơn)
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Thuế VAT (10%):</span>
                     <span className="tabular-nums font-medium">{formatVND(previewInvoice.taxAmount)}</span>

@@ -39,7 +39,10 @@ public class InvoiceService {
                    COALESCE(i.customer_phone, u.phone_number, '') AS customer_phone,
                    COALESCE(i.loyalty_phone, '') AS loyalty_phone,
                    i.voucher_code_snapshot, i.voucher_discount_amount, i.subtotal_amount, i.discount_amount,
-                   i.tax_amount, i.final_amount, i.loyalty_points_earned, i.status,
+                   i.tax_amount, i.final_amount,
+                   COALESCE(i.vip_fee_amount, 0) AS vip_fee_amount,
+                   COALESCE(i.vip_deposit_paid, 0) AS vip_deposit_paid,
+                   i.loyalty_points_earned, i.status,
                    COALESCE(i.paid_at, i.created_at) AS paid_at,
                    COALESCE(t.table_number, 'Bàn thanh toán') AS table_number
             FROM invoices i
@@ -52,29 +55,7 @@ public class InvoiceService {
             ORDER BY COALESCE(i.paid_at, i.created_at) DESC
         """;
 
-        List<InvoiceDraft> drafts = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            Timestamp paidAtTs = rs.getTimestamp("paid_at");
-            LocalDateTime paidAt = (paidAtTs != null) ? paidAtTs.toLocalDateTime() : null;
-
-            return new InvoiceDraft(
-                rs.getString("id"),
-                rs.getString("invoice_code"),
-                rs.getString("order_id"),
-                rs.getString("table_number"),
-                rs.getString("staff_id"),
-                rs.getString("customer_phone"),
-                rs.getString("loyalty_phone"),
-                rs.getString("voucher_code_snapshot"),
-                rs.getBigDecimal("voucher_discount_amount"),
-                rs.getBigDecimal("subtotal_amount"),
-                rs.getBigDecimal("discount_amount"),
-                rs.getBigDecimal("tax_amount"),
-                rs.getBigDecimal("final_amount"),
-                rs.getInt("loyalty_points_earned"),
-                rs.getString("status"),
-                paidAt
-            );
-        }, start, end);
+        List<InvoiceDraft> drafts = queryDrafts(sql, start, end);
 
         if (drafts.isEmpty()) {
             return Collections.emptyList();
@@ -83,25 +64,7 @@ public class InvoiceService {
         List<String> invoiceIds = drafts.stream().map(InvoiceDraft::id).toList();
         Map<String, List<InvoiceItemResponse>> itemsMap = loadItemsForInvoices(invoiceIds);
 
-        return drafts.stream().map(d -> new InvoiceResponse(
-            d.id(),
-            d.invoiceCode(),
-            d.orderId(),
-            d.tableNumber(),
-            d.staffId(),
-            d.customerPhone(),
-            d.loyaltyPhone(),
-            d.voucherCode(),
-            d.voucherDiscountAmount(),
-            d.subtotalAmount(),
-            d.discountAmount(),
-            d.taxAmount(),
-            d.finalAmount(),
-            d.loyaltyPointsEarned(),
-            d.status(),
-            d.paidAt(),
-            itemsMap.getOrDefault(d.id(), Collections.emptyList())
-        )).toList();
+        return drafts.stream().map(d -> toInvoiceResponse(d, itemsMap.getOrDefault(d.id(), Collections.emptyList()))).toList();
     }
 
     public InvoiceResponse getById(String id) {
@@ -110,7 +73,10 @@ public class InvoiceService {
                    COALESCE(i.customer_phone, u.phone_number, '') AS customer_phone,
                    COALESCE(i.loyalty_phone, '') AS loyalty_phone,
                    i.voucher_code_snapshot, i.voucher_discount_amount, i.subtotal_amount, i.discount_amount,
-                   i.tax_amount, i.final_amount, i.loyalty_points_earned, i.status,
+                   i.tax_amount, i.final_amount,
+                   COALESCE(i.vip_fee_amount, 0) AS vip_fee_amount,
+                   COALESCE(i.vip_deposit_paid, 0) AS vip_deposit_paid,
+                   i.loyalty_points_earned, i.status,
                    COALESCE(i.paid_at, i.created_at) AS paid_at,
                    COALESCE(t.table_number, 'Bàn thanh toán') AS table_number
             FROM invoices i
@@ -120,29 +86,7 @@ public class InvoiceService {
             WHERE i.id = ?
         """;
 
-        List<InvoiceDraft> list = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            Timestamp paidAtTs = rs.getTimestamp("paid_at");
-            LocalDateTime paidAt = (paidAtTs != null) ? paidAtTs.toLocalDateTime() : null;
-
-            return new InvoiceDraft(
-                rs.getString("id"),
-                rs.getString("invoice_code"),
-                rs.getString("order_id"),
-                rs.getString("table_number"),
-                rs.getString("staff_id"),
-                rs.getString("customer_phone"),
-                rs.getString("loyalty_phone"),
-                rs.getString("voucher_code_snapshot"),
-                rs.getBigDecimal("voucher_discount_amount"),
-                rs.getBigDecimal("subtotal_amount"),
-                rs.getBigDecimal("discount_amount"),
-                rs.getBigDecimal("tax_amount"),
-                rs.getBigDecimal("final_amount"),
-                rs.getInt("loyalty_points_earned"),
-                rs.getString("status"),
-                paidAt
-            );
-        }, id);
+        List<InvoiceDraft> list = queryDrafts(sql, id);
 
         if (list.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy hóa đơn.");
@@ -151,6 +95,49 @@ public class InvoiceService {
         InvoiceDraft d = list.get(0);
         List<InvoiceItemResponse> items = getItemsByInvoiceId(d.id());
 
+        return toInvoiceResponse(d, items);
+    }
+
+    private List<InvoiceDraft> queryDrafts(String sql, Object... args) {
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) -> mapDraft(rs, true), args);
+        } catch (Exception ex) {
+            String legacySql = sql
+                .replace("COALESCE(i.vip_fee_amount, 0) AS vip_fee_amount,", "")
+                .replace("COALESCE(i.vip_deposit_paid, 0) AS vip_deposit_paid,", "");
+            return jdbcTemplate.query(legacySql, (rs, rowNum) -> mapDraft(rs, false), args);
+        }
+    }
+
+    private InvoiceDraft mapDraft(java.sql.ResultSet rs, boolean includeVipColumns) throws java.sql.SQLException {
+        Timestamp paidAtTs = rs.getTimestamp("paid_at");
+        LocalDateTime paidAt = (paidAtTs != null) ? paidAtTs.toLocalDateTime() : null;
+        BigDecimal vipFee = includeVipColumns ? rs.getBigDecimal("vip_fee_amount") : BigDecimal.ZERO;
+        BigDecimal vipDeposit = includeVipColumns ? rs.getBigDecimal("vip_deposit_paid") : BigDecimal.ZERO;
+
+        return new InvoiceDraft(
+            rs.getString("id"),
+            rs.getString("invoice_code"),
+            rs.getString("order_id"),
+            rs.getString("table_number"),
+            rs.getString("staff_id"),
+            rs.getString("customer_phone"),
+            rs.getString("loyalty_phone"),
+            rs.getString("voucher_code_snapshot"),
+            rs.getBigDecimal("voucher_discount_amount"),
+            rs.getBigDecimal("subtotal_amount"),
+            rs.getBigDecimal("discount_amount"),
+            rs.getBigDecimal("tax_amount"),
+            rs.getBigDecimal("final_amount"),
+            vipFee != null ? vipFee : BigDecimal.ZERO,
+            vipDeposit != null ? vipDeposit : BigDecimal.ZERO,
+            rs.getInt("loyalty_points_earned"),
+            rs.getString("status"),
+            paidAt
+        );
+    }
+
+    private InvoiceResponse toInvoiceResponse(InvoiceDraft d, List<InvoiceItemResponse> items) {
         return new InvoiceResponse(
             d.id(),
             d.invoiceCode(),
@@ -168,7 +155,9 @@ public class InvoiceService {
             d.loyaltyPointsEarned(),
             d.status(),
             d.paidAt(),
-            items
+            items,
+            d.vipFeeAmount(),
+            d.vipDepositPaid()
         );
     }
 
@@ -224,6 +213,8 @@ public class InvoiceService {
         BigDecimal discountAmount,
         BigDecimal taxAmount,
         BigDecimal finalAmount,
+        BigDecimal vipFeeAmount,
+        BigDecimal vipDepositPaid,
         int loyaltyPointsEarned,
         String status,
         LocalDateTime paidAt

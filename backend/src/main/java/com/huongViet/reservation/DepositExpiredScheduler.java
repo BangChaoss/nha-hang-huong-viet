@@ -40,7 +40,7 @@ public class DepositExpiredScheduler {
             ReservationStatus oldStatus = reservation.getStatus();
             reservation.setStatus(ReservationStatus.CANCELLED);
             reservation.setCancellationReason(
-                "Tự động hủy: Không đặt cọc trong vòng " + DEPOSIT_TIMEOUT_MINUTES + " phút");
+                "Tự động hủy: Không thanh toán phí thu & cọc phòng VIP trong vòng " + DEPOSIT_TIMEOUT_MINUTES + " phút");
             reservationRepository.save(reservation);
 
             ReservationAudit audit = new ReservationAudit(

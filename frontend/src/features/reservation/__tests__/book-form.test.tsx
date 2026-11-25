@@ -155,11 +155,8 @@ describe("BookForm & Reservation Validators", () => {
         status: "PENDING_DEPOSIT",
         zoneId: "zone-vip",
         zoneName: "Phòng VIP",
-        isVip: true,
-        depositAmount: 1000000,
-        depositStatus: "PENDING",
-        depositTransactionNo: null,
-        cancelReason: null,
+        zoneIsVip: true,
+        depositAmount: 250000,
         createdAt: new Date().toISOString(),
       };
 
@@ -168,7 +165,8 @@ describe("BookForm & Reservation Validators", () => {
       await waitFor(() => {
         expect(screen.getByText("Yêu Cầu Đặt Bàn Đã Được Ghi Nhận!")).toBeInTheDocument();
         expect(screen.getByText(/HV-/i)).toBeInTheDocument();
-        expect(screen.getByText("Yêu Cầu Đặt Cọc — Phòng VIP")).toBeInTheDocument();
+        expect(screen.getByText("Yêu Cầu Phí Thu & Cọc — Phòng VIP")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Thanh Toán Phí & Cọc VIP 250\.000đ qua VNPay/i })).toBeInTheDocument();
       });
     });
   });

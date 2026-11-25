@@ -276,13 +276,13 @@ describe("StaffBookingDashboard", () => {
     expect(screen.queryByText("Phạm Văn D")).toBeNull();
   });
 
-  it("StaffBookingCard with PENDING_DEPOSIT shows 'Chờ cọc VIP ⏳', does NOT show 'Đã cọc 1tr ✅' and does NOT show premature 'Hoàn tất'", () => {
+  it("StaffBookingCard with PENDING_DEPOSIT shows 'Chờ phí/cọc VIP ⏳', does NOT show 'Đã thu phí/cọc VIP 250k ✅' and does NOT show premature 'Hoàn tất'", () => {
     const vipPendingDeposit: ReservationResponse = {
       ...mockPendingBooking,
       id: "vip-pending-deposit-1",
       status: "PENDING_DEPOSIT",
       zoneIsVip: true,
-      depositAmount: 1000000,
+      depositAmount: 250000,
     };
 
     render(
@@ -294,24 +294,24 @@ describe("StaffBookingDashboard", () => {
       />
     );
 
-    // Displays 'Chờ cọc VIP ⏳'
-    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
-    // Does NOT display duplicate 'Chờ đặt cọc' or 'Đã cọc 1tr ✅'
-    expect(screen.queryByText("Đã cọc 1tr ✅")).toBeNull();
+    // Displays 'Chờ phí/cọc VIP ⏳'
+    expect(screen.getByText("Chờ phí/cọc VIP ⏳")).toBeInTheDocument();
+    // Does NOT display duplicate 'Chờ đặt cọc' or 'Đã thu phí/cọc VIP 250k ✅'
+    expect(screen.queryByText("Đã thu phí/cọc VIP 250k ✅")).toBeNull();
     expect(screen.queryByText("Chờ đặt cọc")).toBeNull();
     // Does NOT display premature 'Hoàn tất'
     expect(screen.queryByText("Hoàn tất")).toBeNull();
-    // Displays 'Chờ khách đặt cọc...'
-    expect(screen.getByText("Chờ khách đặt cọc...")).toBeInTheDocument();
+    // Displays 'Chờ khách trả phí/cọc VIP...'
+    expect(screen.getByText("Chờ khách trả phí/cọc VIP...")).toBeInTheDocument();
   });
 
-  it("StaffBookingRow with PENDING_DEPOSIT shows 'Chờ cọc VIP ⏳' and does NOT show 'Đã cọc 1tr ✅'", () => {
+  it("StaffBookingRow with PENDING_DEPOSIT shows 'Chờ phí/cọc VIP ⏳' and does NOT show 'Đã thu phí/cọc VIP 250k ✅'", () => {
     const vipPendingDeposit: ReservationResponse = {
       ...mockPendingBooking,
       id: "vip-pending-deposit-2",
       status: "PENDING_DEPOSIT",
       zoneIsVip: true,
-      depositAmount: 1000000,
+      depositAmount: 250000,
     };
 
     render(
@@ -327,9 +327,42 @@ describe("StaffBookingDashboard", () => {
       </Table>
     );
 
-    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
-    expect(screen.queryByText("Đã cọc 1tr ✅")).toBeNull();
+    expect(screen.getByText("Chờ phí/cọc VIP ⏳")).toBeInTheDocument();
+    expect(screen.queryByText("Đã thu phí/cọc VIP 250k ✅")).toBeNull();
     expect(screen.queryByText("Chờ đặt cọc")).toBeNull();
-    expect(screen.getByText("Chờ khách cọc")).toBeInTheDocument();
+    expect(screen.getByText("Chờ phí/cọc VIP")).toBeInTheDocument();
+  });
+
+  it("StaffBookingCard and StaffBookingRow display 'Đã thu phí/cọc VIP 250k ✅' once fee/deposit is paid", () => {
+    const paidDeposit: ReservationResponse = {
+      ...mockPendingBooking,
+      id: "vip-paid-deposit-1",
+      status: "PENDING_HOLD",
+      zoneIsVip: true,
+      depositAmount: 250000,
+    };
+
+    render(
+      <div>
+        <StaffBookingCard
+          booking={paidDeposit}
+          onOpenConfirm={vi.fn()}
+          onCheckIn={vi.fn()}
+          onCancel={vi.fn()}
+        />
+        <Table>
+          <TableBody>
+            <StaffBookingRow
+              booking={paidDeposit}
+              onOpenConfirm={vi.fn()}
+              onCheckIn={vi.fn()}
+              onCancel={vi.fn()}
+            />
+          </TableBody>
+        </Table>
+      </div>
+    );
+
+    expect(screen.getAllByText("Đã thu phí/cọc VIP 250k ✅")).toHaveLength(2);
   });
 });

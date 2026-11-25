@@ -631,4 +631,98 @@ class OrderCheckoutServiceTest {
         // Kiểm tra jdbcTemplate.update được gọi cho cả invoices và invoice_items
         verify(jdbcTemplate, times(2)).update(anyString(), any(Object[].class));
     }
+
+    @Test
+    @DisplayName("VIP walk-in tự động cộng 250.000đ phí phòng VIP vào tạm tính và tính VAT 10% lên cả hai (275.000đ)")
+    void checkout_VipWalkIn_Adds250kRoomFeeAndAppliesVat() {
+        com.huongViet.table.TableZone vipZone = new com.huongViet.table.TableZone("zone-vip", "Phòng VIP", true);
+        occupiedTable.setZoneId("zone-vip");
+        occupiedTable.setZone(vipZone);
+        stubSingleOrder(settings("5.000", "1"));
+
+        Order order = openOrder("order-1");
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1"))
+            .thenReturn(List.of(item("item-1", "order-1", pho, 2, CookingStatus.QUEUED)));
+
+        // Món = 110.000đ, Phí VIP = 250.000đ => Tạm tính chịu thuế = 360.000đ => VAT 10% = 36.000đ => Tổng = 396.000đ
+        assertEquals(new BigDecimal("396000.00"), orderService.prepareVnpayCheckout("order-1", "table-1"));
+
+        CashCheckoutResponse response = orderService.checkoutCash(
+            "table-1", new CashCheckoutRequest(null, null, false));
+
+        assertEquals(0, new BigDecimal("110000.00").compareTo(response.subtotal()));
+        assertEquals(0, new BigDecimal("250000.00").compareTo(response.vipFeeAmount()));
+        assertEquals(0, BigDecimal.ZERO.compareTo(response.vipDepositPaid()));
+        assertEquals(0, new BigDecimal("36000.00").compareTo(response.vat()));
+        assertEquals(0, new BigDecimal("396000.00").compareTo(response.total()));
+
+        ArgumentCaptor<Object[]> invoice = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbcTemplate).update(startsWith("INSERT INTO invoices ("), invoice.capture());
+        assertEquals(new BigDecimal("396000.00"), invoice.getValue()[13]);
+        assertEquals(new BigDecimal("250000.00"), invoice.getValue()[14]);
+        assertEquals(BigDecimal.ZERO, invoice.getValue()[15]);
+    }
+
+    @Test
+    @DisplayName("VIP ngồi ghép trên bàn walk-in: đơn thứ 2 không bị cộng lặp 250.000đ nếu đơn đầu đã thu")
+    void checkout_VipWalkIn_SecondSeatedOrderDoesNotDoubleChargeVipFee() {
+        com.huongViet.table.TableZone vipZone = new com.huongViet.table.TableZone("zone-vip", "Phòng VIP", true);
+        occupiedTable.setZoneId("zone-vip");
+        occupiedTable.setZone(vipZone);
+
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order firstCompleted = openOrder("order-1");
+        firstCompleted.setPartySize(2);
+        firstCompleted.setStatus(OrderStatus.COMPLETED);
+        Order second = lockSeatedOrder("order-2");
+
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1")))
+            .thenReturn(List.of(firstCompleted, second));
+        when(jdbcTemplate.queryForObject(
+            startsWith("SELECT COUNT(*) FROM invoices WHERE order_id IN"),
+            eq(Integer.class),
+            eq("order-1")))
+            .thenReturn(1);
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-2"))
+            .thenReturn(List.of(item("item-2", "order-2", pho, 2, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+
+        CashCheckoutResponse response = orderService.checkoutOrderCash("order-2", null, "staff-1");
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(response.vipFeeAmount()));
+        assertEquals(0, new BigDecimal("11000.00").compareTo(response.vat()));
+        assertEquals(0, new BigDecimal("121000.00").compareTo(response.total()));
+    }
+
+    @Test
+    @DisplayName("VIP đặt bàn trước đã thanh toán 250k: không trừ vào tiền món và không cộng thêm phí")
+    void checkout_VipPrebookedReservation_RecordsPaidDepositWithoutDeductingOrAddingFee() {
+        com.huongViet.table.TableZone vipZone = new com.huongViet.table.TableZone("zone-vip", "Phòng VIP", true);
+        occupiedTable.setZoneId("zone-vip");
+        occupiedTable.setZone(vipZone);
+        stubSingleOrder(settings("5.000", "1"));
+
+        Reservation vipRes = new Reservation(
+            "res-vip-1", null, "Khách VIP", "0909999999", null, 4,
+            java.time.LocalDate.now(), java.time.LocalTime.of(18, 0), null
+        );
+        vipRes.setTableId("table-1");
+        vipRes.setStatus(ReservationStatus.ARRIVED);
+        vipRes.setDepositAmount(new BigDecimal("250000"));
+        when(reservationRepository.findActiveReservationsForDate(any())).thenReturn(List.of(vipRes));
+
+        CashCheckoutResponse response = orderService.checkoutCash(
+            "table-1", new CashCheckoutRequest(null, null, false));
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(response.vipFeeAmount()));
+        assertEquals(0, new BigDecimal("250000.00").compareTo(response.vipDepositPaid()));
+        assertEquals(0, new BigDecimal("11000.00").compareTo(response.vat()));
+        assertEquals(0, new BigDecimal("121000.00").compareTo(response.total()));
+
+        ArgumentCaptor<Object[]> invoice = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbcTemplate).update(startsWith("INSERT INTO invoices ("), invoice.capture());
+        assertEquals(BigDecimal.ZERO, invoice.getValue()[14]);
+        assertEquals(new BigDecimal("250000.00"), invoice.getValue()[15]);
+    }
 }
