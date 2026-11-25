@@ -72,6 +72,8 @@ public class SecurityConfig {
                 // UC19/UC20: Đánh giá
                 .requestMatchers(HttpMethod.GET, "/api/feedbacks/public").permitAll()
                 .requestMatchers("/api/feedbacks/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/orders/*/items/batch")
+                    .hasAnyAuthority("STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN")
                 .requestMatchers(HttpMethod.PATCH, "/api/orders/*/items")
                     .hasAnyAuthority("STAFF", "ROLE_STAFF", "MANAGER", "ROLE_MANAGER", "ADMIN", "ROLE_ADMIN")
                 // UC-15, UC-17: gọi món và xem chi tiết order — nhân viên phục vụ

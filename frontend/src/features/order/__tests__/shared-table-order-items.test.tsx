@@ -75,7 +75,7 @@ it("gom các lượt gọi cũ và giảm từ cả hai cột, không đổi đ�
   expect(pos.queryByText("1 × Phở bò")).not.toBeInTheDocument();
   expect(pos.getByText("255.000đ")).toBeInTheDocument();
 
-  fireEvent.click(pos.getByRole("button", { name: "Bớt Phở bò khỏi đơn" }));
+  fireEvent.click(pos.getByRole("button", { name: "Giảm số lượng Phở bò" }));
   expect(await pos.findByText("2 × Phở bò")).toBeInTheDocument();
   expect(adjust).toHaveBeenNthCalledWith(1, a, {
     action: "DECREMENT", itemIds: ["one", "two", "three"], expectedQuantity: 3, expectedStatus: "QUEUED",
@@ -95,7 +95,7 @@ it("gom các lượt gọi cũ và giảm từ cả hai cột, không đổi đ�
   expect(confirmation.getByText(/Huỷ 1 × Phở bò khỏi đơn/)).toBeInTheDocument();
   fireEvent.click(confirmation.getByRole("button", { name: "Giữ món" }));
   expect(adjust).toHaveBeenCalledTimes(2);
-  fireEvent.click(pos.getByRole("button", { name: "Bớt Phở bò khỏi đơn" }));
+  fireEvent.click(pos.getByRole("button", { name: "Giảm số lượng Phở bò" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Huỷ món" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   expect(adjust).toHaveBeenNthCalledWith(3, a, {
@@ -121,20 +121,21 @@ it("giữ riêng món khác ghi chú, giá hoặc trạng thái và vẫn cho gi
   await pos.findByText("Hết món");
   expect(pos.getAllByText("1 × Phở bò")).toHaveLength(4);
   expect(pos.getByRole("button", { name: "Thêm Phở bò" })).toBeDisabled();
-  const minus = pos.getByRole("button", { name: "Bớt Phở bò khỏi đơn" });
+  expect(pos.getByRole("button", { name: "Bớt Phở bò khỏi giỏ" })).toBeDisabled();
+  const minus = pos.getByRole("button", { name: "Giảm số lượng Phở bò (Không hành)" });
   expect(minus).toBeEnabled();
   fireEvent.click(minus);
   expect(screen.getByRole("alertdialog")).toHaveTextContent("Huỷ 1 × Phở bò (Không hành) khỏi đơn?");
 });
 
-it("cập nhật ghi chú cả nhóm và gửi nút cộng bên phải như một lượt gọi mới", async () => {
+it("cập nhật ghi chú cả nhóm và đưa nút cộng bên phải vào Món mới chờ xác nhận gửi bếp", async () => {
   orders = [order(a, [item("one"), item("two")])];
   vi.mocked(orderApi.adjustItems).mockImplementation(async () => {
     const response = order(a, [item("one", { note: "Không hành" }), item("two", { note: "Không hành" })]);
     orders = [response];
     return response;
   });
-  vi.mocked(orderApi.addItem).mockImplementation(async () => {
+  vi.mocked(orderApi.addItemsBatch).mockImplementation(async () => {
     const response = order(a, [...(orders[0]?.items ?? []), item("three", { note: "Không hành" })]);
     orders = [response];
     return response;
@@ -148,8 +149,19 @@ it("cập nhật ghi chú cả nhóm và gửi nút cộng bên phải như mộ
     action: "UPDATE_NOTE", itemIds: ["one", "two"], expectedQuantity: 2, expectedStatus: "QUEUED", note: "Không hành",
   });
   fireEvent.click(plus);
+  expect(orderApi.addItemsBatch).not.toHaveBeenCalled();
+  expect(orderApi.addItem).not.toHaveBeenCalled();
+  expect(pos.getByRole("textbox", { name: "Ghi chú món mới: Phở bò" })).toHaveValue("Không hành");
+
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" }));
+  const confirm = within(screen.getByRole("alertdialog"));
+  expect(confirm.getByText("Xác nhận gửi đơn xuống bếp")).toBeInTheDocument();
+  fireEvent.click(confirm.getByRole("button", { name: "Xác nhận gửi bếp" }));
+
   expect(await pos.findByText("3 × Phở bò")).toBeInTheDocument();
-  expect(orderApi.addItem).toHaveBeenCalledWith(a, { menuItemId: "pho", quantity: 1, note: "Không hành" });
+  expect(orderApi.addItemsBatch).toHaveBeenCalledExactlyOnceWith(a, {
+    items: [{ menuItemId: "pho", quantity: 1, note: "Không hành" }],
+  });
 });
 
 it.each([false, true])("khôi phục đúng đơn đã xem hóa đơn (đã thu tiền: %s)", async (paid) => {
@@ -239,4 +251,235 @@ it("chọn trực tiếp bàn lẻ còn trống khi bàn lẻ bên cạnh đã �
   expect(await pos.findByRole("button", { name: /#BBBBBBBB · 4 khách/, pressed: true })).toBeInTheDocument();
   expect(tableApi.updateStatus).toHaveBeenCalledExactlyOnceWith(right.id, "OCCUPIED");
   expect(orderApi.openSeatedOrder).toHaveBeenCalledExactlyOnceWith(right.id, 4);
+});
+
+it("lọc thực đơn theo danh mục và giữ nguyên món mới khi đổi danh mục", async () => {
+  const goiCuon = {
+    id: "goi", categoryId: "starter", categoryName: "Khai vị", itemName: "Gỏi cuốn",
+    description: null, currentPrice: 45000, imageUrl: null, isAvailable: true,
+  };
+  const traDa = {
+    id: "tra", categoryId: "drink", categoryName: "Đồ uống", itemName: "Trà đào",
+    description: null, currentPrice: 35000, imageUrl: null, isAvailable: true,
+  };
+  vi.mocked(menuApi.getOverview).mockResolvedValue({
+    categories: [
+      { id: "starter", categoryName: "Khai vị", displayOrder: 1, items: [goiCuon] },
+      { id: pho.categoryId, categoryName: pho.categoryName, displayOrder: 2, items: [pho] },
+      { id: "drink", categoryName: "Đồ uống", displayOrder: 3, items: [traDa] },
+      { id: "dessert", categoryName: "Tráng miệng", displayOrder: 4, items: [] },
+    ],
+  });
+  orders = [order(a, [])];
+
+  const pos = await openPos();
+  const filterGroup = await pos.findByRole("group", { name: "Lọc món theo danh mục" });
+  expect(within(filterGroup).getByRole("button", { name: "Tất cả (3)", pressed: true })).toBeInTheDocument();
+  expect(pos.getByText("Gỏi cuốn")).toBeInTheDocument();
+  expect(pos.getByText("Phở bò")).toBeInTheDocument();
+  expect(pos.getByText("Trà đào")).toBeInTheDocument();
+
+  fireEvent.click(pos.getByRole("button", { name: "Thêm Gỏi cuốn" }));
+  expect(pos.getByText("1 × Gỏi cuốn")).toBeInTheDocument();
+
+  fireEvent.click(within(filterGroup).getByRole("button", { name: "Đồ uống (1)" }));
+  expect(within(filterGroup).getByRole("button", { name: "Đồ uống (1)", pressed: true })).toBeInTheDocument();
+  expect(pos.queryByText("Gỏi cuốn")).not.toBeInTheDocument();
+  expect(pos.queryByText("Phở bò")).not.toBeInTheDocument();
+  expect(pos.getByText("Trà đào")).toBeInTheDocument();
+  expect(pos.getByText("1 × Gỏi cuốn")).toBeInTheDocument();
+
+  fireEvent.click(within(filterGroup).getByRole("button", { name: "Tráng miệng (0)" }));
+  expect(pos.getByText("Danh mục này chưa có món.")).toBeInTheDocument();
+  expect(pos.getByText("1 × Gỏi cuốn")).toBeInTheDocument();
+
+  fireEvent.click(within(filterGroup).getByRole("button", { name: "Tất cả (3)" }));
+  expect(pos.getByText("Gỏi cuốn")).toBeInTheDocument();
+  expect(pos.getByText("Phở bò")).toBeInTheDocument();
+  expect(pos.getByText("Trà đào")).toBeInTheDocument();
+});
+
+it("yêu cầu nhấn xác nhận trước khi gửi đơn đang mở xuống bếp", async () => {
+  const bunCha = {
+    id: "bun", categoryId: "main", categoryName: "Món chính", itemName: "Bún chả",
+    description: null, currentPrice: 45000, imageUrl: null, isAvailable: true,
+  };
+  vi.mocked(menuApi.getOverview).mockResolvedValue({
+    categories: [{ id: pho.categoryId, categoryName: pho.categoryName, displayOrder: 1, items: [pho, bunCha] }],
+  });
+  orders = [order(a, [item("one")])];
+  vi.mocked(orderApi.addItemsBatch).mockImplementation(async (id, payload) => {
+    const appended = payload.items.map((entry, idx) =>
+      item(`added-${idx}`, {
+        menuItemId: entry.menuItemId,
+        itemName: entry.menuItemId === "pho" ? "Phở bò" : "Bún chả",
+        quantity: entry.quantity,
+        unitPrice: entry.menuItemId === "pho" ? 85000 : 45000,
+        lineTotal: (entry.menuItemId === "pho" ? 85000 : 45000) * entry.quantity,
+        note: entry.note ?? null,
+      }),
+    );
+    const updated = order(id, [...(orders[0]?.items ?? []), ...appended]);
+    orders = [updated];
+    return updated;
+  });
+
+  const pos = await openPos();
+  await pos.findByRole("button", { name: "Thêm Phở bò" });
+  expect(pos.getByRole("button", { name: "Gửi Bếp" })).toBeDisabled();
+
+  fireEvent.click(pos.getByRole("button", { name: "Thêm Phở bò" }));
+  fireEvent.click(pos.getByRole("button", { name: "Thêm Phở bò" }));
+  fireEvent.click(pos.getByRole("button", { name: "Thêm Bún chả" }));
+  fireEvent.change(pos.getByRole("textbox", { name: "Ghi chú món mới: Phở bò" }), {
+    target: { value: "Ít hành" },
+  });
+
+  expect(orderApi.addItemsBatch).not.toHaveBeenCalled();
+  expect(orderApi.addItem).not.toHaveBeenCalled();
+  expect(pos.getByRole("button", { name: "Thanh toán đơn #AAAAAAAA" })).toBeDisabled();
+  expect(pos.getByText("Gửi bếp hoặc xóa các món mới trước khi thanh toán.")).toBeInTheDocument();
+
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (3 phần)" }));
+  const confirm = within(screen.getByRole("alertdialog"));
+  expect(confirm.getByText("Xác nhận gửi đơn xuống bếp")).toBeInTheDocument();
+  expect(confirm.getByText("2 × Phở bò")).toBeInTheDocument();
+  expect(confirm.getByText("Ghi chú: Ít hành")).toBeInTheDocument();
+  expect(confirm.getByText("1 × Bún chả")).toBeInTheDocument();
+  expect(confirm.getByText("215.000đ")).toBeInTheDocument();
+
+  fireEvent.click(confirm.getByRole("button", { name: "Quay lại" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(orderApi.addItemsBatch).not.toHaveBeenCalled();
+  expect(pos.getByDisplayValue("Ít hành")).toBeInTheDocument();
+
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (3 phần)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Xác nhận gửi bếp" }));
+
+  await waitFor(() =>
+    expect(orderApi.addItemsBatch).toHaveBeenCalledExactlyOnceWith(a, {
+      items: [
+        { menuItemId: "pho", quantity: 2, note: "Ít hành" },
+        { menuItemId: "bun", quantity: 1, note: undefined },
+      ],
+    }),
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(await pos.findByText("1 × Bún chả")).toBeInTheDocument();
+  expect(pos.getByText("2 × Phở bò")).toBeInTheDocument();
+  expect(pos.getByRole("button", { name: "Gửi Bếp" })).toBeDisabled();
+  expect(pos.getByRole("button", { name: "Thanh toán đơn #AAAAAAAA" })).toBeEnabled();
+});
+
+it("giữ lại Món mới khi gửi bếp gặp lỗi để nhân viên chỉnh sửa", async () => {
+  orders = [order(a, [])];
+  vi.mocked(orderApi.addItemsBatch).mockRejectedValue(new Error("Món Phở bò hiện không còn sẵn."));
+
+  const pos = await openPos();
+  fireEvent.click(await pos.findByRole("button", { name: "Thêm Phở bò" }));
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Xác nhận gửi bếp" }));
+
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(pos.getByText("1 × Phở bò")).toBeInTheDocument();
+  expect(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" })).toBeEnabled();
+});
+
+it("tách riêng giỏ Món mới giữa các đơn ngồi ghép trên cùng bàn", async () => {
+  const bunCha = {
+    id: "bun", categoryId: "main", categoryName: "Món chính", itemName: "Bún chả",
+    description: null, currentPrice: 45000, imageUrl: null, isAvailable: true,
+  };
+  vi.mocked(menuApi.getOverview).mockResolvedValue({
+    categories: [{ id: pho.categoryId, categoryName: pho.categoryName, displayOrder: 1, items: [pho, bunCha] }],
+  });
+  orders = [order(a, []), order(b, [])];
+  vi.mocked(orderApi.addItemsBatch).mockImplementation(async (id, payload) => {
+    const appended = payload.items.map((entry, idx) =>
+      item(`added-${idx}`, {
+        menuItemId: entry.menuItemId,
+        itemName: entry.menuItemId === "pho" ? "Phở bò" : "Bún chả",
+        quantity: entry.quantity,
+        unitPrice: 45000,
+        lineTotal: 45000 * entry.quantity,
+      }),
+    );
+    const updated = order(id, appended);
+    orders = orders.map((entry) => (entry.id === id ? updated : entry));
+    return updated;
+  });
+
+  const pos = await openPos();
+  fireEvent.click(await pos.findByRole("button", { name: /#AAAAAAAA ·/ }));
+  fireEvent.click(await pos.findByRole("button", { name: "Thêm Phở bò" }));
+  expect(pos.getByText("1 × Phở bò")).toBeInTheDocument();
+
+  fireEvent.click(pos.getByRole("button", { name: /#BBBBBBBB ·/ }));
+  expect(pos.queryByText("1 × Phở bò")).not.toBeInTheDocument();
+  expect(pos.getByRole("button", { name: "Gửi Bếp" })).toBeDisabled();
+
+  fireEvent.click(pos.getByRole("button", { name: "Thêm Bún chả" }));
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Xác nhận gửi bếp" }));
+
+  await waitFor(() =>
+    expect(orderApi.addItemsBatch).toHaveBeenCalledExactlyOnceWith(b, {
+      items: [{ menuItemId: "bun", quantity: 1, note: undefined }],
+    }),
+  );
+
+  fireEvent.click(pos.getByRole("button", { name: /#AAAAAAAA ·/ }));
+  expect(pos.getByText("1 × Phở bò")).toBeInTheDocument();
+  expect(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" })).toBeEnabled();
+});
+
+it("yêu cầu xác nhận trước khi gửi đơn đặt trước chưa có order xuống bếp", async () => {
+  orders = [];
+  vi.mocked(reservationApi.listByDate).mockResolvedValue([
+    {
+      id: "res-1",
+      customerId: null,
+      tableId: table.id,
+      tableNumber: table.tableNumber,
+      mergedTableIds: null,
+      zoneId: table.zoneId,
+      zoneName: "Sảnh",
+      guestName: "Anh Minh",
+      guestPhone: "0901234567",
+      partySize: 2,
+      reservationDate: "2026-11-24",
+      reservationTime: "18:00:00",
+      status: "ARRIVED",
+      specialRequests: null,
+      depositAmount: 0,
+      createdAt: "2026-11-24T10:00:00",
+    },
+  ]);
+  vi.mocked(orderApi.create).mockImplementation(async () => {
+    const created = order(a, [item("one")]);
+    orders = [created];
+    return created;
+  });
+
+  const pos = await openPos();
+  fireEvent.click(await pos.findByRole("button", { name: "Thêm Phở bò" }));
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" }));
+  const confirm = within(screen.getByRole("alertdialog"));
+  expect(confirm.getByText("Xác nhận gửi đơn xuống bếp")).toBeInTheDocument();
+
+  fireEvent.click(confirm.getByRole("button", { name: "Quay lại" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(orderApi.create).not.toHaveBeenCalled();
+
+  fireEvent.click(pos.getByRole("button", { name: "Gửi Bếp (1 phần)" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Xác nhận gửi bếp" }));
+
+  await waitFor(() =>
+    expect(orderApi.create).toHaveBeenCalledExactlyOnceWith({
+      tableId: table.id,
+      items: [{ menuItemId: "pho", quantity: 1, note: undefined }],
+      submit: true,
+    }),
+  );
+  expect(await pos.findByText("1 × Phở bò")).toBeInTheDocument();
 });

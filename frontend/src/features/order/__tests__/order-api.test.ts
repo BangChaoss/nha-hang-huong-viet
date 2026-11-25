@@ -123,6 +123,27 @@ describe("orderApi", () => {
     );
   });
 
+  it("addItemsBatch() should POST /api/orders/{orderId}/items/batch with items payload", async () => {
+    mockOk({ id: "order-1", items: [] });
+    const payload = {
+      items: [
+        { menuItemId: "dish-1", quantity: 2, note: "Ít cay" },
+        { menuItemId: "dish-2", quantity: 1 },
+      ],
+    };
+
+    await orderApi.addItemsBatch("order-1", payload);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/order-1/items/batch"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+    );
+  });
+
   it("updateItem() should PATCH /api/orders/{orderId}/items/{itemId}", async () => {
     mockOk({ id: "order-1", items: [] });
 

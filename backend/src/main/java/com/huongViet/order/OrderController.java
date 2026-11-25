@@ -88,6 +88,14 @@ public class OrderController {
         return ResponseEntity.ok(orderService.addItem(orderId, request, staffId));
     }
 
+    @PostMapping("/{orderId}/items/batch")
+    public ResponseEntity<OrderResponse> addItems(@PathVariable String orderId,
+                                                  @Valid @RequestBody AddOrderItemsBatchRequest request,
+                                                  @AuthenticationPrincipal User currentUser) {
+        String staffId = (currentUser != null) ? currentUser.getId() : null;
+        return ResponseEntity.ok(orderService.addItems(orderId, request, staffId));
+    }
+
     @PatchMapping("/{orderId}/items")
     public OrderResponse adjustItems(@PathVariable String orderId,
             @Valid @RequestBody AdjustOrderItemsRequest request, @AuthenticationPrincipal User currentUser) {

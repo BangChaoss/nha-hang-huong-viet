@@ -43,12 +43,16 @@ import { orderApi } from "@/features/order/api/order-api";
 import { useKitchenCompleted } from "@/features/order/hooks/use-kitchen-tickets";
 import { useChangeOrderItems } from "@/features/order/hooks/use-order-items";
 import { COOKING_STATUS_LABELS, type OrderResponse } from "@/features/order/types/order.types";
-import { groupOrderItems, orderItemGroupKey, type OrderItemGroup } from "@/features/order/utils/order-item-groups";
+import { groupOrderItems, type OrderItemGroup } from "@/features/order/utils/order-item-groups";
 import { orderCode } from "@/features/order/utils/order-code";
 import { splitBillItems } from "@/features/order/utils/bill";
 
-/** Món được chọn tạm thời trước khi tạo đơn mới cho bàn. */
-type CartLine = { menuItemId: string; quantity: number; note: string };
+const ALL_CATEGORIES = "all";
+const LEGACY_CART_KEY = "__legacy__";
+const MAX_CART_QTY = 99;
+
+/** Món được chọn tạm thời trong giỏ nháp trước khi xác nhận gửi bếp. */
+type CartLine = { key: string; menuItemId: string; quantity: number; note: string };
 
 const TABLE_STATUS_LABELS: Record<TableStatus, string> = {
   AVAILABLE: "Trống",
@@ -501,14 +505,29 @@ function OrderDialog({
 }) {
   const queryClient = useQueryClient();
   const exclusive = Boolean(exclusiveTableId);
-  const [cart, setCart] = useState<CartLine[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>(ALL_CATEGORIES);
+  const [cartsByTarget, setCartsByTarget] = useState<Record<string, CartLine[]>>({});
+  const [confirmSendOpen, setConfirmSendOpen] = useState(false);
 
   const menuQuery = useQuery({
     queryKey: ["menu"],
     queryFn: () => menuApi.getOverview(),
     staleTime: 60000,
   });
-  const dishes = menuQuery.data?.categories.flatMap((c) => c.items ?? []) ?? [];
+  const categories = useMemo(() => menuQuery.data?.categories ?? [], [menuQuery.data]);
+  const dishes = useMemo(() => categories.flatMap((c) => c.items ?? []), [categories]);
+  const dishMap = useMemo(() => new Map(dishes.map((d) => [d.id, d])), [dishes]);
+  const activeCategory =
+    selectedCategory === ALL_CATEGORIES || categories.some((c) => c.id === selectedCategory)
+      ? selectedCategory
+      : ALL_CATEGORIES;
+  const visibleDishes = useMemo(
+    () =>
+      activeCategory === ALL_CATEGORIES
+        ? dishes
+        : (categories.find((c) => c.id === activeCategory)?.items ?? []),
+    [activeCategory, categories, dishes],
+  );
 
   const subIds = table.subTables.map((part) => part.id);
   const seatedKey = ["orders", "table", table.id, "seated", subIds.join(",")];
@@ -599,27 +618,84 @@ function OrderDialog({
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
   });
 
-  /** Điều chỉnh số lượng món trong giỏ nháp; bỏ món khi số lượng về 0. */
-  const change = (menuItemId: string, delta: number) =>
-    setCart((cur) => {
-      const existing = cur.find((l) => l.menuItemId === menuItemId);
-      if (!existing) return delta > 0 ? [...cur, { menuItemId, quantity: 1, note: "" }] : cur;
-      return cur
-        .map((l) => (l.menuItemId === menuItemId ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0);
-    });
-
-  const setNote = (menuItemId: string, note: string) =>
-    setCart((cur) => cur.map((l) => (l.menuItemId === menuItemId ? { ...l, note } : l)));
-
-  const qty = (menuItemId: string) => cart.find((l) => l.menuItemId === menuItemId)?.quantity ?? 0;
-  const dishName = (menuItemId: string) => dishes.find((d) => d.id === menuItemId)?.itemName ?? "";
   const isOccupied = table.status === "OCCUPIED";
   const orderId = activeOrder?.id;
   const hasOpenOrder = Boolean(orderId);
   const legacyCart = exclusive && seatedQuery.isSuccess && orders.length === 0;
   const showMenu = isOccupied && seatedQuery.isSuccess && (hasOpenOrder || legacyCart);
-  const canSubmit = showMenu && legacyCart && cart.length > 0 && !createOrder.isPending;
+  const cartTargetKey = orderId ?? LEGACY_CART_KEY;
+  const cart = cartsByTarget[cartTargetKey] ?? [];
+
+  const updateCart = (updater: (current: CartLine[]) => CartLine[], targetKey = cartTargetKey) =>
+    setCartsByTarget((prev) => {
+      const nextLines = updater(prev[targetKey] ?? []);
+      if (nextLines.length === 0) {
+        if (!(targetKey in prev)) return prev;
+        const { [targetKey]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [targetKey]: nextLines };
+    });
+
+  const clearCart = (targetKey = cartTargetKey) =>
+    setCartsByTarget((prev) => {
+      if (!(targetKey in prev)) return prev;
+      const { [targetKey]: _removed, ...rest } = prev;
+      return rest;
+    });
+
+  const addToCart = (menuItemId: string, note?: string) => {
+    const normalizedNote = note?.trim() ?? "";
+    const lineKey = normalizedNote ? `${menuItemId}::${normalizedNote}` : menuItemId;
+    updateCart((cur) => {
+      const existing = cur.find((l) => l.key === lineKey);
+      if (!existing) {
+        return [...cur, { key: lineKey, menuItemId, quantity: 1, note: normalizedNote }];
+      }
+      if (existing.quantity >= MAX_CART_QTY) return cur;
+      return cur.map((l) => (l.key === lineKey ? { ...l, quantity: l.quantity + 1 } : l));
+    });
+  };
+
+  const changeCartLine = (lineKey: string, delta: number) =>
+    updateCart((cur) =>
+      cur
+        .map((l) =>
+          l.key === lineKey
+            ? { ...l, quantity: Math.min(MAX_CART_QTY, l.quantity + delta) }
+            : l,
+        )
+        .filter((l) => l.quantity > 0),
+    );
+
+  const removeCartLine = (lineKey: string) =>
+    updateCart((cur) => cur.filter((l) => l.key !== lineKey));
+
+  const decrementMenuDish = (menuItemId: string) =>
+    updateCart((cur) => {
+      const plainLine = cur.find((l) => l.key === menuItemId);
+      const targetLine =
+        plainLine ?? [...cur].reverse().find((l) => l.menuItemId === menuItemId);
+      if (!targetLine) return cur;
+      return cur
+        .map((l) => (l.key === targetLine.key ? { ...l, quantity: l.quantity - 1 } : l))
+        .filter((l) => l.quantity > 0);
+    });
+
+  const setCartLineNote = (lineKey: string, note: string) =>
+    updateCart((cur) => cur.map((l) => (l.key === lineKey ? { ...l, note } : l)));
+
+  const draftQty = (menuItemId: string) =>
+    cart.reduce((sum, l) => (l.menuItemId === menuItemId ? sum + l.quantity : sum), 0);
+
+  const dishName = (menuItemId: string) => dishMap.get(menuItemId)?.itemName ?? "";
+  const totalCartQty = cart.reduce((sum, l) => sum + l.quantity, 0);
+  const cartSubtotal = cart.reduce(
+    (sum, l) => sum + (dishMap.get(l.menuItemId)?.currentPrice ?? 0) * l.quantity,
+    0,
+  );
+  const isSubmittingCart = createOrder.isPending || changeItems.isPending;
+  const canSubmitCart = showMenu && cart.length > 0 && !isSubmittingCart;
   const hasPayableItems = activeOrder?.items.some((item) => item.cookingStatus !== "CANCELLED");
   const parsedPartySize = Number(partySize);
   const canOpenOrder = isOccupied && !exclusive && seatedQuery.isSuccess && maxPartySize > 0 && !openOrder.isPending && !updateTableStatus.isPending;
@@ -627,13 +703,9 @@ function OrderDialog({
   const items = activeOrder?.items ?? [];
   const itemGroups = groupOrderItems(items);
   const orderedQty = new Map<string, number>();
-  const latestQueued = new Map<string, string>();
   for (const item of items) {
     if (item.cookingStatus !== "CANCELLED") {
       orderedQty.set(item.menuItemId, (orderedQty.get(item.menuItemId) ?? 0) + item.quantity);
-    }
-    if (item.cookingStatus === "QUEUED") {
-      latestQueued.set(item.menuItemId, orderItemGroupKey(item));
     }
   }
   const groupPayload = (group: OrderItemGroup) => ({
@@ -642,12 +714,56 @@ function OrderDialog({
     expectedQuantity: group.quantity,
   });
 
-  const selectDish = (menuItemId: string, note?: string) => {
+  const submitCartToKitchen = () => {
+    if (!canSubmitCart) return;
+    const submittedTargetKey = cartTargetKey;
+    const submittedCount = totalCartQty;
+    const payloadItems = cart.map((line) => ({
+      menuItemId: line.menuItemId,
+      quantity: line.quantity,
+      note: line.note.trim() || undefined,
+    }));
+
     if (orderId) {
-      changeItems.mutate({ orderId, action: "ADD", payload: { menuItemId, quantity: 1, note } });
+      changeItems.mutate(
+        { orderId, action: "ADD_BATCH", payload: { items: payloadItems } },
+        {
+          onSuccess: () => {
+            clearCart(submittedTargetKey);
+            setConfirmSendOpen(false);
+            toast.success(`Đã gửi ${submittedCount} phần món xuống bếp`);
+          },
+          onError: () => {
+            setConfirmSendOpen(false);
+          },
+        },
+      );
       return;
     }
-    change(menuItemId, 1);
+
+    createOrder.mutate(
+      {
+        tableId: exclusiveTableId ?? table.id,
+        items: payloadItems,
+        submit: true,
+      },
+      {
+        onSuccess: (order) => {
+          queryClient.setQueryData<OrderResponse[]>(seatedKey, (current) => [
+            ...(current ?? []).filter((other) => other.id !== order.id),
+            order,
+          ]);
+          setSelectedOrderId(order.id);
+          clearCart(submittedTargetKey);
+          setConfirmSendOpen(false);
+          toast.success(`Đã gửi ${submittedCount} phần món xuống bếp`);
+        },
+        onError: (error: Error) => {
+          setConfirmSendOpen(false);
+          toast.error(error.message);
+        },
+      },
+    );
   };
 
   const confirmCancellation = (group: OrderItemGroup) => {
@@ -831,12 +947,48 @@ function OrderDialog({
         {showMenu && <div className="grid gap-6 md:grid-cols-2">
           <div className="min-w-0 space-y-2">
             <p className="text-xs uppercase tracking-widest text-muted-foreground">Thực đơn</p>
+            {categories.length > 0 && (
+              <div role="group" aria-label="Lọc món theo danh mục" className="flex flex-wrap gap-1.5 pb-1">
+                <button
+                  type="button"
+                  aria-pressed={activeCategory === ALL_CATEGORIES}
+                  onClick={() => setSelectedCategory(ALL_CATEGORIES)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition",
+                    activeCategory === ALL_CATEGORIES
+                      ? "border-moss bg-moss text-moss-foreground"
+                      : "bg-card hover:border-moss/40",
+                  )}
+                >
+                  Tất cả ({dishes.length})
+                </button>
+                {categories.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    aria-pressed={activeCategory === category.id}
+                    onClick={() => setSelectedCategory(category.id)}
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs font-medium transition",
+                      activeCategory === category.id
+                        ? "border-moss bg-moss text-moss-foreground"
+                        : "bg-card hover:border-moss/40",
+                    )}
+                  >
+                    {category.categoryName} ({category.items?.length ?? 0})
+                  </button>
+                ))}
+              </div>
+            )}
             {menuQuery.isLoading && <p role="status" className="text-sm text-muted-foreground">Đang tải thực đơn…</p>}
             {menuQuery.isError && <p role="alert" className="text-sm text-alert">Không tải được thực đơn. Đóng và mở lại đơn để thử lại.</p>}
             {menuQuery.isSuccess && dishes.length === 0 && <p className="text-sm">Thực đơn chưa có món.</p>}
-            {dishes.map((d) => {
-              const shownQty = hasOpenOrder ? (orderedQty.get(d.id) ?? 0) : qty(d.id);
-              const queued = itemGroups.get(latestQueued.get(d.id) ?? "");
+            {menuQuery.isSuccess && dishes.length > 0 && visibleDishes.length === 0 && (
+              <p className="text-sm text-muted-foreground">Danh mục này chưa có món.</p>
+            )}
+            {visibleDishes.map((d) => {
+              const stagedQty = draftQty(d.id);
+              const sentQty = orderedQty.get(d.id) ?? 0;
               return (
                 <div
                   key={d.id}
@@ -845,7 +997,8 @@ function OrderDialog({
                   <div>
                     <p className="text-sm font-medium">{d.itemName}</p>
                     <p className="text-xs tabular-nums text-muted-foreground">
-                      {d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}
+                      <span>{d.isAvailable ? formatVND(d.currentPrice) : "Hết món"}</span>
+                      {hasOpenOrder && sentQty > 0 && <span> · Đã gửi: {sentQty}</span>}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -853,23 +1006,20 @@ function OrderDialog({
                       size="icon"
                       variant="outline"
                       className="size-11"
-                      aria-label={`Bớt ${d.itemName} ${hasOpenOrder ? "khỏi đơn" : "khỏi giỏ"}`}
-                      disabled={changingQuantity || (hasOpenOrder ? !queued : shownQty === 0)}
-                      onClick={() => {
-                        if (!hasOpenOrder) change(d.id, -1);
-                        else if (queued) decrement(queued);
-                      }}
+                      aria-label={`Bớt ${d.itemName} khỏi giỏ`}
+                      disabled={isSubmittingCart || stagedQty === 0}
+                      onClick={() => decrementMenuDish(d.id)}
                     >
                       <Minus className="h-3 w-3" />
                     </Button>
-                    <span className="w-5 text-center text-sm tabular-nums">{shownQty}</span>
+                    <span className="w-5 text-center text-sm tabular-nums">{stagedQty}</span>
                     <Button
                       size="icon"
                       variant="outline"
                       className="size-11"
                       aria-label={`Thêm ${d.itemName}`}
-                      disabled={!d.isAvailable || changingQuantity}
-                      onClick={() => selectDish(d.id)}
+                      disabled={!d.isAvailable || isSubmittingCart || stagedQty >= MAX_CART_QTY}
+                      onClick={() => addToCart(d.id)}
                     >
                       <Plus className="h-3 w-3" />
                     </Button>
@@ -930,7 +1080,7 @@ function OrderDialog({
                           className="size-11"
                           aria-label={`Tăng số lượng ${itemLabel}`}
                           disabled={!available || changingQuantity}
-                          onClick={() => selectDish(item.menuItemId, (notes[item.id] ?? item.note)?.trim() || undefined)}
+                          onClick={() => addToCart(item.menuItemId, (notes[item.id] ?? item.note)?.trim() || undefined)}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -964,72 +1114,164 @@ function OrderDialog({
               })}
             </div>
 
-            <div>
-              <p className="mb-2 text-xs uppercase tracking-widest text-muted-foreground">Món mới</p>
-              {orderId ? (
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-widest text-muted-foreground">Món mới</p>
+              {cart.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Chọn món trong thực đơn để gửi thêm cho đơn {orderCode(orderId)}.
+                  Chọn món ở thực đơn bên trái, sau đó nhấn Gửi Bếp để xác nhận.
                 </p>
-              ) : cart.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Chọn món ở bên trái.</p>
               ) : (
-                <div className="space-y-2">
-                  {cart.map((line) => (
-                    <div key={line.menuItemId} className="space-y-1">
-                      <p className="text-sm">{line.quantity} × {dishName(line.menuItemId)}</p>
-                      <Input
-                        className="h-8 text-xs"
-                        placeholder="Ghi chú cho bếp"
-                        value={line.note}
-                        onChange={(e) => setNote(line.menuItemId, e.target.value)}
-                      />
-                    </div>
-                  ))}
+                <div className="space-y-2.5">
+                  {cart.map((line) => {
+                    const dish = dishMap.get(line.menuItemId);
+                    const name = dish?.itemName ?? "Món";
+                    const lineTotal = (dish?.currentPrice ?? 0) * line.quantity;
+                    return (
+                      <div key={line.key} className="space-y-1.5 rounded-lg border p-2.5 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{line.quantity} × {name}</span>
+                          <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                            {formatVND(lineTotal)}
+                          </span>
+                        </div>
+                        {dish && !dish.isAvailable && (
+                          <p className="text-xs text-alert">Món này hiện đã hết hàng.</p>
+                        )}
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="size-8 shrink-0"
+                            aria-label={`Giảm món mới ${name}`}
+                            disabled={isSubmittingCart}
+                            onClick={() => changeCartLine(line.key, -1)}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="size-8 shrink-0"
+                            aria-label={`Tăng món mới ${name}`}
+                            disabled={!dish?.isAvailable || line.quantity >= MAX_CART_QTY || isSubmittingCart}
+                            onClick={() => changeCartLine(line.key, 1)}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+                          <Input
+                            className="h-9 min-w-0 flex-1 text-xs"
+                            maxLength={255}
+                            aria-label={`Ghi chú món mới: ${name}`}
+                            placeholder="Ghi chú cho bếp"
+                            value={line.note}
+                            onChange={(e) => setCartLineNote(line.key, e.target.value)}
+                          />
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="size-8 shrink-0 text-alert hover:bg-alert/10"
+                            aria-label={`Xóa ${name} khỏi món mới`}
+                            disabled={isSubmittingCart}
+                            onClick={() => removeCartLine(line.key)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center justify-between text-sm font-medium">
+                    <span>Tạm tính món mới</span>
+                    <span className="tabular-nums">{formatVND(cartSubtotal)}</span>
+                  </div>
                 </div>
               )}
             </div>
 
-            {!hasOpenOrder && (
-              <Button
-                className="w-full bg-moss text-moss-foreground hover:bg-moss/90"
-                disabled={!canSubmit}
-                onClick={() => {
-                  createOrder.mutate(
-                    {
-                      tableId: exclusiveTableId ?? table.id,
-                      items: cart.map((line) => ({
-                        menuItemId: line.menuItemId,
-                        quantity: line.quantity,
-                        note: line.note.trim() || undefined,
-                      })),
-                      submit: true,
-                    },
-                    {
-                      onSuccess: (order) => {
-                        setSelectedOrderId(order.id);
-                        toast.success(`Đã gửi ${cart.length} món xuống bếp`);
-                        setCart([]);
-                      },
-                      onError: (error: Error) => toast.error(error.message),
-                    },
-                  );
-                }}
-              >
-                <ChefHat className="mr-2 h-4 w-4" /> Gửi Bếp
-              </Button>
-            )}
+            <Button
+              type="button"
+              className="min-h-11 w-full bg-moss text-moss-foreground hover:bg-moss/90"
+              disabled={!canSubmitCart}
+              onClick={() => setConfirmSendOpen(true)}
+            >
+              <ChefHat className="mr-2 h-4 w-4" />
+              {totalCartQty > 0 ? `Gửi Bếp (${totalCartQty} phần)` : "Gửi Bếp"}
+            </Button>
 
             {activeOrder && (
-              <Button
-                className="min-h-11 w-full bg-primary hover:bg-primary-hover"
-                disabled={!hasPayableItems || changingQuantity}
-                onClick={() => onBill(activeOrder)}
-              >
-                Thanh toán đơn {orderCode(activeOrder.id)}
-              </Button>
+              <div className="space-y-1">
+                <Button
+                  className="min-h-11 w-full bg-primary hover:bg-primary-hover"
+                  disabled={!hasPayableItems || changingQuantity || cart.length > 0}
+                  onClick={() => onBill(activeOrder)}
+                >
+                  Thanh toán đơn {orderCode(activeOrder.id)}
+                </Button>
+                {cart.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Gửi bếp hoặc xóa các món mới trước khi thanh toán.
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>}
+
+        <AlertDialog
+          open={confirmSendOpen && cart.length > 0 && showMenu}
+          onOpenChange={(open) => {
+            if (!open && !isSubmittingCart) setConfirmSendOpen(false);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Xác nhận gửi đơn xuống bếp</AlertDialogTitle>
+              <AlertDialogDescription className="wrap-anywhere">
+                {orderId
+                  ? `Kiểm tra lại ${totalCartQty} phần món cho ${activeOrder?.tableNumber || table.tableNumber} (${orderCode(orderId)}) trước khi gửi xuống bếp.`
+                  : `Kiểm tra lại ${totalCartQty} phần món cho ${table.tableNumber} trước khi tạo đơn và gửi xuống bếp.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="max-h-60 space-y-2 overflow-y-auto rounded-lg border bg-muted/40 p-3 text-sm">
+              {cart.map((line) => {
+                const price = dishMap.get(line.menuItemId)?.currentPrice ?? 0;
+                return (
+                  <div key={line.key} className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">
+                        {line.quantity} × {dishName(line.menuItemId)}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatVND(price * line.quantity)}</span>
+                    </div>
+                    {line.note.trim() && (
+                      <p className="text-xs text-muted-foreground">Ghi chú: {line.note.trim()}</p>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between border-t pt-2 font-semibold">
+                <span>Tổng món mới ({totalCartQty} phần)</span>
+                <span className="tabular-nums">{formatVND(cartSubtotal)}</span>
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isSubmittingCart}>Quay lại</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-moss text-moss-foreground hover:bg-moss/90"
+                disabled={isSubmittingCart || cart.length === 0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  submitCartToKitchen();
+                }}
+              >
+                {isSubmittingCart ? "Đang gửi…" : "Xác nhận gửi bếp"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <AlertDialog open={Boolean(cancelTarget)} onOpenChange={(open) => !open && setCancelTarget(null)}>
           <AlertDialogContent>
