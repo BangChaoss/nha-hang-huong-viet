@@ -539,7 +539,11 @@ public class OrderService {
             }
         }
 
-        if (matchingReservation == null) {
+        boolean allowLegacyTableReservationMatch = openOrders.stream().anyMatch(o -> o.getPartySize() == null)
+            || !legacyTableCheckout && linkedReservationId == null && orderRepository.findSeatedOrdersByTableIds(relatedTableIds).stream()
+                .noneMatch(o -> o.getReservationId() != null && !o.getReservationId().isBlank());
+
+        if (matchingReservation == null && (legacyTableCheckout || allowLegacyTableReservationMatch)) {
             List<Reservation> activeReservations = reservationRepository.findActiveReservationsForDate(LocalDate.now());
             for (Reservation r : activeReservations) {
                 if (relatedTableIds.stream().noneMatch(r::includesTable)) continue;

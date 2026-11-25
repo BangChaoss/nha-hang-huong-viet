@@ -340,7 +340,9 @@ export function StaffPOS({ focusedTarget, onClearFocusedTarget, onOpenBookingsTa
     ? selectedTable?.subTables.find((part) =>
         part.status === "OCCUPIED" &&
         selectedTableResInfo.arrivedList.some(
-          (r) => r.tableId === part.id || r.mergedTableIds?.split(",").some((id) => id.trim() === part.id),
+          (r) =>
+            (Boolean(r.zoneIsVip) || Boolean(r.mergedTableIds?.includes(","))) &&
+            (r.tableId === part.id || r.mergedTableIds?.split(",").some((id) => id.trim() === part.id)),
         ),
       )
     : undefined;
@@ -390,6 +392,25 @@ export function StaffPOS({ focusedTarget, onClearFocusedTarget, onOpenBookingsTa
             ))}
           </div>
         </div>
+        {onOpenBookingsTab && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-secondary/40 px-4 py-2.5 text-xs">
+            <span className="font-medium text-muted-foreground">Liên kết Đặt Bàn:</span>
+            <button
+              type="button"
+              onClick={() => onOpenBookingsTab({ tab: "needs-action" })}
+              className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 font-medium text-amber-800 hover:bg-amber-500/20 dark:text-amber-300 cursor-pointer"
+            >
+              Chờ duyệt đặt bàn · {pendingBookings.length}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenBookingsTab({ tab: "upcoming" })}
+              className="rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 font-medium text-sky-800 hover:bg-sky-500/20 dark:text-sky-300 cursor-pointer"
+            >
+              Lịch đặt hôm nay · {todayConfirmedCount}
+            </button>
+          </div>
+        )}
       </div>
 
       {tablesQuery.isError && (
@@ -912,7 +933,7 @@ function OrderDialog({
   const isOccupied = table.status === "OCCUPIED";
   const orderId = activeOrder?.id;
   const hasOpenOrder = Boolean(orderId);
-  const legacyCart = exclusive && seatedQuery.isSuccess && orders.length === 0;
+  const legacyCart = (exclusive || arrivedReservations.length > 0) && seatedQuery.isSuccess && orders.length === 0;
   const showMenu = isOccupied && seatedQuery.isSuccess && (hasOpenOrder || legacyCart);
   const cartTargetKey = orderId ?? LEGACY_CART_KEY;
   const cart = cartsByTarget[cartTargetKey] ?? [];

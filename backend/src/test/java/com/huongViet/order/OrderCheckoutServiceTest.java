@@ -819,4 +819,37 @@ class OrderCheckoutServiceTest {
         assertEquals(TableStatus.AVAILABLE, occupiedTable.getStatus());
         verify(reservationRepository).save(res);
     }
+
+    @Test
+    @DisplayName("sharedSeating - 2 đơn cùng ăn trên 1 bàn (1 đặt bàn + 1 ngồi ghép): thanh toán từng đơn tạo hóa đơn riêng và không đóng nhầm đặt bàn")
+    void checkoutOrderCash_SharedWalkInAndReservation_SettlesSeparately() {
+        when(tableRepository.lockActiveById("table-1")).thenReturn(Optional.of(occupiedTable));
+        Order resOrder = lockSeatedOrder("order-res");
+        resOrder.setReservationId("res-1");
+        Order walkInOrder = lockSeatedOrder("order-walkin");
+
+        Reservation arrivedRes = new Reservation(
+            "res-1", null, "Khách Đặt", "0901234567", null, 2,
+            java.time.LocalDate.now(), java.time.LocalTime.now(), null
+        );
+        arrivedRes.setTableId("table-1");
+        arrivedRes.setStatus(ReservationStatus.ARRIVED);
+
+        when(orderRepository.findSeatedOrdersByTableIds(List.of("table-1"))).thenReturn(List.of(resOrder, walkInOrder));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-walkin"))
+            .thenReturn(List.of(item("i-w", "order-walkin", bunCha, 1, CookingStatus.SERVED)));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-res"))
+            .thenReturn(List.of(item("i-r", "order-res", pho, 1, CookingStatus.SERVED)));
+        when(loyaltySettings.findById("default")).thenReturn(Optional.of(settings("5.000", "1")));
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-1")).thenReturn(Optional.of(arrivedRes));
+
+        CashCheckoutResponse walkInBill = orderService.checkoutOrderCash("order-walkin", null, "staff-1");
+        assertEquals(0, new BigDecimal("49500.00").compareTo(walkInBill.total()));
+        assertEquals(ReservationStatus.ARRIVED, arrivedRes.getStatus());
+
+        CashCheckoutResponse resBill = orderService.checkoutOrderCash("order-res", null, "staff-1");
+        assertEquals(0, new BigDecimal("60500.00").compareTo(resBill.total()));
+        assertEquals(ReservationStatus.PAID, arrivedRes.getStatus());
+        verify(jdbcTemplate, times(2)).update(startsWith("INSERT INTO invoices ("), any(Object[].class));
+    }
 }

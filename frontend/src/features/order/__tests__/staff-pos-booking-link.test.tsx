@@ -133,7 +133,7 @@ describe("StaffPOS & Đặt Bàn linkage", () => {
     );
 
     expect(await screen.findByText("Chờ duyệt đặt bàn · 1")).toBeInTheDocument();
-    expect(screen.getByText("Đặt trước · HV-1111AAAA")).toBeInTheDocument();
+    expect(await screen.findByText("Đặt trước · HV-1111AAAA")).toBeInTheDocument();
     expect(screen.getByText("Đã cọc VIP 250k")).toBeInTheDocument();
     expect(screen.getByText(new RegExp(`Lịch đặt .* · Trần Thị Bình`))).toBeInTheDocument();
 
@@ -236,5 +236,78 @@ describe("StaffPOS & Đặt Bàn linkage", () => {
     fireEvent.click(checkInBtn);
 
     await waitFor(() => expect(onOpenInPos).toHaveBeenCalledWith("table-5"));
+  });
+
+  it("cho phép mở thêm đơn ngồi ghép trên bàn thường đã có khách đặt bàn ARRIVED khi vẫn còn ghế trống", async () => {
+    const table: TableResponse = {
+      id: "t1",
+      tableNumber: "Bàn 01",
+      capacity: 4,
+      status: "OCCUPIED",
+      availableSeats: 2,
+      zoneId: "zone-1",
+      zoneName: "Trong Nhà",
+      zoneIsVip: false,
+    };
+    const arrivedRes: ReservationResponse = {
+      id: "res-2seats",
+      guestName: "Khách Đặt",
+      guestPhone: "0901112233",
+      partySize: 2,
+      reservationDate: todayStr(),
+      reservationTime: offsetTimeStr(0),
+      status: "ARRIVED",
+      tableId: "t1",
+      tableNumber: "Bàn 01",
+      zoneIsVip: false,
+      depositAmount: 0,
+      createdAt: "2026-11-25T10:00:00Z",
+    };
+    const firstOrder: OrderResponse = {
+      id: "ord-first",
+      tableId: "t1",
+      tableNumber: "Bàn 01",
+      staffId: null,
+      orderType: "DINE_IN",
+      status: "IN_PROGRESS",
+      createdAt: "2026-11-25T12:00:00Z",
+      closedAt: null,
+      subtotal: 0,
+      cancelledAmount: 0,
+      items: [],
+      partySize: 2,
+      seated: true,
+      reservationId: arrivedRes.id,
+      reservationGuestName: arrivedRes.guestName,
+    };
+    const secondOrder: OrderResponse = {
+      ...firstOrder,
+      id: "ord-second",
+      reservationId: null,
+      reservationGuestName: null,
+    };
+
+    vi.mocked(tableApi.list).mockResolvedValue([table]);
+    vi.mocked(reservationApi.listByDate).mockResolvedValue([arrivedRes]);
+    vi.mocked(orderApi.seatedAtTable).mockResolvedValue([firstOrder]);
+    vi.mocked(orderApi.openSeatedOrder).mockResolvedValue(secondOrder);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <StaffPOS />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Bàn 01/ }));
+    const dialog = await screen.findByRole("dialog", { name: /Bàn 01 · Gọi món/ });
+    expect(await within(dialog).findByText("2/4 ghế trống")).toBeInTheDocument();
+
+    const partyInput = within(dialog).getByRole("spinbutton", { name: "Số khách của đơn mới" });
+    expect(partyInput).toHaveAttribute("max", "2");
+    fireEvent.change(partyInput, { target: { value: "2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mở đơn mới" }));
+
+    await waitFor(() => expect(orderApi.openSeatedOrder).toHaveBeenCalledWith("t1", 2));
   });
 });
