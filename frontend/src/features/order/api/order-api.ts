@@ -2,6 +2,7 @@ import { API_BASE } from "@/lib/table-api";
 import { getSession } from "@/lib/auth-session";
 import type {
   AddOrderItemRequest,
+  AddOrderItemsBatchRequest,
   AdjustOrderItemsRequest,
   CookingStatus,
   CreateOrderRequest,
@@ -83,6 +84,13 @@ export const orderApi = {
   /** Thêm món vào một đơn đang mở (STT 84). */
   addItem: (orderId: string, payload: AddOrderItemRequest): Promise<OrderResponse> =>
     request<OrderResponse>(`/api/orders/${orderId}/items`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Gửi nhiều món mới cùng lúc vào đơn đang mở sau khi xác nhận gửi bếp. */
+  addItemsBatch: (orderId: string, payload: AddOrderItemsBatchRequest): Promise<OrderResponse> =>
+    request<OrderResponse>(`/api/orders/${orderId}/items/batch`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

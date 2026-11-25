@@ -74,6 +74,11 @@ export type AddOrderItemRequest = {
   note?: string | undefined;
 };
 
+/** Body của `POST /api/orders/{orderId}/items/batch` (gửi nhiều món cùng lúc vào đơn đang mở). */
+export type AddOrderItemsBatchRequest = {
+  items: AddOrderItemRequest[];
+};
+
 /** Body của `PATCH /api/orders/{orderId}/items/{itemId}` (sửa số lượng / ghi chú món). */
 export type UpdateOrderItemRequest = {
   quantity: number;

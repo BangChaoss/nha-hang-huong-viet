@@ -393,6 +393,81 @@ class OrderServiceTest {
         verify(orderItemRepository, never()).save(any(OrderItem.class));
     }
 
+    @Test
+    @DisplayName("addItems - lô đầu tiên tạo nhiều phiếu bếp đều không gắn cờ Gọi thêm")
+    void addItems_FirstBatchKeepsAllTicketsNotAdditional() {
+        Order order = openOrder();
+        MenuItem bunCha = new MenuItem("menu-3", "cat-1", "Bún chả", "Bún chả Hà Nội",
+            new BigDecimal("45000"), null, true);
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-3")).thenReturn(Optional.of(bunCha));
+        when(kitchenTicketRepository.existsByOrderId("order-1")).thenReturn(false);
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of());
+
+        orderService.addItems("order-1", new AddOrderItemsBatchRequest(List.of(
+            new AddOrderItemRequest("menu-1", 2, " Ít cay "),
+            new AddOrderItemRequest("menu-3", 1, "   ")
+        )), "staff-1");
+
+        ArgumentCaptor<KitchenTicket> ticketCaptor = ArgumentCaptor.forClass(KitchenTicket.class);
+        verify(kitchenTicketRepository, times(2)).save(ticketCaptor.capture());
+        List<KitchenTicket> savedTickets = ticketCaptor.getAllValues();
+        assertEquals(2, savedTickets.size());
+        assertFalse(savedTickets.get(0).isAdditional());
+        assertFalse(savedTickets.get(1).isAdditional());
+        assertEquals("Ít cay", savedTickets.get(0).getNote());
+        assertNull(savedTickets.get(1).getNote());
+        verify(orderItemAuditRepository, times(2)).save(any(OrderItemAudit.class));
+        verify(messagingTemplate, times(2)).convertAndSend(eq("/topic/kitchen/tickets"), any(KitchenTicketEvent.class));
+    }
+
+    @Test
+    @DisplayName("addItems - lô gọi thêm khi đã có phiếu bếp sẽ đánh dấu tất cả phiếu là Gọi thêm")
+    void addItems_SubsequentBatchMarksAllTicketsAdditional() {
+        Order order = openOrder();
+        MenuItem bunCha = new MenuItem("menu-3", "cat-1", "Bún chả", "Bún chả Hà Nội",
+            new BigDecimal("45000"), null, true);
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-3")).thenReturn(Optional.of(bunCha));
+        when(kitchenTicketRepository.existsByOrderId("order-1")).thenReturn(true);
+        when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(i -> i.getArgument(0));
+        when(kitchenTicketRepository.save(any(KitchenTicket.class))).thenAnswer(i -> i.getArgument(0));
+        when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of());
+
+        orderService.addItems("order-1", new AddOrderItemsBatchRequest(List.of(
+            new AddOrderItemRequest("menu-1", 1, null),
+            new AddOrderItemRequest("menu-3", 2, "Không rau")
+        )), "staff-1");
+
+        ArgumentCaptor<KitchenTicket> ticketCaptor = ArgumentCaptor.forClass(KitchenTicket.class);
+        verify(kitchenTicketRepository, times(2)).save(ticketCaptor.capture());
+        assertTrue(ticketCaptor.getAllValues().stream().allMatch(KitchenTicket::isAdditional));
+    }
+
+    @Test
+    @DisplayName("addItems - có 1 món hết hàng sẽ từ chối cả lô, không lưu món hay phiếu bếp nào")
+    void addItems_UnavailableDishRejectsEntireBatchAtomically() {
+        Order order = openOrder();
+        when(orderRepository.lockById("order-1")).thenReturn(Optional.of(order));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-1")).thenReturn(Optional.of(pho));
+        when(menuItemRepository.findByIdAndDeletedAtIsNull("menu-2")).thenReturn(Optional.of(unavailableDish));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+            () -> orderService.addItems("order-1", new AddOrderItemsBatchRequest(List.of(
+                new AddOrderItemRequest("menu-1", 1, null),
+                new AddOrderItemRequest("menu-2", 1, null)
+            )), "staff-1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(orderItemRepository, never()).save(any(OrderItem.class));
+        verify(kitchenTicketRepository, never()).save(any(KitchenTicket.class));
+        verifyNoInteractions(orderItemAuditRepository);
+    }
+
     private void stubGroup(OrderItem... items) {
         when(orderRepository.lockById("order-1")).thenReturn(Optional.of(openOrder()));
         when(orderItemRepository.findByOrderIdOrderByCreatedAtAsc("order-1")).thenReturn(List.of(items));

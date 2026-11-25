@@ -200,6 +200,35 @@ class OrderControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/orders/{orderId}/items/batch - gửi nhiều món cùng lúc vào đơn đang mở")
+    void addItems_BatchDispatchesItemsAndCurrentStaff() throws Exception {
+        AddOrderItemsBatchRequest request = new AddOrderItemsBatchRequest(List.of(
+            new AddOrderItemRequest("menu-1", 2, "Ít cay")
+        ));
+        when(orderService.addItems(eq("order-1"), eq(request), eq("staff-1")))
+            .thenReturn(orderResponse);
+
+        mockMvc.perform(post("/api/orders/order-1/items/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value("order-1"));
+
+        verify(orderService).addItems("order-1", request, "staff-1");
+    }
+
+    @Test
+    @DisplayName("POST /api/orders/{orderId}/items/batch - từ chối danh sách rỗng")
+    void addItems_BatchRejectsEmptyList() throws Exception {
+        mockMvc.perform(post("/api/orders/order-1/items/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"items\":[]}"))
+            .andExpect(status().isBadRequest());
+
+        verify(orderService, never()).addItems(any(), any(), any());
+    }
+
+    @Test
     @DisplayName("PATCH /api/orders/{orderId}/items/{itemId} - sửa số lượng món")
     void updateItem_ReturnsUpdatedOrder() throws Exception {
         UpdateOrderItemRequest request = new UpdateOrderItemRequest(3, "Không cay");

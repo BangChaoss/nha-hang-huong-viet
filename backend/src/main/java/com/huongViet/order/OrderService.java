@@ -661,6 +661,49 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse addItems(String orderId, AddOrderItemsBatchRequest request, String staffId) {
+        Order order = findEditableOrder(orderId);
+
+        List<MenuItem> menuItems = new ArrayList<>();
+        for (AddOrderItemRequest itemRequest : request.items()) {
+            MenuItem menuItem = menuItemRepository.findByIdAndDeletedAtIsNull(itemRequest.menuItemId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy món ăn."));
+
+            if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Món " + menuItem.getItemName() + " hiện không còn sẵn. Vui lòng chọn món khác.");
+            }
+            menuItems.add(menuItem);
+        }
+
+        boolean additional = kitchenTicketRepository.existsByOrderId(order.getId());
+        String displayTableNumber = displayTableNumber(order);
+
+        for (int i = 0; i < request.items().size(); i++) {
+            AddOrderItemRequest itemRequest = request.items().get(i);
+            MenuItem menuItem = menuItems.get(i);
+
+            OrderItem item = new OrderItem(
+                    UUID.randomUUID().toString(),
+                    order.getId(),
+                    menuItem.getId(),
+                    itemRequest.quantity(),
+                    menuItem.getCurrentPrice(),
+                    normalizeNote(itemRequest.note())
+            );
+            item.setMenuItem(menuItem);
+            OrderItem savedItem = orderItemRepository.save(item);
+
+            writeAudit(savedItem.getId(), staffId, "ADD_ITEM", 0, savedItem.getQuantity(),
+                    CookingStatus.QUEUED, savedItem.getCookingStatus(), "Thêm món vào đơn");
+
+            saveKitchenTicket(order, savedItem, menuItem, displayTableNumber, additional);
+        }
+
+        return toResponse(order);
+    }
+
+    @Transactional
     public OrderResponse adjustItems(String orderId, AdjustOrderItemsRequest request, String staffId) {
         Order order = findEditableOrder(orderId);
         var ids = new HashSet<>(request.itemIds());
