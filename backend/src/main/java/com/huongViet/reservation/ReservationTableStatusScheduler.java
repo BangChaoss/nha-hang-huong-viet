@@ -20,7 +20,7 @@ import java.util.List;
 public class ReservationTableStatusScheduler {
 
     private static final Logger logger = LoggerFactory.getLogger(ReservationTableStatusScheduler.class);
-    private static final int RESERVE_BEFORE_MINUTES = 60;
+    private static final int RESERVE_BEFORE_MINUTES = ReservationService.RESERVE_BEFORE_MINUTES;
 
     private final ReservationRepository reservationRepository;
     private final TableRepository tableRepository;
@@ -64,7 +64,7 @@ public class ReservationTableStatusScheduler {
 
             for (String tableId : targetTableIds) {
                 tableRepository.findByIdAndDeletedAtIsNull(tableId).ifPresent(table -> {
-                    if (table.getStatus() != TableStatus.AVAILABLE) {
+                    if (table.getStatus() != TableStatus.AVAILABLE || tableRepository.hasSeatedGuests(tableId)) {
                         logger.debug("Bàn {} đã ở trạng thái {} (shared/occupied), bỏ qua cho đơn {}",
                                 table.getTableNumber(), table.getStatus(), reservation.getId());
                         return;
@@ -89,8 +89,8 @@ public class ReservationTableStatusScheduler {
                         logger.warn("Không thể phát sự kiện trạng thái bàn {}: {}", table.getTableNumber(), ex.getMessage());
                     }
 
-                    logger.info("Bàn {} chuyển AVAILABLE -> RESERVED trước giờ đặt 60 phút (đơn {})",
-                            table.getTableNumber(), reservation.getId());
+                    logger.info("Bàn {} chuyển AVAILABLE -> RESERVED trước giờ đặt {} phút (đơn {})",
+                            table.getTableNumber(), RESERVE_BEFORE_MINUTES, reservation.getId());
                 });
             }
         }

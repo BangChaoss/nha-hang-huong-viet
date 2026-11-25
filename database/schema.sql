@@ -309,6 +309,7 @@ CREATE TABLE orders (
     id CHAR(36) NOT NULL,
     table_id CHAR(36) NOT NULL,
     staff_id CHAR(36) NULL,
+    reservation_id CHAR(36) NULL,
     order_type ENUM('DINE_IN', 'TAKE_AWAY') NOT NULL DEFAULT 'DINE_IN',
     status ENUM('IN_PROGRESS', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'IN_PROGRESS',
     version BIGINT NOT NULL DEFAULT 0,
@@ -320,8 +321,10 @@ CREATE TABLE orders (
     PRIMARY KEY (id),
     KEY idx_orders_active_table (table_id, status),
     KEY idx_orders_staff (staff_id),
+    KEY idx_orders_reservation (reservation_id),
     CONSTRAINT fk_orders_table FOREIGN KEY (table_id) REFERENCES restaurant_tables (id) ON DELETE RESTRICT,
-    CONSTRAINT fk_orders_staff FOREIGN KEY (staff_id) REFERENCES users (id) ON DELETE SET NULL
+    CONSTRAINT fk_orders_staff FOREIGN KEY (staff_id) REFERENCES users (id) ON DELETE SET NULL,
+    CONSTRAINT fk_orders_reservation FOREIGN KEY (reservation_id) REFERENCES reservations (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==============================================================================

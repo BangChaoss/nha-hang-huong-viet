@@ -1,7 +1,9 @@
 package com.huongViet.table;
 
+import com.huongViet.auth.User;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -35,7 +37,9 @@ public class TableReadController {
 
     @PatchMapping("/{id}/status")
     public ResponseEntity<TableResponse> updateStatus(@PathVariable String id,
-                                                      @Valid @RequestBody UpdateTableStatusRequest request) {
-        return ResponseEntity.ok(tableService.updateStatus(id, request));
+                                                      @Valid @RequestBody UpdateTableStatusRequest request,
+                                                      @AuthenticationPrincipal User currentUser) {
+        String actorId = currentUser != null ? currentUser.getId() : null;
+        return ResponseEntity.ok(tableService.updateStatus(id, request, actorId));
     }
 }

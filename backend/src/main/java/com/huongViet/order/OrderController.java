@@ -43,10 +43,16 @@ public class OrderController {
         return orderService.listSeatedOrders(tableId);
     }
 
+    public record ReleaseSeatsRequest(String reservationAction) {}
+
     @PostMapping("/{orderId}/release-seats")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void releaseSeats(@PathVariable String orderId) {
-        orderService.releaseSeats(orderId);
+    public void releaseSeats(@PathVariable String orderId,
+                             @RequestBody(required = false) ReleaseSeatsRequest request,
+                             @AuthenticationPrincipal User currentUser) {
+        String action = request != null ? request.reservationAction() : null;
+        String staffId = currentUser != null ? currentUser.getId() : null;
+        orderService.releaseSeats(orderId, action, staffId);
     }
 
     @PostMapping("/{orderId}/checkout-cash")

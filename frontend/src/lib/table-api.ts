@@ -35,6 +35,9 @@ export type TableRequest = {
 
 export type UpdateTableStatusRequest = {
   status: TableStatus;
+  reservationId?: string;
+  reservationAction?: "CANCEL" | "NO_SHOW" | "REASSIGN";
+  reason?: string;
 };
 
 export type FloorPlanLayoutResponse = {
@@ -173,10 +176,14 @@ export const tableApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  updateStatus: (id: string, status: TableStatus) =>
+  updateStatus: (
+    id: string,
+    status: TableStatus,
+    options?: Omit<UpdateTableStatusRequest, "status">,
+  ) =>
     request<TableResponse>(`/api/tables/${id}/status`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, ...(options ?? {}) }),
     }),
   remove: (id: string) => request<void>(`/api/admin/tables/${id}`, { method: "DELETE" }),
 };

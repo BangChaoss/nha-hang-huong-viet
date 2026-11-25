@@ -1,6 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus, Users, Clock, Phone, ChefHat, Wrench, Trash2, UserCheck } from "lucide-react";
+import {
+  Minus,
+  Plus,
+  Users,
+  Clock,
+  Phone,
+  ChefHat,
+  Wrench,
+  Trash2,
+  UserCheck,
+  CalendarCheck,
+  ArrowRightLeft,
+  AlertTriangle,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -35,6 +49,7 @@ import { validateVoucher } from "@/lib/voucher-api";
 import { paymentApi } from "@/lib/payment-api";
 import { tableApi, zoneApi, type TableStatus, type TableResponse, type ZoneResponse } from "@/lib/table-api";
 import { reservationApi } from "@/features/reservation/api/reservation-api";
+import { ConfirmBookingDialog } from "@/features/reservation/components/confirm-booking-dialog";
 import type { ReservationResponse } from "@/features/reservation/types/reservation.types";
 import { useTableWebSocket } from "@/lib/use-table-websocket";
 import { menuApi } from "@/features/menu/api/menu-api";
@@ -73,6 +88,42 @@ function localDateString(date = new Date()): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function reservationDateTime(reservation: ReservationResponse): Date | null {
+  if (!reservation.reservationDate || !reservation.reservationTime) return null;
+  const [year, month, day] = reservation.reservationDate.split("-").map(Number);
+  const [hours, minutes] = reservation.reservationTime.split(":").map(Number);
+  return new Date(year ?? 2026, (month ?? 1) - 1, day ?? 1, hours ?? 0, minutes ?? 0, 0, 0);
+}
+
+function isWithinReservationWindow(reservation: ReservationResponse): boolean {
+  const bookingDt = reservationDateTime(reservation);
+  if (!bookingDt) return false;
+  const diffMinutes = (Date.now() - bookingDt.getTime()) / 60000;
+  return diffMinutes >= -120 && diffMinutes <= 119;
+}
+
+function evaluateCheckInWindow(reservation?: ReservationResponse): {
+  allowed: boolean;
+  reason: string | null;
+  isOverdue: boolean;
+} {
+  if (!reservation) return { allowed: true, reason: null, isOverdue: false };
+  const bookingDt = reservationDateTime(reservation);
+  if (!bookingDt) return { allowed: true, reason: null, isOverdue: false };
+  const diffMinutes = (Date.now() - bookingDt.getTime()) / 60000;
+  if (diffMinutes < -30) {
+    return { allowed: false, reason: "Chưa đến giờ check-in (trước tối đa 30p)", isOverdue: false };
+  }
+  if (diffMinutes > 30) {
+    return { allowed: false, reason: "Quá giờ nhận bàn (>30p)", isOverdue: true };
+  }
+  return { allowed: true, reason: null, isOverdue: false };
+}
+
+function bookingCode(id: string): string {
+  return `HV-${id.slice(0, 8).toUpperCase()}`;
 }
 
 export type ConsolidatedTable = TableResponse & {
@@ -158,13 +209,20 @@ export function toIndividualTables(rawTables: TableResponse[]): ConsolidatedTabl
   }));
 }
 
+export type StaffPOSProps = {
+  focusedTarget?: { tableId: string; orderId?: string; nonce: number } | null;
+  onClearFocusedTarget?: () => void;
+  onOpenBookingsTab?: (opts?: { tab?: "needs-action" | "today" }) => void;
+};
+
 /**
  * Màn hình phục vụ: chọn bàn để xem thực đơn, gọi món và chuyển sang thanh toán.
  */
-export function StaffPOS() {
+export function StaffPOS({ focusedTarget, onClearFocusedTarget, onOpenBookingsTab }: StaffPOSProps = {}) {
   const queryClient = useQueryClient();
   const [tableSelection, setSelectedTable] = useState<{ table: ConsolidatedTable; orderId?: string } | null>(null);
   const [bill, setBill] = useState<{ table: ConsolidatedTable; order: OrderResponse } | null>(null);
+  const [reassignBooking, setReassignBooking] = useState<ReservationResponse | null>(null);
 
   const zonesQuery = useQuery({
     queryKey: ["zones"],
@@ -189,16 +247,32 @@ export function StaffPOS() {
     refetchOnWindowFocus: true,
   });
 
+  const pendingReservationsQuery = useQuery({
+    queryKey: ["admin-reservations", undefined, "pending", undefined],
+    queryFn: async () => (await reservationApi.listAdminBookings?.({ scope: "pending" })) ?? [],
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+  });
+
+  const invalidateAllPosAndBookings = () => {
+    void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
+    void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    void queryClient.invalidateQueries({ queryKey: ["floor-plan-layouts"] });
+  };
+
   useTableWebSocket({
-    onTableStatusChange: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tables"] });
-      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
-    },
+    onTableStatusChange: invalidateAllPosAndBookings,
     onFloorPlanChange: () => void queryClient.invalidateQueries({ queryKey: ["tables"] }),
+    onReservationChange: invalidateAllPosAndBookings,
   });
 
   const zones: ZoneResponse[] = zonesQuery.data ?? [];
   const tables: TableResponse[] = tablesQuery.data ?? [];
+  const todayReservations: ReservationResponse[] = reservationsQuery.data ?? [];
+  const pendingBookings: ReservationResponse[] = pendingReservationsQuery.data ?? [];
+  const todayConfirmedCount = todayReservations.filter((r) => r.status === "CONFIRMED").length;
 
   // Hiển thị từng bàn lẻ, không gộp bàn
   const individualTables: ConsolidatedTable[] = useMemo(
@@ -206,32 +280,70 @@ export function StaffPOS() {
     [tables],
   );
 
-  // Map reservation theo tableId HOẶC các id trong mergedTableIds
-  const findReservationForTable = (table: TableResponse | ConsolidatedTable): ReservationResponse | undefined => {
-    const list = reservationsQuery.data ?? [];
+  useEffect(() => {
+    if (!focusedTarget || individualTables.length === 0) return;
+    const match = individualTables.find(
+      (t) => t.id === focusedTarget.tableId || t.subTables.some((st) => st.id === focusedTarget.tableId),
+    );
+    if (match) {
+      setSelectedTable({
+        table: match,
+        ...(focusedTarget.orderId ? { orderId: focusedTarget.orderId } : {}),
+      });
+      onClearFocusedTarget?.();
+    }
+  }, [focusedTarget, individualTables, onClearFocusedTarget]);
+
+  const matchesReservationTable = (r: ReservationResponse, table: TableResponse | ConsolidatedTable): boolean => {
     const subIds = (table as ConsolidatedTable).subTables?.map((t) => t.id) ?? [table.id];
-    return list.find((r) => {
-      if (!["CONFIRMED", "ARRIVED"].includes(r.status)) return false;
-      if (r.tableId && subIds.includes(r.tableId)) return true;
-      if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).some((id) => subIds.includes(id))) return true;
-      if (r.tableNumber) {
-        const assignedNumbers = r.tableNumber.split("+").map((s) => s.trim()).filter(Boolean);
-        if (assignedNumbers.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id))) {
-          return true;
-        }
+    if (r.tableId && subIds.includes(r.tableId)) return true;
+    if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).some((id) => subIds.includes(id))) return true;
+    if (r.tableNumber) {
+      const assignedNumbers = r.tableNumber.split("+").map((s) => s.trim()).filter(Boolean);
+      if (assignedNumbers.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id))) {
+        return true;
       }
-      return false;
+    }
+    return false;
+  };
+
+  const classifyReservationsForTable = (table: TableResponse | ConsolidatedTable) => {
+    const matched = todayReservations.filter(
+      (r) => ["CONFIRMED", "ARRIVED"].includes(r.status) && matchesReservationTable(r, table),
+    );
+    const arrivedList = matched.filter((r) => r.status === "ARRIVED");
+    const confirmedList = matched
+      .filter((r) => r.status === "CONFIRMED")
+      .sort((a, b) => (a.reservationTime || "").localeCompare(b.reservationTime || ""));
+    const activeConfirmed =
+      confirmedList.find((r) => isWithinReservationWindow(r)) ??
+      (table.status === "RESERVED" ? confirmedList[0] : undefined);
+    const upcomingConfirmed = confirmedList.filter((r) => {
+      if (r.id === activeConfirmed?.id) return false;
+      const dt = reservationDateTime(r);
+      return dt ? dt.getTime() > Date.now() : false;
     });
+    return {
+      arrivedList,
+      activeConfirmed,
+      upcomingConfirmed,
+      primaryReservation: activeConfirmed ?? arrivedList[0] ?? upcomingConfirmed[0],
+    };
   };
 
   const selectedTable = tableSelection && (individualTables.find(
     (table) => table.id === tableSelection.table.id || table.subTables.some((part) => part.id === tableSelection.table.id)
   ) ?? tableSelection.table);
-  const selectedReservation = selectedTable ? findReservationForTable(selectedTable) : undefined;
-  const exclusiveTable = selectedReservation?.status === "ARRIVED" ? selectedTable?.subTables.find((part) =>
-    part.status === "OCCUPIED" && (selectedReservation.tableId === part.id ||
-      selectedReservation.mergedTableIds?.split(",").some((id) => id.trim() === part.id))
-  ) : undefined;
+  const selectedTableResInfo = selectedTable ? classifyReservationsForTable(selectedTable) : undefined;
+  const selectedReservation = selectedTableResInfo?.primaryReservation;
+  const exclusiveTable = selectedTableResInfo?.arrivedList.length
+    ? selectedTable?.subTables.find((part) =>
+        part.status === "OCCUPIED" &&
+        selectedTableResInfo.arrivedList.some(
+          (r) => r.tableId === part.id || r.mergedTableIds?.split(",").some((id) => id.trim() === part.id),
+        ),
+      )
+    : undefined;
   const updateSelectedTable = (updated: TableResponse) => {
     queryClient.setQueryData<TableResponse[]>(["tables"], (current) =>
       current?.map((table) => (table.id === updated.id ? updated : table)),
@@ -307,7 +419,9 @@ export function StaffPOS() {
             </div>
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
               {zoneTables.map((item) => {
-                const reservation = findReservationForTable(item);
+                const resInfo = classifyReservationsForTable(item);
+                const reservation = resInfo.activeConfirmed ?? resInfo.arrivedList[0];
+                const nextUpcoming = resInfo.upcomingConfirmed[0];
                 const isMaintenance = item.status === "MAINTENANCE";
                 const statusLabel = TABLE_STATUS_LABELS[item.status] ?? item.status;
                 const statusClass = REAL_STATUS_CLASSES[item.status] ?? "status-available";
@@ -333,8 +447,34 @@ export function StaffPOS() {
                     </span>
                     {item.status === "RESERVED" && reservation && (
                       <p className="mt-2 text-xs text-muted-foreground">
-                        <span className="block font-medium">{reservation.guestName} · {reservation.partySize} khách</span>
+                        <span className="block font-semibold text-primary">{bookingCode(reservation.id)}</span>
+                        <span className="block font-medium text-foreground">{reservation.guestName} · {reservation.partySize} khách</span>
                         <span className="block">{reservation.reservationTime.slice(0, 5)} · {reservation.guestPhone}</span>
+                        {reservation.tableNumber?.includes("+") && (
+                          <span className="block text-[11px] text-amber-700 dark:text-amber-400">
+                            Ghép: {reservation.tableNumber}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    {item.status === "OCCUPIED" && resInfo.arrivedList.length > 0 && (
+                      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                        <span className="inline-block rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                          Đặt trước · {bookingCode(resInfo.arrivedList[0]!.id)}
+                        </span>
+                        <span className="block font-medium text-foreground">
+                          {resInfo.arrivedList[0]!.guestName} · {resInfo.arrivedList[0]!.reservationTime.slice(0, 5)}
+                        </span>
+                        {resInfo.arrivedList[0]!.depositAmount > 0 && (
+                          <span className="block text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                            Đã cọc VIP 250k
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {item.status !== "RESERVED" && nextUpcoming && (
+                      <p className="mt-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                        Lịch đặt {nextUpcoming.reservationTime.slice(0, 5)} · {nextUpcoming.guestName}
                       </p>
                     )}
                   </button>
@@ -348,9 +488,10 @@ export function StaffPOS() {
       {selectedTable?.status === "RESERVED" && (
         <ReservationDialog
           table={selectedTable}
-          reservation={selectedReservation}
+          reservation={selectedTableResInfo?.activeConfirmed ?? selectedReservation}
           onClose={() => setSelectedTable(null)}
           onTableUpdated={updateSelectedTable}
+          onReassign={(res) => setReassignBooking(res)}
         />
       )}
 
@@ -360,6 +501,8 @@ export function StaffPOS() {
           table={selectedTable}
           initialOrderId={tableSelection?.orderId}
           exclusiveTableId={exclusiveTable?.id}
+          arrivedReservations={selectedTableResInfo?.arrivedList ?? []}
+          upcomingReservations={selectedTableResInfo?.upcomingConfirmed ?? []}
           onClose={() => setSelectedTable(null)}
           onTableUpdated={updateSelectedTable}
           onBill={(order) => {
@@ -375,6 +518,14 @@ export function StaffPOS() {
           setBill(null);
         }} />
       )}
+
+      <ConfirmBookingDialog
+        booking={reassignBooking}
+        open={Boolean(reassignBooking)}
+        onOpenChange={(open) => {
+          if (!open) setReassignBooking(null);
+        }}
+      />
     </div>
   );
 }
@@ -384,27 +535,50 @@ function ReservationDialog({
   reservation,
   onClose,
   onTableUpdated,
+  onReassign,
 }: {
   table: TableResponse;
   reservation?: ReservationResponse | undefined;
   onClose: () => void;
   onTableUpdated?: (table: TableResponse) => void;
+  onReassign?: (reservation: ReservationResponse) => void;
 }) {
   const queryClient = useQueryClient();
+  const [confirmStatusChange, setConfirmStatusChange] = useState<{
+    status: TableStatus;
+    action?: "CANCEL" | "NO_SHOW";
+  } | null>(null);
 
   const subTables: TableResponse[] = (table as any).subTables ?? [table];
+  const checkInTiming = evaluateCheckInWindow(reservation);
+
+  const invalidateLinkedQueries = () => {
+    void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
+    void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    void queryClient.invalidateQueries({ queryKey: ["floor-plan-layouts"] });
+  };
 
   const changeStatusMutation = useMutation({
-    mutationFn: async (payload: { id: string; status: TableStatus }) => {
+    mutationFn: async (payload: {
+      id: string;
+      status: TableStatus;
+      reservationAction?: "CANCEL" | "NO_SHOW";
+    }) => {
       let lastUpdated = table;
       for (const st of subTables) {
-        lastUpdated = await tableApi.updateStatus(st.id, payload.status);
+        lastUpdated = await tableApi.updateStatus(st.id, payload.status, {
+          ...(reservation ? { reservationId: reservation.id } : {}),
+          ...(payload.reservationAction ? { reservationAction: payload.reservationAction } : {}),
+        });
       }
       return lastUpdated;
     },
     onSuccess: (updated) => {
       toast.success(`${table.tableNumber}: ${TABLE_STATUS_LABELS[updated.status]}.`);
-      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      invalidateLinkedQueries();
+      setConfirmStatusChange(null);
       if (onTableUpdated) onTableUpdated(updated);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -412,35 +586,70 @@ function ReservationDialog({
 
   const checkInMutation = useMutation({
     mutationFn: async () => {
-      let updatedTable = table;
       if (reservation) {
         await reservationApi.updateReservationStatus(reservation.id, { status: "ARRIVED" });
+        return { ...table, status: "OCCUPIED" as TableStatus };
       }
+      let updatedTable = table;
       for (const st of subTables) {
         if (st.status !== "OCCUPIED") {
           updatedTable = await tableApi.updateStatus(st.id, "OCCUPIED");
         }
       }
-      return { updatedTable };
+      return updatedTable;
     },
-    onSuccess: ({ updatedTable }) => {
+    onSuccess: (updatedTable) => {
       toast.success(`Check-in thành công! Bàn ${table.tableNumber} đã chuyển sang Đang phục vụ.`);
-      void queryClient.invalidateQueries({ queryKey: ["tables"] });
-      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+      invalidateLinkedQueries();
       onTableUpdated?.(updatedTable);
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const handleManualStatusSelect = (val: string) => {
+    const nextStatus = val as TableStatus;
+    if (nextStatus === table.status) return;
+    if (nextStatus === "OCCUPIED") {
+      if (reservation) {
+        checkInMutation.mutate();
+      } else {
+        changeStatusMutation.mutate({ id: table.id, status: "OCCUPIED" });
+      }
+      return;
+    }
+    if (reservation && (nextStatus === "AVAILABLE" || nextStatus === "MAINTENANCE")) {
+      const bookingDt = reservationDateTime(reservation);
+      const defaultAction: "CANCEL" | "NO_SHOW" =
+        bookingDt && Date.now() > bookingDt.getTime() ? "NO_SHOW" : "CANCEL";
+      setConfirmStatusChange({
+        status: nextStatus,
+        ...(nextStatus === "AVAILABLE" ? { action: defaultAction } : {}),
+      });
+      return;
+    }
+    changeStatusMutation.mutate({ id: table.id, status: nextStatus });
+  };
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-display text-3xl">{table.tableNumber} · Đã đặt trước</DialogTitle>
-          <DialogDescription>Thông tin khách đặt bàn</DialogDescription>
+          <DialogTitle className="font-display text-3xl">
+            {reservation?.tableNumber?.includes("+") ? `${reservation.tableNumber}` : table.tableNumber} · Đã đặt trước
+          </DialogTitle>
+          <DialogDescription>
+            {reservation ? `Đơn ${bookingCode(reservation.id)} — Thông tin khách đặt bàn` : "Thông tin khách đặt bàn"}
+          </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
-          <p className="font-display text-xl font-semibold">{reservation?.guestName ?? "Khách đặt trước"}</p>
+        <div className="space-y-2.5 rounded-lg bg-muted p-4 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-display text-xl font-semibold">{reservation?.guestName ?? "Khách đặt trước"}</p>
+            {reservation && (
+              <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-mono text-xs font-semibold text-primary">
+                {bookingCode(reservation.id)}
+              </span>
+            )}
+          </div>
           <p className="flex items-center gap-2">
             <Clock className="h-4 w-4" /> {reservation?.reservationTime?.slice(0, 5) ?? "--:--"} · {reservation?.reservationDate ?? "Hôm nay"}
           </p>
@@ -450,26 +659,49 @@ function ReservationDialog({
           <p className="flex items-center gap-2">
             <Phone className="h-4 w-4" /> {reservation?.guestPhone ?? "Đang cập nhật SĐT"}
           </p>
+          {reservation && reservation.depositAmount > 0 && (
+            <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+              Đã thanh toán phí thu & cọc phòng VIP: {formatVND(reservation.depositAmount)}
+            </p>
+          )}
           {reservation?.specialRequests && <p className="text-muted-foreground">Ghi chú: {reservation.specialRequests}</p>}
         </div>
 
-        <Button
-          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5"
-          disabled={checkInMutation.isPending}
-          onClick={() => checkInMutation.mutate()}
-        >
-          <UserCheck className="mr-2 h-4 w-4" />
-          {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in & Mở bàn)"}
-        </Button>
+        {reservation && !checkInTiming.allowed && (
+          <p className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {checkInTiming.reason}
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5"
+            disabled={checkInMutation.isPending || (Boolean(reservation) && !checkInTiming.allowed)}
+            onClick={() => checkInMutation.mutate()}
+          >
+            <UserCheck className="mr-2 h-4 w-4" />
+            {checkInMutation.isPending ? "Đang xác nhận…" : "Xác nhận khách đến (Check-in & Mở bàn)"}
+          </Button>
+          {reservation && onReassign && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onReassign(reservation)}
+              disabled={checkInMutation.isPending || changeStatusMutation.isPending}
+            >
+              <ArrowRightLeft className="mr-1.5 h-4 w-4" />
+              Đổi bàn
+            </Button>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
           <span className="text-xs text-muted-foreground">Chuyển trạng thái bàn:</span>
           <Select
             value={table.status}
-            disabled={changeStatusMutation.isPending}
-            onValueChange={(val) =>
-              changeStatusMutation.mutate({ id: table.id, status: val as TableStatus })
-            }
+            disabled={changeStatusMutation.isPending || checkInMutation.isPending}
+            onValueChange={handleManualStatusSelect}
           >
             <SelectTrigger className="h-8 w-[11rem] bg-card">
               <SelectValue />
@@ -483,6 +715,48 @@ function ReservationDialog({
             </SelectContent>
           </Select>
         </div>
+
+        <AlertDialog open={Boolean(confirmStatusChange)} onOpenChange={(o) => !o && setConfirmStatusChange(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Đồng bộ trạng thái bàn & đặt bàn</AlertDialogTitle>
+              <AlertDialogDescription>
+                {confirmStatusChange?.status === "MAINTENANCE"
+                  ? `Chuyển ${table.tableNumber} sang Bảo trì sẽ tự động đưa đơn ${reservation ? bookingCode(reservation.id) : ""} về trạng thái Chờ xác nhận để xếp bàn mới.`
+                  : `Chuyển ${table.tableNumber} về Trống sẽ tự động cập nhật đơn ${reservation ? bookingCode(reservation.id) : ""} thành ${confirmStatusChange?.action === "NO_SHOW" ? "Không đến (No-Show)" : "Đã hủy"}.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={changeStatusMutation.isPending}>Quay lại</AlertDialogCancel>
+              {confirmStatusChange?.status === "AVAILABLE" && (
+                <AlertDialogAction
+                  disabled={changeStatusMutation.isPending}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    changeStatusMutation.mutate({
+                      id: table.id,
+                      status: "AVAILABLE",
+                      reservationAction: confirmStatusChange.action ?? "CANCEL",
+                    });
+                  }}
+                >
+                  {changeStatusMutation.isPending ? "Đang xử lý…" : "Xác nhận"}
+                </AlertDialogAction>
+              )}
+              {confirmStatusChange?.status === "MAINTENANCE" && (
+                <AlertDialogAction
+                  disabled={changeStatusMutation.isPending}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    changeStatusMutation.mutate({ id: table.id, status: "MAINTENANCE" });
+                  }}
+                >
+                  {changeStatusMutation.isPending ? "Đang xử lý…" : "Xác nhận bảo trì"}
+                </AlertDialogAction>
+              )}
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
@@ -492,6 +766,8 @@ function OrderDialog({
   table,
   initialOrderId,
   exclusiveTableId,
+  arrivedReservations = [],
+  upcomingReservations = [],
   onClose,
   onBill,
   onTableUpdated,
@@ -499,6 +775,8 @@ function OrderDialog({
   table: ConsolidatedTable;
   initialOrderId: string | undefined;
   exclusiveTableId: string | undefined;
+  arrivedReservations?: ReservationResponse[];
+  upcomingReservations?: ReservationResponse[];
   onClose: () => void;
   onBill: (order: OrderResponse) => void;
   onTableUpdated?: (table: TableResponse) => void;
@@ -577,12 +855,25 @@ function OrderDialog({
     },
   });
   const releaseSeats = useMutation({
-    mutationFn: ({ orderId }: { orderId: string; seated: boolean }) => orderApi.releaseSeats(orderId),
-    onSuccess: (_, { orderId, seated }) => {
+    mutationFn: ({ orderId, reservationAction }: { orderId: string; seated: boolean; reservationAction?: "CANCEL" | "REVERT_CONFIRMED" }) =>
+      reservationAction
+        ? orderApi.releaseSeats(orderId, { reservationAction })
+        : orderApi.releaseSeats(orderId),
+    onSuccess: (_, { orderId, seated, reservationAction }) => {
       queryClient.setQueryData<OrderResponse[]>(seatedKey, (current) => current?.filter((order) => order.id !== orderId));
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
-      toast.success(seated ? `Đã trả chỗ cho đơn ${orderCode(orderId)}.` : `Đã hủy đơn trống ${orderCode(orderId)}.`);
+      void queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["floor-plan-layouts"] });
+      toast.success(
+        reservationAction === "REVERT_CONFIRMED"
+          ? `Đã hoàn tác Check-in và giữ lại đặt bàn cho đơn ${orderCode(orderId)}.`
+          : seated
+            ? `Đã trả chỗ cho đơn ${orderCode(orderId)}.`
+            : `Đã hủy đơn trống ${orderCode(orderId)}.`,
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -814,6 +1105,75 @@ function OrderDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {(() => {
+          const linkedRes =
+            (selectedOrder?.reservationId
+              ? arrivedReservations.find((r) => r.id === selectedOrder.reservationId)
+              : undefined) ??
+            (selectedOrder?.reservationId
+              ? {
+                  id: selectedOrder.reservationId,
+                  guestName: selectedOrder.reservationGuestName ?? "Khách đặt trước",
+                  guestPhone: selectedOrder.reservationGuestPhone ?? "",
+                  reservationTime: selectedOrder.reservationTime ?? "",
+                  specialRequests: selectedOrder.reservationSpecialRequests ?? null,
+                  tableNumber: selectedOrder.reservationTableNumber ?? selectedOrder.tableNumber,
+                  depositAmount: selectedOrder.reservationDepositAmount ?? 0,
+                  partySize: selectedOrder.partySize ?? table.capacity,
+                }
+              : arrivedReservations[0]);
+
+          if (!linkedRes) return null;
+          const resCode = selectedOrder?.reservationCode || bookingCode(linkedRes.id);
+          return (
+            <div className="space-y-1.5 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3.5 py-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                  <span className="font-mono font-bold text-blue-700 dark:text-blue-300">{resCode}</span>
+                  <span className="font-semibold text-foreground">{linkedRes.guestName}</span>
+                  {linkedRes.guestPhone && (
+                    <span className="text-muted-foreground">· {linkedRes.guestPhone}</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {linkedRes.reservationTime && (
+                    <span className="rounded bg-background px-2 py-0.5 font-medium text-foreground border">
+                      Giờ hẹn: {linkedRes.reservationTime.slice(0, 5)}
+                    </span>
+                  )}
+                  {Number(linkedRes.depositAmount || 0) > 0 && (
+                    <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300">
+                      Đã cọc VIP {formatVND(Number(linkedRes.depositAmount))}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {linkedRes.tableNumber?.includes("+") && (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                  Cụm bàn gộp: {linkedRes.tableNumber}
+                </p>
+              )}
+              {linkedRes.specialRequests && (
+                <p className="text-[11px] font-medium text-foreground">
+                  Lưu ý khách đặt: <span className="italic">{linkedRes.specialRequests}</span>
+                </p>
+              )}
+            </div>
+          );
+        })()}
+
+        {upcomingReservations.length > 0 && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              Lưu ý: Bàn có lịch đặt lúc{" "}
+              <strong>{upcomingReservations[0]!.reservationTime.slice(0, 5)}</strong> cho{" "}
+              <strong>{upcomingReservations[0]!.guestName}</strong> ({upcomingReservations[0]!.partySize} khách).
+            </span>
+          </div>
+        )}
+
         <div
           className={cn(
             "space-y-2 rounded-lg border px-3 py-2 text-sm",
@@ -904,7 +1264,9 @@ function OrderDialog({
                   className="h-auto min-h-11 max-w-full flex-wrap justify-start gap-x-2 gap-y-0 whitespace-normal px-3 text-left"
                   onClick={() => setSelectedOrderId(order.id)}
                 >
-                  {orderCode(order.id)}{order.partySize != null ? ` · ${order.partySize} khách` : ""}
+                  {orderCode(order.id)}
+                  {order.partySize != null ? ` · ${order.partySize} khách` : ""}
+                  {order.reservationGuestName ? ` · ${order.reservationGuestName}` : ""}
                   {order.status === "COMPLETED" ? " · Đã trả tiền, còn ngồi" : " · Đang mở"}
                 </Button>
               ))}
@@ -936,10 +1298,36 @@ function OrderDialog({
               {selectedOrder.status === "COMPLETED" && (
                 <p className="text-sm">Chỉ trả chỗ khi khách của đơn {orderCode(selectedOrder.id)} đã rời bàn.</p>
               )}
-              <Button className="min-h-11" variant="outline" disabled={changingQuantity}
-                onClick={() => releaseSeats.mutate({ orderId: selectedOrder.id, seated: selectedOrder.seated === true })}>
-                {releaseSeats.isPending ? "Đang xử lý…" : selectedOrder.status === "COMPLETED" ? "Trả chỗ" : selectedOrder.seated ? "Hủy đơn và trả chỗ" : "Hủy đơn trống"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button className="min-h-11" variant="outline" disabled={changingQuantity}
+                  onClick={() => releaseSeats.mutate({
+                    orderId: selectedOrder.id,
+                    seated: selectedOrder.seated === true,
+                    ...(selectedOrder.status === "IN_PROGRESS" && selectedOrder.reservationId
+                      ? { reservationAction: "CANCEL" as const }
+                      : {}),
+                  })}>
+                  {releaseSeats.isPending
+                    ? "Đang xử lý…"
+                    : selectedOrder.status === "COMPLETED"
+                      ? "Trả chỗ"
+                      : selectedOrder.reservationId
+                        ? "Hủy đơn & hủy đặt bàn"
+                        : selectedOrder.seated
+                          ? "Hủy đơn và trả chỗ"
+                          : "Hủy đơn trống"}
+                </Button>
+                {selectedOrder.status === "IN_PROGRESS" && selectedOrder.reservationId && (
+                  <Button className="min-h-11" variant="secondary" disabled={changingQuantity}
+                    onClick={() => releaseSeats.mutate({
+                      orderId: selectedOrder.id,
+                      seated: selectedOrder.seated === true,
+                      reservationAction: "REVERT_CONFIRMED",
+                    })}>
+                    Hoàn tác Check-in (giữ đặt bàn)
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -1330,7 +1718,15 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
   const [code, setCode] = useState("");
   const [redeem, setRedeem] = useState(false);
   const [method, setMethod] = useState<string>("Tiền mặt");
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState(() => order.reservationGuestPhone?.trim() ?? "");
+  const [phoneEdited, setPhoneEdited] = useState(false);
+
+  const resolvedReservationPhone = billOrderQuery.data?.reservationGuestPhone?.trim() || order.reservationGuestPhone?.trim() || "";
+  useEffect(() => {
+    if (!phoneEdited && !phoneNumber && resolvedReservationPhone) {
+      setPhoneNumber(resolvedReservationPhone);
+    }
+  }, [phoneEdited, phoneNumber, resolvedReservationPhone]);
   const [loyaltyBalance, setLoyaltyBalance] = useState(0);
   const [pointValueVnd, setPointValueVnd] = useState(1);
   const [loyaltyBusy, setLoyaltyBusy] = useState(false);
@@ -1394,7 +1790,7 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
           <Row l="Tạm tính" v={formatVND(subtotal)} />
           {vipFee > 0 && (
             <Row
-              l="Phí thu phòng VIP (tính VAT 10%)"
+              l="Phí thu phòng VIP"
               v={`+${formatVND(vipFee)}`}
               cls="text-amber-700 dark:text-amber-400 font-medium"
             />
@@ -1402,7 +1798,7 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
           {vipDepositPaid > 0 && (
             <Row
               l="Phí thu & cọc phòng VIP"
-              v={`Đã thanh toán ${formatVND(vipDepositPaid)} (không trừ hóa đơn)`}
+              v={`Đã thanh toán ${formatVND(vipDepositPaid)}`}
               cls="text-emerald-700 dark:text-emerald-400 text-xs"
             />
           )}
@@ -1415,6 +1811,7 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
               placeholder="Số điện thoại khách (để dùng điểm/voucher)"
               value={phoneNumber}
               onChange={(e) => {
+                setPhoneEdited(true);
                 setPhoneNumber(e.target.value);
                 setLoyaltyBalance(0);
                 setLoyaltyChecked(false);
@@ -1576,6 +1973,10 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
 
               await queryClient.invalidateQueries({ queryKey: ["tables"] });
               await queryClient.invalidateQueries({ queryKey: ["orders"] });
+              await queryClient.invalidateQueries({ queryKey: ["invoices"] });
+              await queryClient.invalidateQueries({ queryKey: ["staff-pos-reservations"] });
+              await queryClient.invalidateQueries({ queryKey: ["admin-reservations"] });
+              await queryClient.invalidateQueries({ queryKey: ["reservations"] });
               toast.success(
                 `Đã thu ${formatVND(Number(settled.total))} cho đơn ${orderCode(order.id)}. Điểm thưởng: +${Number(settled.pointsAwarded || 0).toLocaleString("vi-VN")}.`,
               );

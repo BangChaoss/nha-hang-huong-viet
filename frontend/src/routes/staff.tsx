@@ -13,6 +13,9 @@ import { useSession } from "@/lib/auth-session";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StaffInvoices } from "@/components/hv/StaffInvoices";
 import { orderCode } from "@/features/order/utils/order-code";
+import { useAdminReservations } from "@/features/reservation/hooks/use-admin-reservations";
+
+type StaffMainTab = "pos" | "bookings" | "kitchen" | "invoices";
 
 export const Route = createFileRoute("/staff")({
   head: () => ({ meta: [{ title: "Nhân viên & Thu ngân — Hương Việt" }] }),
@@ -22,6 +25,11 @@ export const Route = createFileRoute("/staff")({
 function Page() {
   const { session } = useSession();
   const isAdmin = session?.role === "ADMIN";
+  const [activeTab, setActiveTab] = useState<StaffMainTab>("pos");
+  const [posTarget, setPosTarget] = useState<{ tableId: string; orderId?: string; nonce: number } | null>(null);
+  const [bookingFocus, setBookingFocus] = useState<{ tab?: "needs-action" | "today"; nonce: number } | null>(null);
+  const pendingReservationsQuery = useAdminReservations({ scope: "pending", refetchInterval: 15_000 });
+  const pendingCount = pendingReservationsQuery.data?.length ?? 0;
 
   const [paymentResult, setPaymentResult] = useState<{
     order: PaymentOrderStatus | null;
@@ -150,7 +158,7 @@ function Page() {
           )}
 
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-            <Tabs defaultValue="pos" className="space-y-6">
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as StaffMainTab)} className="space-y-6">
               <TabsList className="grid w-full max-w-2xl grid-cols-4">
                 <TabsTrigger value="pos" className="flex items-center gap-2">
                   <Store className="h-4 w-4" />
@@ -159,6 +167,11 @@ function Page() {
                 <TabsTrigger value="bookings" className="flex items-center gap-2">
                   <CalendarCheck className="h-4 w-4" />
                   <span>Đặt Bàn</span>
+                  {pendingCount > 0 && (
+                    <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
+                      {pendingCount}
+                    </span>
+                  )}
                 </TabsTrigger>
                 <TabsTrigger value="kitchen" className="flex items-center gap-2">
                   <ChefHat className="h-4 w-4" />
@@ -171,11 +184,26 @@ function Page() {
               </TabsList>
 
               <TabsContent value="pos" className="space-y-4 focus-visible:outline-none">
-                <StaffPOS />
+                <StaffPOS
+                  focusedTarget={posTarget}
+                  onClearFocusedTarget={() => setPosTarget(null)}
+                  onOpenBookingsTab={(opts) => {
+                    if (opts?.tab) {
+                      setBookingFocus({ tab: opts.tab, nonce: Date.now() });
+                    }
+                    setActiveTab("bookings");
+                  }}
+                />
               </TabsContent>
 
               <TabsContent value="bookings" className="space-y-4 focus-visible:outline-none">
-                <StaffBookingDashboard />
+                <StaffBookingDashboard
+                  initialTabFilter={bookingFocus}
+                  onOpenInPos={(tableId, orderId) => {
+                    setPosTarget({ tableId, ...(orderId ? { orderId } : {}), nonce: Date.now() });
+                    setActiveTab("pos");
+                  }}
+                />
               </TabsContent>
 
               <TabsContent value="kitchen" className="space-y-4 focus-visible:outline-none">

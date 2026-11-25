@@ -260,6 +260,24 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
         """)
     List<Reservation> findActiveReservationsForDate(@Param("date") LocalDate date);
 
+    /**
+     * Finds confirmed, arrived, or paid reservations for a given date (used when releasing merged tables after payment).
+     */
+    @Query("""
+        SELECT r FROM Reservation r
+        LEFT JOIN FETCH r.table t
+        LEFT JOIN FETCH t.zone z
+        LEFT JOIN FETCH r.zone rz
+        WHERE r.reservationDate = :date
+          AND r.status IN (
+              com.huongViet.reservation.ReservationStatus.CONFIRMED,
+              com.huongViet.reservation.ReservationStatus.ARRIVED,
+              com.huongViet.reservation.ReservationStatus.PAID
+          )
+          AND r.deletedAt IS NULL
+        """)
+    List<Reservation> findActiveOrPaidReservationsForDate(@Param("date") LocalDate date);
+
 
     /** Reservations that have reached their booking time and have an assigned table. */
     @Query("""

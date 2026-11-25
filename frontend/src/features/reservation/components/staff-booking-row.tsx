@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CheckCircle2, Phone, Sparkles, UserCheck, XCircle, Clock } from "lucide-react";
+import { CheckCircle2, Phone, Sparkles, UserCheck, XCircle, Clock, ArrowRightLeft, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
@@ -10,6 +10,7 @@ interface StaffBookingRowProps {
   onOpenConfirm: (booking: ReservationResponse) => void;
   onCheckIn: (booking: ReservationResponse) => void;
   onCancel: (booking: ReservationResponse) => void;
+  onOpenInPos?: ((tableId: string, orderId?: string) => void) | undefined;
   isActionPending?: boolean;
   showDate?: boolean;
 }
@@ -19,6 +20,7 @@ export function StaffBookingRow({
   onOpenConfirm,
   onCheckIn,
   onCancel,
+  onOpenInPos,
   isActionPending = false,
   showDate = false,
 }: StaffBookingRowProps) {
@@ -207,6 +209,17 @@ export function StaffBookingRow({
                 <Button
                   type="button"
                   size="sm"
+                  variant="outline"
+                  onClick={() => onOpenConfirm(booking)}
+                  disabled={isActionPending}
+                  className="h-7 text-xs"
+                >
+                  <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
+                  Đổi bàn
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
                   variant="ghost"
                   onClick={() => onCancel(booking)}
                   disabled={isActionPending}
@@ -247,7 +260,20 @@ export function StaffBookingRow({
             </div>
           )}
 
-          {!isPending && !isConfirmed && booking.status !== "PENDING_DEPOSIT" && (
+          {booking.status === "ARRIVED" && onOpenInPos && booking.tableId && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onOpenInPos(booking.tableId!)}
+              className="h-7 text-xs text-primary border-primary/30 hover:bg-primary/10"
+            >
+              <Store className="h-3.5 w-3.5 mr-1" />
+              Mở bàn trên POS
+            </Button>
+          )}
+
+          {!isPending && !isConfirmed && booking.status !== "PENDING_DEPOSIT" && !(booking.status === "ARRIVED" && onOpenInPos && booking.tableId) && (
             <span className="text-[11px] text-muted-foreground">—</span>
           )}
         </div>

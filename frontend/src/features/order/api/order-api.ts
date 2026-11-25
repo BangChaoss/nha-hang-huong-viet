@@ -78,8 +78,11 @@ export const orderApi = {
       body: JSON.stringify({ partySize }),
     }),
 
-  releaseSeats: (orderId: string) =>
-    request<void>(`/api/orders/${encodeURIComponent(orderId)}/release-seats`, { method: "POST" }),
+  releaseSeats: (orderId: string, options?: { reservationAction?: "CANCEL" | "REVERT_CONFIRMED" }) =>
+    request<void>(`/api/orders/${encodeURIComponent(orderId)}/release-seats`, {
+      method: "POST",
+      ...(options ? { body: JSON.stringify(options) } : {}),
+    }),
 
   /** Thêm món vào một đơn đang mở (STT 84). */
   addItem: (orderId: string, payload: AddOrderItemRequest): Promise<OrderResponse> =>
