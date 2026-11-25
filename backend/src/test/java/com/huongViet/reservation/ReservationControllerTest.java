@@ -3,6 +3,7 @@ package com.huongViet.reservation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.huongViet.config.GlobalExceptionHandler;
+import com.huongViet.payment.PaymentService;
 import com.huongViet.reservation.dto.CreateReservationRequest;
 import com.huongViet.reservation.dto.ReservationResponse;
 import com.huongViet.reservation.dto.TimeSlotAvailability;
@@ -18,21 +19,28 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,6 +54,12 @@ class ReservationControllerTest {
     @Mock
     private ZoneService zoneService;
 
+    @Mock
+    private ReservationRepository reservationRepository;
+
+    @Mock
+    private PaymentService paymentService;
+
     @InjectMocks
     private ReservationPublicController reservationPublicController;
 
@@ -53,6 +67,7 @@ class ReservationControllerTest {
 
     @BeforeEach
     void setUp() {
+        ReflectionTestUtils.setField(reservationPublicController, "frontendUrl", "http://localhost:8081");
         mockMvc = MockMvcBuilders
             .standaloneSetup(reservationPublicController)
             .setControllerAdvice(new GlobalExceptionHandler())
@@ -199,5 +214,78 @@ class ReservationControllerTest {
         mockMvc.perform(get("/api/reservations/guest-lookup")
                 .param("code", "RES-1234"))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/reservations/{id}/deposit - Truyền returnPath=history sang PaymentService")
+    void createDepositPayment_WithReturnPathHistory() throws Exception {
+        Reservation vip = new Reservation(
+            "res-vip-1", null, "Khách VIP", "0909999999", "vip@example.com", 4,
+            LocalDate.now().plusDays(1), LocalTime.of(19, 0), null, "zone-vip"
+        );
+        vip.setStatus(ReservationStatus.PENDING_DEPOSIT);
+        vip.setDepositAmount(new BigDecimal("250000"));
+
+        when(reservationRepository.findActiveByIdWithTableAndZone("res-vip-1")).thenReturn(Optional.of(vip));
+        when(paymentService.createReservationDepositPayment(
+            eq("res-vip-1"), eq(new BigDecimal("250000")), any(), eq("history")))
+            .thenReturn(Map.of("paymentUrl", "https://sandbox.vnpayment.vn/pay?test=1", "txnRef", "DEP_res-vip-1_123"));
+
+        mockMvc.perform(post("/api/reservations/res-vip-1/deposit")
+                .param("returnPath", "history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.paymentUrl").value("https://sandbox.vnpayment.vn/pay?test=1"));
+
+        verify(paymentService).createReservationDepositPayment(
+            eq("res-vip-1"), eq(new BigDecimal("250000")), any(), eq("history")
+        );
+    }
+
+    @Test
+    @DisplayName("GET /api/reservations/deposit-callback - returnPath=history loại returnPath khỏi verify và redirect về ?tab=history")
+    void depositCallback_ReturnPathHistory_RedirectsToHistoryTab() throws Exception {
+        when(paymentService.verify(argThat(map -> map != null && !map.containsKey("returnPath") && map.containsKey("vnp_TxnRef"))))
+            .thenReturn(true);
+
+        mockMvc.perform(get("/api/reservations/deposit-callback")
+                .param("returnPath", "history")
+                .param("vnp_TxnRef", "DEP_res-vip-1_1700000")
+                .param("vnp_ResponseCode", "00")
+                .param("vnp_TransactionStatus", "00")
+                .param("vnp_TransactionNo", "VNP123"))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("http://localhost:8081/?tab=history&reservationId=res-vip-1&depositStatus=success"));
+
+        verify(reservationService).confirmDeposit("res-vip-1", "VNP123");
+    }
+
+    @Test
+    @DisplayName("GET /api/reservations/deposit-callback - mặc định hoặc returnPath=book redirect về ?tab=book")
+    void depositCallback_ReturnPathBook_RedirectsToBookTab() throws Exception {
+        when(paymentService.verify(argThat(map -> map != null && !map.containsKey("returnPath"))))
+            .thenReturn(true);
+
+        mockMvc.perform(get("/api/reservations/deposit-callback")
+                .param("returnPath", "book")
+                .param("vnp_TxnRef", "DEP_res-vip-2_1700000")
+                .param("vnp_ResponseCode", "00")
+                .param("vnp_TransactionStatus", "00")
+                .param("vnp_TransactionNo", "VNP456"))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("http://localhost:8081/?tab=book&reservationId=res-vip-2&depositStatus=success"));
+    }
+
+    @Test
+    @DisplayName("GET /api/reservations/deposit-callback - thất bại với returnPath=history redirect về ?tab=history&depositStatus=failed")
+    void depositCallback_FailedWithHistory_RedirectsToHistoryTabWithFailed() throws Exception {
+        when(paymentService.verify(any())).thenReturn(false);
+
+        mockMvc.perform(get("/api/reservations/deposit-callback")
+                .param("returnPath", "history")
+                .param("vnp_TxnRef", "DEP_res-vip-3_1700000")
+                .param("vnp_ResponseCode", "24")
+                .param("vnp_TransactionStatus", "02"))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("http://localhost:8081/?tab=history&reservationId=res-vip-3&depositStatus=failed"));
     }
 }

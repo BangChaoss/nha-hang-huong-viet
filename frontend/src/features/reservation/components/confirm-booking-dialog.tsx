@@ -174,7 +174,9 @@ export function ConfirmBookingDialog({
   const isCapacitySufficient = totalMergedCapacity >= booking.partySize;
 
   // Toggle table selection with SAME ZONE & NON-REDUNDANT MERGING constraints
-  const handleToggleTable = (tableId: string, tableNumber: string, zoneId?: string | null, capacity = 0) => {
+  const handleToggleTable = (tableId: string, tableNumber: string, zoneId?: string | null, capacity = 0, availableSeats?: number | null) => {
+    const effectiveSeats = availableSeats ?? capacity;
+
     if (selectedTableIds.includes(tableId)) {
       // Deselect table
       setSelectedTableIds((prev) => prev.filter((id) => id !== tableId));
@@ -207,9 +209,9 @@ export function ConfirmBookingDialog({
       }
 
       // If the new table alone already fits the whole group, warn user to select it alone
-      if (capacity >= partySize) {
+      if (effectiveSeats >= partySize) {
         toast.warning(
-          `Bàn ${tableNumber} (sức chứa ${capacity} chỗ) một mình đã đủ cho đoàn ${partySize} khách. Vui lòng bỏ chọn các bàn khác nếu muốn sử dụng bàn này.`
+          `Bàn ${tableNumber} (còn ${effectiveSeats} chỗ trống) một mình đã đủ cho đoàn ${partySize} khách. Vui lòng bỏ chọn các bàn khác nếu muốn sử dụng bàn này.`
         );
         return;
       }
@@ -248,7 +250,8 @@ export function ConfirmBookingDialog({
       tableLayout.tableId,
       tableLayout.tableNumber,
       availTable?.zoneId ?? tableLayout.zoneId ?? null,
-      tableLayout.capacity
+      tableLayout.capacity,
+      availTable?.availableSeats ?? null
     );
   };
 
@@ -275,7 +278,7 @@ export function ConfirmBookingDialog({
       }
 
       // Validate no single table is already sufficient
-      const singleSufficient = selectedTablesList.find((t) => (t.capacity || 0) >= booking.partySize);
+      const singleSufficient = selectedTablesList.find((t) => getEffectiveSeats(t) >= booking.partySize);
       if (singleSufficient) {
         toast.error(
           `Bàn ${singleSufficient.tableNumber} (sức chứa ${singleSufficient.capacity} chỗ) đã đủ cho đoàn ${booking.partySize} khách. Không cần gộp thêm bàn khác.`
@@ -286,7 +289,7 @@ export function ConfirmBookingDialog({
       // Validate no redundant table in the merged set (when 3 or more tables are selected)
       if (selectedTablesList.length > 2) {
         const redundantTable = selectedTablesList.find(
-          (t) => totalMergedCapacity - (t.capacity || 0) >= booking.partySize
+          (t) => totalMergedCapacity - getEffectiveSeats(t) >= booking.partySize
         );
         if (redundantTable) {
           toast.error(
@@ -386,14 +389,15 @@ export function ConfirmBookingDialog({
               </div>
             )}
             {booking.status !== "PENDING_DEPOSIT" && booking.depositAmount > 0 && (
-              <div className="border-t pt-1.5 flex items-center gap-1.5 text-emerald-600 font-semibold">
-                <span>💰 Đã đặt cọc:</span>
+              <div className="border-t pt-1.5 flex flex-wrap items-center gap-1.5 text-emerald-600 font-semibold">
+                <span>💰 Đã thanh toán phí thu &amp; cọc phòng VIP:</span>
                 <span>{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(booking.depositAmount)}</span>
+                <span className="text-[11px] font-normal text-muted-foreground">(không trừ vào hóa đơn món)</span>
               </div>
             )}
             {booking.status === "PENDING_DEPOSIT" && (
               <div className="border-t pt-1.5 flex items-center gap-1.5 text-orange-600 font-semibold">
-                <span>⏳ Đơn VIP đang chờ khách đặt cọc 1.000.000đ</span>
+                <span>⏳ Đơn VIP đang chờ khách thanh toán phí thu &amp; cọc phòng VIP 250.000đ</span>
               </div>
             )}
           </div>
@@ -505,7 +509,7 @@ export function ConfirmBookingDialog({
                         <button
                           key={table.id}
                           type="button"
-                          onClick={() => handleToggleTable(table.id, table.tableNumber, table.zoneId, table.capacity)}
+                          onClick={() => handleToggleTable(table.id, table.tableNumber, table.zoneId, table.capacity, table.availableSeats)}
                           className={`w-full flex items-center justify-between rounded-md p-2.5 text-xs text-left transition-colors ${
                             isSelected
                               ? "bg-primary/10 border border-primary text-primary font-medium"

@@ -151,7 +151,7 @@ export function StaffBookingCard({
                   variant="outline"
                   className="text-[10px] px-1.5 py-0 h-5 font-medium bg-orange-500/15 text-orange-700 border-orange-500/30 dark:text-orange-400"
                 >
-                  Chờ cọc VIP ⏳
+                  Chờ phí/cọc VIP ⏳
                 </Badge>
               ) : (
                 <Badge
@@ -166,7 +166,7 @@ export function StaffBookingCard({
                   variant="outline"
                   className="text-[10px] px-1.5 py-0 h-5 bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-medium"
                 >
-                  Đã cọc 1tr ✅
+                  Đã thu phí/cọc VIP 250k ✅
                 </Badge>
               )}
             </div>
@@ -322,7 +322,7 @@ export function StaffBookingCard({
             {booking.status === "PENDING_DEPOSIT" && (
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-orange-600 dark:text-orange-400">
-                  Chờ khách đặt cọc...
+                  Chờ khách trả phí/cọc VIP...
                 </span>
                 <Button
                   type="button"

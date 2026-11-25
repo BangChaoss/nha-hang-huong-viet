@@ -203,20 +203,23 @@ it("kết thúc đơn cũ trống trước khi đóng bàn", async () => {
   expect(orderApi.releaseSeats).toHaveBeenCalledExactlyOnceWith(a);
 });
 
-it("chỉ hiển thị một lần đơn được trả về cho cả hai bàn con", async () => {
+it("hiển thị tách biệt từng bàn lẻ và tải đúng đơn của bàn được chọn", async () => {
   const left = { ...table, id: "left", tableNumber: "Bàn 01A" };
   const right = { ...table, id: "right", tableNumber: "Bàn 01B" };
   vi.mocked(tableApi.list).mockResolvedValue([left, right]);
   orders = [{ ...order(a, [item("one")]), tableId: right.id }];
 
-  const pos = await openPos();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><StaffPOS /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: /Bàn 01B/ }));
+  const pos = within(screen.getByRole("dialog", { name: /Bàn 01B · Gọi món/ }));
+
   expect(await pos.findByRole("button", { name: /#AAAAAAAA ·/, pressed: true })).toBeInTheDocument();
   expect(pos.getByText("1 × Phở bò")).toBeInTheDocument();
-  expect(orderApi.seatedAtTable).toHaveBeenCalledWith(left.id);
-  expect(orderApi.seatedAtTable).toHaveBeenCalledWith(right.id);
+  expect(orderApi.seatedAtTable).toHaveBeenCalledExactlyOnceWith(right.id);
 });
 
-it("chọn bàn con đủ chỗ thay vì gửi đơn mới vào bàn con đã đầy", async () => {
+it("chọn trực tiếp bàn lẻ còn trống khi bàn lẻ bên cạnh đã đầy", async () => {
   const left = { ...table, id: "left", tableNumber: "Bàn 01A", availableSeats: 0 };
   const right: TableResponse = { ...table, id: "right", tableNumber: "Bàn 01B", status: "AVAILABLE", availableSeats: 4 };
   const opened = { ...right, status: "OCCUPIED" as const };
@@ -233,7 +236,14 @@ it("chọn bàn con đủ chỗ thay vì gửi đơn mới vào bàn con đã đ
     return entry;
   });
 
-  const pos = await openPos();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><StaffPOS /></QueryClientProvider>);
+
+  expect(await screen.findByRole("button", { name: /Bàn 01A.*0\/4 ghế trống/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Bàn 01B.*4 ghế/ }));
+  const pos = within(screen.getByRole("dialog", { name: /Bàn 01B · Gọi món/ }));
+
+  fireEvent.click(pos.getByRole("button", { name: "Mở bàn" }));
   const partySize = await pos.findByRole("spinbutton", { name: "Số khách của đơn mới" });
   expect(partySize).toHaveAttribute("max", "4");
   fireEvent.change(partySize, { target: { value: "4" } });

@@ -1,14 +1,14 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { getSession } from "@/lib/auth-session";
+import { useSession } from "@/lib/auth-session";
 import { reservationApi } from "../api/reservation-api";
 import type { ReservationResponse } from "../types/reservation.types";
 
 export function useBookingHistory() {
-  const session = getSession();
-  const isAuthenticated = Boolean(session?.token);
+  const { session, ready } = useSession();
+  const isAuthenticated = ready && Boolean(session?.token);
 
   return useQuery<ReservationResponse[], Error>({
-    queryKey: ["my-bookings"],
+    queryKey: ["my-bookings", session?.id ?? "guest"],
     queryFn: () => reservationApi.getMyBookings(),
     enabled: isAuthenticated,
     staleTime: 60 * 1000,

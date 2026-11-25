@@ -148,6 +148,17 @@ export function consolidateTables(rawTables: TableResponse[]): ConsolidatedTable
 }
 
 /**
+ * Chuyển danh sách bàn thành từng bàn lẻ hiển thị độc lập trên POS (không gộp bàn).
+ */
+export function toIndividualTables(rawTables: TableResponse[]): ConsolidatedTable[] {
+  return rawTables.map((t) => ({
+    ...t,
+    baseTableNumber: t.tableNumber,
+    subTables: [t],
+  }));
+}
+
+/**
  * Màn hình phục vụ: chọn bàn để xem thực đơn, gọi món và chuyển sang thanh toán.
  */
 export function StaffPOS() {
@@ -189,8 +200,11 @@ export function StaffPOS() {
   const zones: ZoneResponse[] = zonesQuery.data ?? [];
   const tables: TableResponse[] = tablesQuery.data ?? [];
 
-  // Gom các bàn bị chia tách lại thành bàn chưa chia (Consolidated Base Tables)
-  const consolidatedTables = useMemo(() => consolidateTables(tables), [tables]);
+  // Hiển thị từng bàn lẻ, không gộp bàn
+  const individualTables: ConsolidatedTable[] = useMemo(
+    () => toIndividualTables(tables),
+    [tables],
+  );
 
   // Map reservation theo tableId HOẶC các id trong mergedTableIds
   const findReservationForTable = (table: TableResponse | ConsolidatedTable): ReservationResponse | undefined => {
@@ -200,13 +214,18 @@ export function StaffPOS() {
       if (!["CONFIRMED", "ARRIVED"].includes(r.status)) return false;
       if (r.tableId && subIds.includes(r.tableId)) return true;
       if (r.mergedTableIds && r.mergedTableIds.split(",").map((s) => s.trim()).some((id) => subIds.includes(id))) return true;
-      if (r.tableNumber && (r.tableNumber.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id)))) return true;
+      if (r.tableNumber) {
+        const assignedNumbers = r.tableNumber.split("+").map((s) => s.trim()).filter(Boolean);
+        if (assignedNumbers.includes(table.tableNumber) || subIds.some((id) => r.tableNumber?.includes(id))) {
+          return true;
+        }
+      }
       return false;
     });
   };
 
-  const selectedTable = tableSelection && (consolidatedTables.find(
-    (table) => table.subTables.some((part) => part.id === tableSelection.table.id)
+  const selectedTable = tableSelection && (individualTables.find(
+    (table) => table.id === tableSelection.table.id || table.subTables.some((part) => part.id === tableSelection.table.id)
   ) ?? tableSelection.table);
   const selectedReservation = selectedTable ? findReservationForTable(selectedTable) : undefined;
   const exclusiveTable = selectedReservation?.status === "ARRIVED" ? selectedTable?.subTables.find((part) =>
@@ -225,7 +244,7 @@ export function StaffPOS() {
       map.set(z.id, []);
     }
     const defaultList: ConsolidatedTable[] = [];
-    for (const t of consolidatedTables) {
+    for (const t of individualTables) {
       if (t.zoneId && map.has(t.zoneId)) {
         map.get(t.zoneId)!.push(t);
       } else {
@@ -236,9 +255,9 @@ export function StaffPOS() {
       map.set("other", defaultList);
     }
     return map;
-  }, [zones, consolidatedTables]);
+  }, [zones, individualTables]);
 
-  const counts = (status: TableStatus) => consolidatedTables.filter((item) => item.status === status).length;
+  const counts = (status: TableStatus) => individualTables.filter((item) => item.status === status).length;
 
   return (
     <div className="space-y-8">
@@ -1322,9 +1341,12 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
 
   const bill = splitBillItems(sentItems);
   const subtotal = bill.subtotal;
-  const vat = Math.round(subtotal * 10) / 100;
-  const discount = voucherValidated ? Math.min(voucherDiscount, subtotal + vat) : 0;
-  const beforeRedeem = subtotal + vat - discount;
+  const vipFee = Number(billOrderQuery.data?.vipFeeAmount ?? order.vipFeeAmount ?? 0);
+  const vipDepositPaid = Number(billOrderQuery.data?.vipDepositPaid ?? order.vipDepositPaid ?? 0);
+  const taxableSubtotal = subtotal + vipFee;
+  const vat = Math.round(taxableSubtotal * 10) / 100;
+  const discount = voucherValidated ? Math.min(voucherDiscount, taxableSubtotal + vat) : 0;
+  const beforeRedeem = taxableSubtotal + vat - discount;
 
   const maxPointsPossible = Math.floor(beforeRedeem / (pointValueVnd || 1));
   const redeemedPoints = redeem ? Math.floor(Math.min(loyaltyBalance, maxPointsPossible)) : 0;
@@ -1370,6 +1392,20 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
 
         <div className="space-y-1.5">
           <Row l="Tạm tính" v={formatVND(subtotal)} />
+          {vipFee > 0 && (
+            <Row
+              l="Phí thu phòng VIP (tính VAT 10%)"
+              v={`+${formatVND(vipFee)}`}
+              cls="text-amber-700 dark:text-amber-400 font-medium"
+            />
+          )}
+          {vipDepositPaid > 0 && (
+            <Row
+              l="Phí thu & cọc phòng VIP"
+              v={`Đã thanh toán ${formatVND(vipDepositPaid)} (không trừ hóa đơn)`}
+              cls="text-emerald-700 dark:text-emerald-400 text-xs"
+            />
+          )}
           <Row l="VAT (10%)" v={formatVND(vat)} />
 
           <div className="space-y-2 pt-1">
@@ -1436,7 +1472,7 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
                 onClick={async () => {
                   setVoucherBusy(true);
                   try {
-                    const result = await validateVoucher(code.trim(), phoneNumber.trim(), subtotal + vat);
+                    const result = await validateVoucher(code.trim(), phoneNumber.trim(), taxableSubtotal + vat);
                     if (!result.valid) {
                       setVoucherValidated(false);
                       setVoucherDiscount(0);
@@ -1515,7 +1551,7 @@ export function BillingDialog({ table, order, onClose }: { table: TableResponse;
                 const payment = await paymentApi.createVnpay({
                   tableId: order.tableId,
                   diningOrderId: order.id,
-                  subtotal: Math.round((subtotal + vat) * 100) / 100,
+                  subtotal: Math.round((taxableSubtotal + vat) * 100) / 100,
                   phoneNumber: phoneNumber.trim(),
                   ...(code.trim() ? { voucherCode: code.trim() } : {}),
                   ...(redeem && redeemedPoints > 0 ? { pointsToUse: redeemedPoints, usePoints: true } : { usePoints: false }),

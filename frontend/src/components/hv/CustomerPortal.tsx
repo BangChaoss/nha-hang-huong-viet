@@ -39,21 +39,38 @@ export function CustomerPortal({
   depositStatus,
 }: CustomerPortalProps = {}) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState(() => initialTab || (reservationId ? "book" : "menu"));
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState(() => initialTab || (reservationId ? "history" : "menu"));
   const [targetInvoiceId, setTargetInvoiceId] = useState<string | undefined>(undefined);
   const [reservation, setReservation] = useState<ReservationResponse | null>(null);
-  const [isLoadingReservation, setIsLoadingReservation] = useState<boolean>(Boolean(reservationId));
+  const [isLoadingReservation, setIsLoadingReservation] = useState<boolean>(
+    Boolean(reservationId) && initialTab !== "history",
+  );
+  const lastDepositToastKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (initialTab) {
       setTab(initialTab);
-    } else if (reservationId) {
-      setTab("book");
     }
-  }, [initialTab, reservationId]);
+  }, [initialTab]);
 
   useEffect(() => {
-    if (!reservationId) return;
+    if (!reservationId || initialTab === "history") {
+      setIsLoadingReservation(false);
+      if (initialTab === "history" && depositStatus) {
+        const toastKey = `${reservationId ?? ""}:${depositStatus}`;
+        if (lastDepositToastKeyRef.current !== toastKey) {
+          lastDepositToastKeyRef.current = toastKey;
+          if (depositStatus === "success") {
+            toast.success("Thanh toán phí thu & cọc phòng VIP 250.000đ thành công! Đơn đặt bàn của bạn đang chờ xác nhận.");
+            void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
+          } else if (depositStatus === "failed") {
+            toast.error("Thanh toán phí thu & cọc phòng VIP thất bại hoặc bị hủy. Quý khách vui lòng thử lại.");
+          }
+        }
+      }
+      return;
+    }
 
     let isMounted = true;
     setIsLoadingReservation(true);
@@ -64,9 +81,10 @@ export function CustomerPortal({
         if (!isMounted) return;
         setReservation(data);
         if (depositStatus === "success") {
-          toast.success("Đặt cọc thành công! Đơn đặt bàn của bạn đang chờ xác nhận.");
+          toast.success("Thanh toán phí thu & cọc phòng VIP 250.000đ thành công! Đơn đặt bàn của bạn đang chờ xác nhận.");
+          void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
         } else if (depositStatus === "failed") {
-          toast.error("Thanh toán đặt cọc thất bại hoặc bị hủy. Quý khách vui lòng thử lại.");
+          toast.error("Thanh toán phí thu & cọc phòng VIP thất bại hoặc bị hủy. Quý khách vui lòng thử lại.");
         }
       })
       .catch((err: unknown) => {
@@ -80,7 +98,7 @@ export function CustomerPortal({
     return () => {
       isMounted = false;
     };
-  }, [reservationId, depositStatus]);
+  }, [reservationId, depositStatus, initialTab, queryClient]);
 
   const handleResetBooking = () => {
     setReservation(null);

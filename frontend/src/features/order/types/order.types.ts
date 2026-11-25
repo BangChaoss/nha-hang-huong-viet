@@ -43,6 +43,8 @@ export type OrderResponse = {
   items: OrderItemResponse[];
   partySize?: number | null;
   seated?: boolean;
+  vipFeeAmount?: number;
+  vipDepositPaid?: number;
 };
 
 /** Một phiếu bếp (một dòng món được đẩy xuống bếp). */

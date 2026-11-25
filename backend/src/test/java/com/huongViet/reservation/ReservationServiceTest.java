@@ -969,7 +969,7 @@ class ReservationServiceTest {
 
         assertNotNull(response);
         assertEquals(ReservationStatus.PENDING_DEPOSIT, response.status());
-        assertEquals(new BigDecimal("1000000"), response.depositAmount());
+        assertEquals(new BigDecimal("250000"), response.depositAmount());
         assertNotNull(response.createdAt());
         // BR-VIP: Không gửi email xác nhận đặt bàn trước khi cọc thành công
         verify(emailService, never()).sendBookingConfirmation(any(Reservation.class), anyString());
@@ -987,7 +987,7 @@ class ReservationServiceTest {
         );
         vipReservation.setZone(vipZone);
         vipReservation.setStatus(ReservationStatus.PENDING_DEPOSIT);
-        vipReservation.setDepositAmount(new BigDecimal("1000000"));
+        vipReservation.setDepositAmount(new BigDecimal("250000"));
 
         when(reservationRepository.findActiveByIdWithTableAndZone("res-vip-1"))
             .thenReturn(Optional.of(vipReservation));
@@ -1022,6 +1022,6 @@ class ReservationServiceTest {
             reservationService.confirmDeposit("res-confirmed", "VNP999999")
         );
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("không ở trạng thái chờ đặt cọc"));
+        assertTrue(ex.getReason().contains("chờ thanh toán phí thu & cọc phòng VIP"));
     }
 }

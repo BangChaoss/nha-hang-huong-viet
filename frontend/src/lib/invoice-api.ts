@@ -24,6 +24,8 @@ export interface InvoiceRecord {
   discountAmount: number;
   taxAmount: number;
   finalAmount: number;
+  vipFeeAmount?: number;
+  vipDepositPaid?: number;
   loyaltyPointsEarned: number;
   status: string;
   paidAt: string | null;

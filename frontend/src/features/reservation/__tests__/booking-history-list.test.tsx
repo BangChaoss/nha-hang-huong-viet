@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BookingHistoryList } from "../components/booking-history-list";
+import { reservationApi } from "../api/reservation-api";
 import * as authSession from "@/lib/auth-session";
 import * as reservationHooks from "../hooks/use-booking-history";
 import type { ReservationResponse } from "../types/reservation.types";
@@ -329,7 +330,7 @@ describe("BookingHistoryList - Quyền hiển thị nút Hủy khi tra cứu kh�
       status: "PENDING_DEPOSIT",
       reservationDate: "2026-11-15",
       reservationTime: "12:00:00",
-      depositAmount: 1000000,
+      depositAmount: 250000,
     };
 
     // Truyền vào danh sách không theo thứ tự ưu tiên
@@ -353,7 +354,7 @@ describe("BookingHistoryList - Quyền hiển thị nút Hủy khi tra cứu kh�
     expect(codes[2]).toBe("HV-AAAA1111");
   });
 
-  it("7. Đơn PENDING_DEPOSIT hiển thị nút 'Tiếp tục đặt cọc VNPay', chỉ hiện badge 'Chờ cọc VIP ⏳' và KHÔNG hiện 'Đã cọc 1tr ✅'", async () => {
+  it("7. Đơn PENDING_DEPOSIT hiển thị nút 'Thanh toán phí/cọc VIP VNPay' (250.000đ), chỉ hiện badge 'Chờ phí/cọc VIP ⏳' và KHÔNG hiện 'Đã thu phí/cọc VIP 250k ✅'", async () => {
     vi.spyOn(authSession, "useSession").mockReturnValue({
       session: {
         id: "user-1",
@@ -370,7 +371,7 @@ describe("BookingHistoryList - Quyền hiển thị nút Hủy khi tra cứu kh�
       ...mockBookingUser1,
       id: "dddd4444-0000-0000-0000-000000000000",
       status: "PENDING_DEPOSIT",
-      depositAmount: 1000000,
+      depositAmount: 250000,
     };
 
     vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
@@ -386,11 +387,138 @@ describe("BookingHistoryList - Quyền hiển thị nút Hủy khi tra cứu kh�
       </QueryClientProvider>
     );
 
-    // Có nút Tiếp tục đặt cọc VNPay
-    expect(screen.getByRole("button", { name: /Tiếp tục đặt cọc VNPay/i })).toBeInTheDocument();
-    // Có badge Chờ cọc VIP ⏳
-    expect(screen.getByText("Chờ cọc VIP ⏳")).toBeInTheDocument();
-    // KHÔNG có badge Đã cọc 1tr ✅
-    expect(screen.queryByText("Đã cọc 1tr ✅")).not.toBeInTheDocument();
+    // Có nút Thanh toán phí/cọc VIP VNPay và nhắc 250.000đ
+    expect(screen.getByRole("button", { name: /Thanh toán phí\/cọc VIP VNPay/i })).toBeInTheDocument();
+    expect(screen.getByText(/250\.000đ/)).toBeInTheDocument();
+    // Có badge Chờ phí/cọc VIP ⏳
+    expect(screen.getByText("Chờ phí/cọc VIP ⏳")).toBeInTheDocument();
+    // KHÔNG có badge Đã thu phí/cọc VIP 250k ✅
+    expect(screen.queryByText("Đã thu phí/cọc VIP 250k ✅")).not.toBeInTheDocument();
+  });
+
+  it("8. Đơn đã thanh toán (PENDING_HOLD với depositAmount = 250000) hiển thị badge 'Đã thu phí/cọc VIP 250k ✅'", async () => {
+    vi.spyOn(authSession, "useSession").mockReturnValue({
+      session: {
+        id: "user-1",
+        username: "user1",
+        email: "user1@example.com",
+        role: "CUSTOMER",
+        token: "fake-token-1",
+        refreshToken: null,
+      },
+      ready: true,
+    });
+
+    const depositedBooking: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "eeee5555-0000-0000-0000-000000000000",
+      status: "PENDING_HOLD",
+      depositAmount: 250000,
+    };
+
+    vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
+      data: [depositedBooking],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText("Đã thu phí/cọc VIP 250k ✅")).toBeInTheDocument();
+  });
+
+  it("9. Nhấn 'Thanh toán phí/cọc VIP VNPay' trên lịch sử gọi createDepositPayment với returnPath='history'", async () => {
+    vi.spyOn(authSession, "useSession").mockReturnValue({
+      session: {
+        id: "user-1",
+        username: "user1",
+        email: "user1@example.com",
+        role: "CUSTOMER",
+        token: "fake-token-1",
+        refreshToken: null,
+      },
+      ready: true,
+    });
+
+    const pendingDepositBooking: ReservationResponse = {
+      ...mockBookingUser1,
+      id: "ffff6666-0000-0000-0000-000000000000",
+      status: "PENDING_DEPOSIT",
+      depositAmount: 250000,
+    };
+
+    vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
+      data: [pendingDepositBooking],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    const depositSpy = vi
+      .spyOn(reservationApi, "createDepositPayment")
+      .mockResolvedValue({ paymentUrl: "" });
+
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Thanh toán phí\/cọc VIP VNPay/i }));
+
+    await waitFor(() => {
+      expect(depositSpy).toHaveBeenCalledWith(pendingDepositBooking.id, "history");
+    });
+  });
+
+  it("10. Sau SSR/hydration (session ban đầu null rồi mới load từ localStorage), tự động mở tab 'Lịch Sử Của Tôi' thay vì kẹt ở 'Tra Cứu Khách Vãng Lai'", async () => {
+    const useSessionSpy = vi.spyOn(authSession, "useSession").mockReturnValue({
+      session: null,
+      ready: false,
+    });
+    vi.spyOn(reservationHooks, "useBookingHistory").mockReturnValue({
+      data: [mockBookingUser1],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    const queryClient = createQueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    // Ban đầu chưa có session -> đang ở tab Tra Cứu Khách Vãng Lai
+    expect(screen.getByRole("tab", { name: /Tra Cứu Khách Vãng Lai/i })).toHaveAttribute("aria-selected", "true");
+
+    // Sau hydration: session được nạp từ localStorage
+    useSessionSpy.mockReturnValue({
+      session: {
+        id: "user-1",
+        username: "user1",
+        email: "user1@example.com",
+        role: "CUSTOMER",
+        token: "fake-token-1",
+        refreshToken: null,
+      },
+      ready: true,
+    });
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <BookingHistoryList />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Lịch Sử Của Tôi/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByText("HV-11111111")).toBeInTheDocument();
+    });
   });
 });
